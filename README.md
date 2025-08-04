@@ -118,23 +118,47 @@ The output will be saved to `/tmp/cores_temperature.txt`.
 
 ## Powercap Calibration
 
-To determine the most energy-efficient power cap setting for your system (based on the Fibonacci function — it executes `fibonacci(20)`), run:
+To determine the most energy-efficient power cap setting for your system, you must specify custom programs for calibration. The tool supports both compiled and interpreted languages.
+
+### Usage
 
 ```bash
 cd RAPL
 make
-sudo -E ./main --powercap-calibration min-max VARIANCE TIME_OUT_LIMIT SECS_TO_SLEEP N_TIMES
+# For compiled languages (11 arguments)
+sudo -E ./main --powercap-calibration min-max VARIANCE TIME_OUT_LIMIT SECS_TO_SLEEP N_TIMES "COMPILE_CMD" "RUN_CMD" LANGUAGE PROGRAM_NAME
+
+# For interpreted languages (10 arguments - no compile command)
+sudo -E ./main --powercap-calibration min-max VARIANCE TIME_OUT_LIMIT SECS_TO_SLEEP N_TIMES "RUN_CMD" LANGUAGE PROGRAM_NAME
 ```
+
+### Parameters
 
 - Replace `min`-`max` with the desired power cap range in Watts (e.g., 2-25).
 - `VARIANCE` is the allowed temperature fluctuation (e.g., 5), and can be set to 0.
 - `TIME_OUT_LIMIT` is the maximum time in minutes allowed for each test iteration.
 - `SECS_TO_SLEEP` is the number of seconds where the CPU is idle before measuring the temperature.
-- `N_TIMES` is the number of times to execute fibonacci(20).
+- `N_TIMES` is the number of times to execute the test program.
+- `COMPILE_CMD` (for compiled languages): Compilation command for your test program.
+- `RUN_CMD`: Execution command for your test program.
+- `LANGUAGE`: Programming language (e.g., C, Python).
+- `PROGRAM_NAME`: Name identifier for the program being tested.
 
-Example:
+### Examples
+
+**C program calibration:**
 ```bash
-sudo -E ./main --powercap-calibration 2-25 5 120 30 7
+sudo -E ./main --powercap-calibration 2-25 5 120 30 10 "gcc myprogram.c -o myprogram" "./myprogram" C myprogram
+```
+
+**Python script calibration:**
+```bash
+sudo -E ./main --powercap-calibration 2-25 5 120 30 5 "python3 myscript.py" Python myscript
+```
+
+**Compiled program with specific arguments:**
+```bash
+sudo -E ./main --powercap-calibration 2-25 5 120 30 7 "gcc fibonacci.c -o fib" "./fib 20" C fibonacci
 ```
 
 This will calibrate power caps from 2W to 25W, running 7 executions per power cap value, allowing for a 5°C temperature variance and a 120-minute limit per execution. If the initial temperature is not calculated, it will calibrate the temperature while waiting for 30 seconds of idle time.
@@ -144,7 +168,7 @@ This will calibrate power caps from 2W to 25W, running 7 executions per power ca
 To perform energy measurements on a specific program, use the following syntax:
 
 ```bash
-./main <command> <language> <program> <ntimes> <VARIANCE> <TIME_OUT_LIMIT> <sleep_time>
+./main <command> <language> <program> <ntimes> <VARIANCE> <TIME_OUT_LIMIT> <sleep_time> <POWERCAP>
 ```
 
 ### Arguments
@@ -158,18 +182,27 @@ To perform energy measurements on a specific program, use the following syntax:
 | `<VARIANCE>`      | Acceptable temperature variance (in Celsius, must be ≥ 0)                   |
 | `<TIME_OUT_LIMIT>`| Timeout limit per execution (in minutes, must be > 0)                       |
 | `<sleep_time>`    | Idle time before execution (in seconds, must be ≥ 0)                        |
+| `<POWERCAP>`      | Power cap in watts (-1 for no power cap, or ≥ 1 for power cap)             |
 
-### Example
+### Examples
 
 ```bash
 cd RAPL
 make
-./main "./my_program" C my_program 5 3 20 10
+
+# Run with 15W power cap
+sudo -E ./main "./my_program" C my_program 5 3 20 10 15
+
+# Run without power cap
+sudo -E ./main "./my_program" C my_program 5 3 20 10 -1
+
+# Python example with 20W power cap
+sudo -E ./main "python3 script.py" Python script 3 5 30 5 20
 ```
 
-This will:
+The first example will:
 - Perform idle measurement for 10 seconds
-- Execute the program 5 times
+- Execute the program 5 times with a 15W power cap
 - Add 3°C to the temperature variance 
 - Terminate executions exceeding 20 minutes
 

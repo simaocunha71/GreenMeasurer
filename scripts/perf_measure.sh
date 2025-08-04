@@ -131,10 +131,6 @@ echo "Language,Program,PowerLimit,Package,Core,GPU,DRAM,Time,Temperature,Memory"
 
 # Run benchmarks for each power limit
 for limit in "${POWER_LIMITS[@]}"; do
-    cd Utils/
-    python3 raplCapUpdate.py "$limit" ../RAPL/main.c
-    cd ..
-
     cd RAPL/
     make clean
     make
@@ -158,7 +154,7 @@ for limit in "${POWER_LIMITS[@]}"; do
                     cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
 
                     make compile
-                    make perf
+                    make perf POWERCAP="$limit"
 
                     if [ -f "perf_stat.csv" ]; then
                         tail -n +2 perf_stat.csv >> ../../../perf_stat.csv

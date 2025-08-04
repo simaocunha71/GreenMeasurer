@@ -1,8 +1,9 @@
 NTIMES=10
 TIME_OUT_LIMIT=4
 VARIANCE=5
-SLEEP_SECS=60
-INPUT=50
+SLEEP_SECS=1
+INPUT=20
+POWERCAP=-1
 export NTIMES
 
 include ../../../config.env
@@ -16,7 +17,7 @@ compile:
 	
 measure:
 	sudo modprobe msr
-	sudo ../../../RAPL/main "./factorial $(INPUT)" C factorial $(NTIMES) $(VARIANCE) $(TIME_OUT_LIMIT) $(SLEEP_SECS)
+	sudo ../../../RAPL/main "./factorial $(INPUT)" C factorial $(NTIMES) $(VARIANCE) $(TIME_OUT_LIMIT) $(SLEEP_SECS) $(POWERCAP)
 
 Language = C
 Program = factorial

@@ -99,7 +99,6 @@ POWER_LIMITS=(-1)
 # Move to project root
 cd "$(dirname "$0")/.." || exit 1
 
-
 # Build RAPL sensor library
 cd RAPL
 gcc -fPIC -shared -o sensors.so sensors.c
@@ -131,10 +130,6 @@ echo "Language,Program,PowerLimit,Package,Core,GPU,DRAM,Time,Temperature,Memory"
 
 # Run benchmarks for each power limit
 for limit in "${POWER_LIMITS[@]}"; do
-    cd Utils/
-    python3 raplCapUpdate.py "$limit" ../RAPL/main.c
-    cd ..
-
     cd RAPL/
     make clean
     make
@@ -158,7 +153,7 @@ for limit in "${POWER_LIMITS[@]}"; do
                     cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
 
                     make compile
-                    make measure
+                    make measure POWERCAP="$limit"
 
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> ../../../measurements.csv
