@@ -16,5 +16,5 @@ make clean
 # Turn-on the Wi-Fi
 sudo ip link set wlp2s0 up 
 
-# Set the brightness to 500
+# Set the brightness to 2000
 sudo echo 2000 | sudo tee "/sys/class/backlight/intel_backlight/brightness"

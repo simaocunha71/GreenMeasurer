@@ -103,7 +103,7 @@ int initializeRapl(raplcap *rc, int WHATTSCAP){
 void runCommand(const char *command) {
    int status = system(command);
    if (status == -1) {
-       fprintf(stderr, "[ERROR] Falha ao executar o comando\n");
+       fprintf(stderr, "[ERROR] Error executing command\n");
        exit(EXIT_FAILURE);
    }
 }
@@ -150,7 +150,8 @@ void writeErrorMessage(const char *language, const char *program, const char *er
     fclose(fp);
 }
 
-void runTesting(int ntimes, int core, const char *command, const char *language, const char *program, const char* MEASUREMENTS_FILE, int WHATTSCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int idle) {    
+void runTesting(int ntimes, int core, const char *command, const char *language, const char *program, const char* MEASUREMENTS_FILE, 
+    int WHATTSCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int idle) {    
    struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == -1)
     {
@@ -237,7 +238,8 @@ void* measure(void *arg) {
 }
 
 // Function to perform the measurements and write to the measurements file
-void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE, int WHATTSCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int idle) {
+void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE, 
+    int WHATTSCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int idle) {
     struct timespec ts;
 
     FILE *fp;
@@ -399,11 +401,12 @@ double calibrateTemperature(int NUMBER_OF_SECONDS) {
    return mean_temp;
 }
 
-void calibratePowercap(int ntimes, int core, char* command, char* language, char* program, int min_powercap, int max_powercap, int WHATTSCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE) {
-   printf("[INFO] Powercap calibration: Calibrating power cap by running fib(20) with different power limits...\n");
+void calibratePowercap(int ntimes, int core, char* command, char* language, char* program, int min_powercap, int max_powercap, int WHATTSCAP, 
+    int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE) {
+   printf("[INFO] Powercap calibration: Calibrating power cap by running %s (%s) with different power limits...\n", program, language);
 
    // Open the output CSV file for writing
-   FILE *outputFile = fopen("powercap_calibration.csv", "w");
+   FILE *outputFile = fopen("../Utils/powercap_calibration.csv", "w");
    if (outputFile == NULL) {
        perror("[ERROR] Powercap calibration: Error opening powercap_calibration.csv for writing");
        return;
@@ -426,9 +429,9 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
            continue;
        }
 
-       // Generate filename based on current power cap
+       // Generate filename based on current power cap and program name
        char filename[256];
-       snprintf(filename, sizeof(filename), "fib_%d.csv", power_cap);
+       snprintf(filename, sizeof(filename), "%s_%d.csv", program, power_cap);
        
        // Run the testing and create the individual CSV
        runTesting(ntimes, core, command, language, program, filename, WHATTSCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, 0);
@@ -466,8 +469,9 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
    
    fclose(outputFile); // Close the output file
    
-
-   int ret = system("/usr/bin/python3 ../Utils/processPowercapCalibrationCSV.py ../Utils/powercap_calibration.csv");
+   
+   // Change to parent directory and run the Python script
+   int ret = system("cd .. && python3 Utils/processPowercapCalibrationCSV.py Utils/powercap_calibration.csv");
    if (ret == -1 || WEXITSTATUS(ret) != 0) {
        fprintf(stderr, "[ERROR] Unable to process powercap calibration CSV\n");
    }
@@ -482,7 +486,7 @@ int main(int argc, char **argv) {
    char language[500] = "";
    char program[500] = "";
    int ntimes = 1;
-   int WHATTSCAP = 11;
+   int WHATTSCAP = -1;
    int core = 0;
    int sleep_time = 0;
    float TEMPERATURETHRESHOLD;
@@ -499,10 +503,12 @@ int main(int argc, char **argv) {
        printf("  %s --temperature-calibration <seconds>\n", argv[0]);
        printf("      Calibrate the average CPU core temperature by sleeping for the specified number of seconds before measuring the temperature.\n\n");
        
-       printf("  %s --powercap-calibration <min>-<max> <VARIANCE> <TIME_OUT_LIMIT> <N_TIMES>\n", argv[0]);
-       printf("      Calibrate the system's power cap by testing power limits within the specified range (e.g., 2-25 Watts) using the Fibonacci algorithm in C (executes fibonacci(20)).\n");
+       printf("  %s --powercap-calibration <min>-<max> <VARIANCE> <TIME_OUT_LIMIT> <N_TIMES> <SECS_TO_SLEEP> [compile_command] <run_command> <language> <program_name>\n", argv[0]);
+       printf("      Calibrate the system's power cap by testing power limits within the specified range (e.g., 2-25 Watts) using a custom program.\n");
        printf("      The process runs multiple tests within the given power cap range and applies the provided temperature VARIANCE (in °C) and TIME_OUT_LIMIT (in minutes) for each test.\n");
-       printf("      The N_TIMES argument specifies how many times to run the Fibonacci calculation to gather data at each power cap setting.\n\n");
+       printf("      For compiled languages: provide both compile_command and run_command.\n");
+       printf("      For interpreted languages: provide only run_command (compile_command can be empty string \"\").\n");
+       printf("      The N_TIMES argument specifies how many times to run the program to gather data at each power cap setting.\n\n");
        
    
        printf("  %s <command> <language> <program> <ntimes> <VARIANCE> <TIME_OUT_LIMIT> <sleep_time>\n", argv[0]);
@@ -521,7 +527,8 @@ int main(int argc, char **argv) {
    
        printf("Examples:\n");
        printf("  %s --temperature-calibration 10\n", argv[0]);
-       printf("  %s --powercap-calibration 2-25 5 120 30 7\n", argv[0]);
+       printf("  %s --powercap-calibration 2-25 5 120 30 7 \"gcc fibonacci.c -o fib\" \"./fib\" C fibonacci\n", argv[0]);
+       printf("  %s --powercap-calibration 2-25 5 120 30 7 \"\" \"python3 script.py\" Python script\n", argv[0]);
        printf("  %s \"./my_program\" C my_program 5 3 2 10\n", argv[0]);
    
        return 0;
@@ -533,8 +540,12 @@ int main(int argc, char **argv) {
        return 0;
    }
 
-   if (argc == 7 && strcmp(argv[1], "--powercap-calibration") == 0) {
+   if ((argc == 11 || argc == 10) && strcmp(argv[1], "--powercap-calibration") == 0) {
        int min_powercap, max_powercap, SECS_TO_SLEEP, N_TIMES;
+       char compile_command[500] = "";
+       char run_command[500] = "";
+       char language[500] = "";
+       char program_name[500] = "";
 
        if (sscanf(argv[2], "%d-%d", &min_powercap, &max_powercap) != 2 || min_powercap < 0 || max_powercap < 0) {
            fprintf(stderr, "[ERROR] Powercap calibration: Invalid format. Use --powercap-calibration <min>-<max> (e.g., --powercap-calibration 2-25)\n");
@@ -563,14 +574,26 @@ int main(int argc, char **argv) {
            return 1;
        }
 
-       if (chdir("../Utils") != 0) {
-           perror("[ERROR] Powercap calibration: Failed to change directory to ../Utils");
-           return 1;
+       if (argc == 11) {
+           // For compiled languages: compile_command run_command language program_name
+           strcpy(compile_command, argv[7]);
+           strcpy(run_command, argv[8]);
+           strcpy(language, argv[9]);
+           strcpy(program_name, argv[10]);
+       } else if (argc == 10) {
+           // For interpreted languages: run_command language program_name (no compile command)
+           strcpy(run_command, argv[7]);
+           strcpy(language, argv[8]);
+           strcpy(program_name, argv[9]);
        }
 
-       if (system("gcc fibonacci.c -o fib") != 0) {
-           perror("[ERROR] Powercap calibration: Failed to compile fibonacci.c");
-           return 1;
+       // Compile the program if compile command is provided and not empty
+       if (strlen(compile_command) > 0) {
+           printf("[INFO] Powercap calibration: Compiling program with command: %s\n", compile_command);
+           if (system(compile_command) != 0) {
+               fprintf(stderr, "[ERROR] Powercap calibration: Failed to compile program with command: %s\n", compile_command);
+               return 1;
+           }
        }
 
        if (access("/tmp/cores_temperatures.txt", F_OK) != 0) {
@@ -581,12 +604,8 @@ int main(int argc, char **argv) {
        }
        TEMPERATURETHRESHOLD = getInitialTemperature();
 
-       calibratePowercap(N_TIMES, core, "./fib", "C", "fib", min_powercap, max_powercap, WHATTSCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE);
+       calibratePowercap(N_TIMES, core, run_command, language, program_name, min_powercap, max_powercap, WHATTSCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE);
 
-       if (chdir("../RAPL") != 0) {
-           perror("[ERROR] Powercap calibration: Failed to change directory back to ../RAPL");
-           return 1;
-       }
        return 0;
    }
 

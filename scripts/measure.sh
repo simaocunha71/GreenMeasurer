@@ -2,6 +2,7 @@
 export LANG=C.UTF-8
 
 WIFI_INTERFACE="wlo1"  # Change this if your Wi-Fi interface has a different name
+BRIGHTNESS_FILE="/sys/class/backlight/intel_backlight/brightness" # Change this if the screen brightness path is different
 
 # Function to restore system settings on exit
 cleanup() {
@@ -19,7 +20,7 @@ cleanup() {
         sudo echo 1000 | sudo tee "$BRIGHTNESS_FILE" > /dev/null
         echo "Screen brightness restored to normal level."
     else
-        echo "Cannot write to $BRIGHTNESS_FILE. Check permissions or file path."
+        echo "[ERROR] Cannot write to $BRIGHTNESS_FILE. Check permissions or file path."
     fi
 }
 
@@ -31,16 +32,15 @@ if ip link show $WIFI_INTERFACE > /dev/null 2>&1; then
     sudo ip link set $WIFI_INTERFACE down
     echo "Wi-Fi interface $WIFI_INTERFACE turned off."
 else
-    echo "Wi-Fi interface $WIFI_INTERFACE not found."
+    echo "[ERROR] Wi-Fi interface $WIFI_INTERFACE not found."
 fi
 
 # Set minimum brightness (requires correct permissions)
-BRIGHTNESS_FILE="/sys/class/backlight/intel_backlight/brightness"
 if [ -w "$BRIGHTNESS_FILE" ]; then
     sudo echo 0 | sudo tee "$BRIGHTNESS_FILE" > /dev/null
     echo "Screen brightness set to minimum."
 else
-    echo "Cannot write to $BRIGHTNESS_FILE. Check permissions or file path."
+    echo "[ERROR] Cannot write to $BRIGHTNESS_FILE. Check permissions or file path."
 fi
 
 

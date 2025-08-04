@@ -1,4 +1,4 @@
-// Factorial implementation in C
+// Factorial implementation in C (recursive only)
 // Calculates factorial of a number provided as command line argument
 
 #include <stdio.h>
@@ -13,19 +13,6 @@ unsigned long long factorial_recursive(int n) {
         return 1;
     }
     return n * factorial_recursive(n - 1);
-}
-
-// Function to calculate factorial iteratively
-unsigned long long factorial_iterative(int n) {
-    if (n < 0) {
-        return 0; // Factorial is not defined for negative numbers
-    }
-    
-    unsigned long long result = 1;
-    for (int i = 2; i <= n; i++) {
-        result *= i;
-    }
-    return result;
 }
 
 int main(int argc, char *argv[]) {
@@ -45,18 +32,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    if (n > 20) {
-        printf("Warning: Results for n > 20 may overflow.\n");
-    }
+    // Calculate factorial using recursive method
+    unsigned long long result = factorial_recursive(n);
     
-    // Calculate factorial using both methods
-    unsigned long long result_recursive = factorial_recursive(n);
-    unsigned long long result_iterative = factorial_iterative(n);
-    
-    // Display results
-    printf("Factorial of %d:\n", n);
-    printf("Recursive method: %llu\n", result_recursive);
-    printf("Iterative method: %llu\n", result_iterative);
+    // Display result
+    printf("Factorial of %d: %llu\n", n, result);
     
     return 0;
 }
