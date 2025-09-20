@@ -7,6 +7,10 @@
  * Authors: Simão Cunha, João Saraiva
  * University of Minho
  */
+/*
+ * Authors: Simão Cunha, João Saraiva
+ * University of Minho, Portugal
+ */
 
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -485,15 +489,15 @@ int main(int argc, char **argv) {
    char command[500];
    char language[500] = "";
    char program[500] = "";
-   int ntimes = 1;
-   int POWERCAP = -1;
+   int n_times = 1;
+   int powercap = -1;
    int core = 0;
    int sleep_time = 0;
-   float TEMPERATURETHRESHOLD;
+   float temperature_threshold;
    raplcap rc;
    
-   int VARIANCE = 0;
-   int TIME_OUT_LIMIT = 0;
+   int variance = 0;
+   int time_out_limit = 0;
 
 
 
@@ -503,29 +507,29 @@ int main(int argc, char **argv) {
        printf("  %s --temperature-calibration <seconds>\n", argv[0]);
        printf("      Calibrate the average CPU core temperature by sleeping for the specified number of seconds before measuring the temperature.\n\n");
        
-       printf("  %s --powercap-calibration <min>-<max> <VARIANCE> <TIME_OUT_LIMIT> <N_TIMES> <SECS_TO_SLEEP> [compile_command] <run_command> <language> <program_name>\n", argv[0]);
+       printf("  %s --powercap-calibration <min>-<max> <variance> <time_out_limit> <n_times> <secs_to_sleep> [compile_command] <run_command> <language> <program_name>\n", argv[0]);
        printf("      Calibrate the system's power cap by testing power limits within the specified range (e.g., 2-25 Watts) using a custom program.\n");
-       printf("      The process runs multiple tests within the given power cap range and applies the provided temperature VARIANCE (in °C) and TIME_OUT_LIMIT (in minutes) for each test.\n");
+       printf("      The process runs multiple tests within the given power cap range and applies the provided temperature variance (in °C) and time_out_limit (in minutes) for each test.\n");
        printf("      For compiled languages: provide both compile_command and run_command.\n");
        printf("      For interpreted languages: provide only run_command (compile_command can be empty string \"\").\n");
-       printf("      The N_TIMES argument specifies how many times to run the program to gather data at each power cap setting.\n\n");
+       printf("      The n_times argument specifies how many times to run the program to gather data at each power cap setting.\n\n");
        
    
-       printf("  %s <command> <language> <program> <ntimes> <VARIANCE> <TIME_OUT_LIMIT> <sleep_time> <POWERCAP>\n", argv[0]);
-       printf("      Run the specified command for the given program and language, repeating it <ntimes> times.\n");
-       printf("      Uses the provided VARIANCE (temperature) and TIME_OUT_LIMIT (in minutes).\n");
+       printf("  %s <command> <language> <program> <n_times> <variance> <time_out_limit> <sleep_time> <powercap>\n", argv[0]);
+       printf("      Run the specified command for the given program and language, repeating it <n_times> times.\n");
+       printf("      Uses the provided variance (temperature) and time_out_limit (in minutes).\n");
        printf("      sleep_time specifies how long to idle before running the command (in seconds).\n");
-       printf("      POWERCAP specifies the power cap in watts (use -1 for no power cap, or any value >= 1).\n\n");
+       printf("      powercap specifies the power cap in watts (use -1 for no power cap, or any value >= 1).\n\n");
    
        printf("Arguments:\n");
        printf("  <command>         The command to execute (e.g., './program').\n");
        printf("  <language>        The programming language (e.g., 'C', 'Python').\n");
        printf("  <program>         The name of the program being tested.\n");
-       printf("  <ntimes>          Number of times to execute the command (must be > 0).\n");
-       printf("  <VARIANCE>        Acceptable temperature variance (>= 0).\n");
-       printf("  <TIME_OUT_LIMIT>  Timeout limit in minutes (must be > 0).\n");
+       printf("  <n_times>          Number of times to execute the command (must be > 0).\n");
+       printf("  <variance>        Acceptable temperature variance (>= 0).\n");
+       printf("  <time_out_limit>  Timeout limit in minutes (must be > 0).\n");
        printf("  <sleep_time>      Idle time before execution in seconds (>= 0).\n");
-       printf("  <POWERCAP>       Power cap in watts (-1 for no cap, or >= 1 for power cap).\n\n");
+       printf("  <powercap>       Power cap in watts (-1 for no cap, or >= 1 for power cap).\n\n");
    
        printf("Examples:\n");
        printf("  %s --temperature-calibration 10\n", argv[0]);
@@ -543,7 +547,7 @@ int main(int argc, char **argv) {
    }
 
    if ((argc == 11 || argc == 10) && strcmp(argv[1], "--powercap-calibration") == 0) {
-       int min_powercap, max_powercap, SECS_TO_SLEEP, N_TIMES;
+       int min_powercap, max_powercap, secs_to_sleep, n_times;
        char compile_command[500] = "";
        char run_command[500] = "";
        char language[500] = "";
@@ -554,25 +558,25 @@ int main(int argc, char **argv) {
            return 1;
        }
 
-       if (sscanf(argv[3], "%d", &VARIANCE) != 1 || VARIANCE < 0) {
-           fprintf(stderr, "[ERROR] Powercap calibration: Invalid VARIANCE. Must be a non-negative integer.\n");
+       if (sscanf(argv[3], "%d", &variance) != 1 || variance < 0) {
+           fprintf(stderr, "[ERROR] Powercap calibration: Invalid variance. Must be a non-negative integer.\n");
            return 1;
        }
 
-       if (sscanf(argv[4], "%d", &TIME_OUT_LIMIT) != 1 || TIME_OUT_LIMIT <= 0) {
-           fprintf(stderr, "[ERROR] Powercap calibration: Invalid TIME_OUT_LIMIT. Must be a positive integer (in minutes).\n");
+       if (sscanf(argv[4], "%d", &time_out_limit) != 1 || time_out_limit <= 0) {
+           fprintf(stderr, "[ERROR] Powercap calibration: Invalid time_out_limit. Must be a positive integer (in minutes).\n");
            return 1;
        }
 
-       TIME_OUT_LIMIT = TIME_OUT_LIMIT * 60; // Convert to seconds
+       time_out_limit = time_out_limit * 60; // Convert to seconds
 
-       if (sscanf(argv[5], "%d", &SECS_TO_SLEEP) != 1 || SECS_TO_SLEEP < 0) {
-           fprintf(stderr, "[ERROR] Powercap calibration: Invalid SECS_TO_SLEEP. Must be a non-negative integer.\n");
+       if (sscanf(argv[5], "%d", &secs_to_sleep) != 1 || secs_to_sleep < 0) {
+           fprintf(stderr, "[ERROR] Powercap calibration: Invalid secs_to_sleep. Must be a non-negative integer.\n");
            return 1;
        }
 
-       if (sscanf(argv[6], "%d", &N_TIMES) != 1 || N_TIMES <= 0) {
-           fprintf(stderr, "[ERROR] Powercap calibration: Invalid N_TIMES. Must be a positive integer.\n");
+       if (sscanf(argv[6], "%d", &n_times) != 1 || n_times <= 0) {
+           fprintf(stderr, "[ERROR] Powercap calibration: Invalid n_times. Must be a positive integer.\n");
            return 1;
        }
 
@@ -600,20 +604,20 @@ int main(int argc, char **argv) {
 
        if (access("/tmp/cores_temperatures.txt", F_OK) != 0) {
            printf("[WARNING] Powercap calibration: File /tmp/cores_temperatures.txt not found. Running temperature calibration...\n");
-           calibrateTemperature(SECS_TO_SLEEP);
+           calibrateTemperature(secs_to_sleep);
        } else {
            printf("[INFO] Powercap calibration: File /tmp/cores_temperatures.txt found. Skipping temperature calibration.\n");
        }
-       TEMPERATURETHRESHOLD = getInitialTemperature();
+       temperature_threshold = getInitialTemperature();
 
-       calibratePowercap(N_TIMES, core, run_command, language, program_name, min_powercap, max_powercap, POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE);
+       calibratePowercap(n_times, core, run_command, language, program_name, min_powercap, max_powercap, powercap, time_out_limit, temperature_threshold, variance);
 
        return 0;
    }
 
    if (argc != 9) {
        fprintf(stderr, "[ERROR] Incorrect number of arguments.\n");
-       fprintf(stderr, "Usage: %s <command> <language> <program> <ntimes> <VARIANCE> <TIME_OUT_LIMIT> <sleep_time> <POWERCAP>\n", argv[0]);
+       fprintf(stderr, "Usage: %s <command> <language> <program> <n_times> <variance> <time_out_limit> <sleep_time> <powercap>\n", argv[0]);
        fprintf(stderr, "Or run with --help for more information.\n");
        return -1;
    }
@@ -621,12 +625,12 @@ int main(int argc, char **argv) {
    strcpy(command, argv[1]);
    strcpy(language, argv[2]);
    strcpy(program, argv[3]);
-   ntimes = atoi(argv[4]);
-   VARIANCE = atoi(argv[5]);
-   TIME_OUT_LIMIT = atoi(argv[6]); //TIME_OUT_LIMIT in hours
+   n_times = atoi(argv[4]);
+   variance = atoi(argv[5]);
+   time_out_limit = atoi(argv[6]); // time_out_limit in hours
 
    sleep_time = atoi(argv[7]);
-   POWERCAP = atoi(argv[8]);
+   powercap = atoi(argv[8]);
    
 
 
@@ -637,22 +641,22 @@ int main(int argc, char **argv) {
        printf("[INFO] File /tmp/cores_temperatures.txt found. Skipping temperature calibration.\n");
    }
 
-   TEMPERATURETHRESHOLD = getInitialTemperature();
+   temperature_threshold = getInitialTemperature();
 
    printf("\n[INFO]\n======= Execution Details ========\n");
    printf(" Command   : %s\n", command);
    printf(" Language  : %s\n", language);
    printf(" Program   : %s\n", program);
-   printf(" NTimes    : %d\n", ntimes);
-   printf(" Variance  : %d°C\n", VARIANCE);
-   printf(" Timeout   : %d hours\n", TIME_OUT_LIMIT);
-   printf(" SleepTime : %d seconds\n", sleep_time);
-   if (POWERCAP == -1) {
+   printf(" N_times    : %d\n", n_times);
+   printf(" Variance  : %d°C\n", variance);
+   printf(" Timeout   : %d hours\n", time_out_limit);
+   printf(" Sleep_time : %d seconds\n", sleep_time);
+   if (powercap == -1) {
        printf(" PowerCap  : No power cap\n");
    } else {
-       printf(" PowerCap  : %d watts\n", POWERCAP);
+       printf(" PowerCap  : %d watts\n", powercap);
    }
-   printf(" Reference temperature : %.2f °C\n", TEMPERATURETHRESHOLD);
+   printf(" Reference temperature : %.2f °C\n", temperature_threshold);
    printf("====================================\n\n");
 
    if (sleep_time < 0) {
@@ -660,32 +664,32 @@ int main(int argc, char **argv) {
        return -1;
    }
 
-   if (ntimes <= 0) {
-       fprintf(stderr, "[ERROR] ntimes must be greater than 0.\n");
+   if (n_times <= 0) {
+       fprintf(stderr, "[ERROR] n_times must be greater than 0.\n");
        return -1;
    }
-   if (VARIANCE < 0) {
-       fprintf(stderr, "[ERROR] VARIANCE must be greater than or equal to 0.\n");
+   if (variance < 0) {
+       fprintf(stderr, "[ERROR] variance must be greater than or equal to 0.\n");
        return -1;
    }
-   if (TIME_OUT_LIMIT <= 0) {
-       fprintf(stderr, "[ERROR] TIME_OUT_LIMIT must be greater than 0.\n");
-       return -1;
-   }
-   
-   if (POWERCAP < -1 || POWERCAP == 0) {
-       fprintf(stderr, "[ERROR] POWERCAP must be -1 (no power cap) or >= 1 (power cap in watts).\n");
+   if (time_out_limit <= 0) {
+       fprintf(stderr, "[ERROR] time_out_limit must be greater than 0.\n");
        return -1;
    }
    
-   TIME_OUT_LIMIT = TIME_OUT_LIMIT * 3600; //TIME_OUT_LIMIT in seconds
+   if (powercap < -1 || powercap == 0) {
+       fprintf(stderr, "[ERROR] powercap must be -1 (no power cap) or >= 1 (power cap in watts).\n");
+       return -1;
+   }
+   
+   time_out_limit = time_out_limit * 3600; // time_out_limit in seconds
 
    fflush(stdout);
 
    int memory = measureMemoryUsage(command);
 
-   if (POWERCAP != -1) {
-       if (initializeRapl(&rc, POWERCAP))
+   if (powercap != -1) {
+       if (initializeRapl(&rc, powercap))
            return -1;
    }
    
@@ -694,14 +698,14 @@ int main(int argc, char **argv) {
    snprintf(sleep_command, sizeof(sleep_command), "sleep %d", sleep_time);
 
    printf("\n\n BEGINNING of IDLE EXECUTION: \n");
-   runTesting(ntimes, core, sleep_command, language, program, "measurements.csv", POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, 1);
+   runTesting(n_times, core, sleep_command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, 1);
    printf("\n\n END of IDLE EXECUTION: \n");
 
    printf("\n\n BEGINNING of PARAMETRIZED PROGRAM: \n");
-   runTesting(ntimes, core, command, language, program, "measurements.csv", POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, 0);
+   runTesting(n_times, core, command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, 0);
    printf("\n\n END of PARAMETRIZED PROGRAM: \n");
 
-   if (POWERCAP != -1) {
+   if (powercap != -1) {
        if (raplcap_destroy(&rc)) {
            printf("[ERROR] Error destroying CAP\n");
            perror("[ERROR] raplcap_destroy");

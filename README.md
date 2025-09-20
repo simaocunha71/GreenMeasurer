@@ -1,5 +1,4 @@
 # GreenMeasurer
-
 **A comprehensive framework for measuring energy consumption of programs across multiple programming languages**
 
 GreenMeasurer is a powerful tool that leverages RAPL (Running Average Power Limit) technology to provide accurate energy consumption measurements for any program, helping developers write more sustainable and energy-efficient code.
@@ -9,7 +8,6 @@ GreenMeasurer is a powerful tool that leverages RAPL (Running Average Power Limi
 | Simão Cunha           | d14299@di.uminho.pt                 |
 | ???                   | ???                                 |
 | João Saraiva          | saraiva@di.uminho.pt                |
-
 
 ## Requirements
 
@@ -50,7 +48,6 @@ WIFI_INTERFACE="your_interface_name"  # e.g., "wlp2s0", "wlan0", "wlo1"
 ### 2. System Permissions
 The script requires sudo privileges for:
 - Wi-Fi interface control
-- Screen brightness adjustment  
 - RAPL energy measurements
 
 ### 3. Environment Variables
@@ -94,7 +91,6 @@ If a specified language or directory is not found, the script will exit with an 
 ### Automatic System Restoration
 The measurement script automatically handles system cleanup:
 - **Wi-Fi**: Automatically restored when the script completes or encounters an error
-- **Screen brightness**: Automatically restored to normal levels on script exit
 - **Error handling**: System settings are restored even if the script is interrupted (Ctrl+C) or crashes
 
 This ensures your system won't be left in a dimmed state or with Wi-Fi disabled if something goes wrong during measurements.
@@ -168,7 +164,7 @@ This will calibrate power caps from 2W to 25W, running 7 executions per power ca
 To perform energy measurements on a specific program, use the following syntax:
 
 ```bash
-./main <command> <language> <program> <ntimes> <VARIANCE> <TIME_OUT_LIMIT> <sleep_time> <POWERCAP>
+./main <command> <language> <program> <n_times> <variance> <time_out_limit> <sleep_time> <powercap>
 ```
 
 ### Arguments
@@ -178,11 +174,11 @@ To perform energy measurements on a specific program, use the following syntax:
 | `<command>`       | The command to execute (e.g., `./my_program`)                               |
 | `<language>`      | Programming language (e.g., `C`, `Python`)                                  |
 | `<program>`       | Name of the program being tested                                            |
-| `<ntimes>`        | Number of times to execute the program (must be > 0)                        |
-| `<VARIANCE>`      | Acceptable temperature variance (in Celsius, must be ≥ 0)                   |
-| `<TIME_OUT_LIMIT>`| Timeout limit per execution (in minutes, must be > 0)                       |
+| `<n_times>`        | Number of times to execute the program (must be > 0)                        |
+| `<variance>`      | Acceptable temperature variance (in Celsius, must be ≥ 0)                   |
+| `<time_out_limit>`| Timeout limit per execution (in minutes, must be > 0)                       |
 | `<sleep_time>`    | Idle time before execution (in seconds, must be ≥ 0)                        |
-| `<POWERCAP>`      | Power cap in watts (-1 for no power cap, or ≥ 1 for power cap)             |
+| `<powercap>`      | Power cap in watts (-1 for no power cap, or ≥ 1 for power cap)             |
 
 ### Examples
 
@@ -254,30 +250,7 @@ Runs the program - either runs a executable binary or runs a interpreted program
 ./my_program [input]
 ```
 
-## 3. `perf`
-
-**Command:**
-```sh
-make perf
-```
-Uses Linux `perf` to gather the following CPU performance metrics:
-
-| Metric                              | Description                                                          |
-|-------------------------------------|----------------------------------------------------------------------|
-| `cycles`                            | The total number of CPU cycles consumed by the program.             |
-| `instructions`                      | The total number of instructions executed by the program.           |
-| `cache-misses`                      | The total number of cache misses (both data and instruction cache). |
-| `branch-misses`                     | The total number of branch prediction misses.                       |
-| `stalled-cycles-frontend`           | The number of cycles the instruction fetch unit was stalled.        |
-| `stalled-cycles-backend`            | The number of cycles the instruction execution unit was stalled.    |
-| `resource_stalls.any`               | Total number of cycles where execution was stalled due to resource limitations. |
-| `mem_trans_retired.load_latency_gt_128` | Number of memory transactions with load latency greater than 128 cycles. |
-| `cpu-cycles`                        | Total number of CPU cycles, a repeat of the `cycles` metric.        |
-| `uops_executed.stall_cycles`        | Number of cycles during which micro-operations (uops) were stalled. |
-
-
-
-## 4. `measure`
+## 3. `measure`
 
 **Command:**
 ```sh
@@ -292,35 +265,7 @@ Measures energy consumption and executing time by running the program using the 
 sudo ../../../RAPL/main "./my_program [input]" [Language] [Program] $(NTIMES) $(VARIANCE) $(TIME_OUT_LIMIT) $(SLEEP_SECS)
 ```
 
-## 5. `mem`
-
-**Command:**
-```sh
-make mem
-```
-
-Profiles memory and resource usage using `/usr/bin/time -v`.
-
-**Command executed:**
-```sh
-/usr/bin/time -v ./my_program [input]
-```
-
-## 6. `valgrind`
-
-**Command:**
-```sh
-make valgrind
-```
- 
-Analyzes heap memory usage with Valgrind's Massif tool.
-
-**Command executed:**
-```sh
-valgrind --tool=massif --stacks=yes ./my_program [input]
-```
-
-## 7. `clean`
+## 4. `clean`
 
 **Command:**
 ```sh

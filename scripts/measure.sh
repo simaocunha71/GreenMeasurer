@@ -2,7 +2,6 @@
 export LANG=C.UTF-8
 
 WIFI_INTERFACE="wlo1"  # Change this if your Wi-Fi interface has a different name
-BRIGHTNESS_FILE="/sys/class/backlight/intel_backlight/brightness" # Change this if the screen brightness path is different
 
 # Function to restore system settings on exit
 cleanup() {
@@ -12,15 +11,6 @@ cleanup() {
     if ip link show $WIFI_INTERFACE > /dev/null 2>&1; then
         sudo ip link set $WIFI_INTERFACE up
         echo "Wi-Fi interface $WIFI_INTERFACE turned on."
-    fi
-    
-    # Set brightness to normal level
-    BRIGHTNESS_FILE="/sys/class/backlight/intel_backlight/brightness"
-    if [ -w "$BRIGHTNESS_FILE" ]; then
-        sudo echo 1000 | sudo tee "$BRIGHTNESS_FILE" > /dev/null
-        echo "Screen brightness restored to normal level."
-    else
-        echo "[ERROR] Cannot write to $BRIGHTNESS_FILE. Check permissions or file path."
     fi
 }
 
@@ -34,15 +24,6 @@ if ip link show $WIFI_INTERFACE > /dev/null 2>&1; then
 else
     echo "[ERROR] Wi-Fi interface $WIFI_INTERFACE not found."
 fi
-
-# Set minimum brightness (requires correct permissions)
-if [ -w "$BRIGHTNESS_FILE" ]; then
-    sudo echo 0 | sudo tee "$BRIGHTNESS_FILE" > /dev/null
-    echo "Screen brightness set to minimum."
-else
-    echo "[ERROR] Cannot write to $BRIGHTNESS_FILE. Check permissions or file path."
-fi
-
 
 # List of supported languages - dynamically get all folders in Languages directory
 VALID_LANGUAGES=($(find "$(dirname "$0")/../Languages" -maxdepth 1 -type d -exec basename {} \; | grep -v "^Languages$" | sort))
@@ -94,7 +75,7 @@ VARIANCE=5
 IDLE_SECONDS=60
 
 # Define power limit values
-POWER_LIMITS=(-1)
+POWER_LIMITS=(-1 2)
 
 # Move to project root
 cd "$(dirname "$0")/.." || exit 1
@@ -102,27 +83,6 @@ cd "$(dirname "$0")/.." || exit 1
 # Build RAPL sensor library
 cd RAPL
 gcc -fPIC -shared -o sensors.so sensors.c
-cd ..
-
-# Update Makefiles
-cd Utils
-for lang in "${SELECTED_LANGUAGES[@]}"; do
-    lang_dir="../Languages/$lang"
-    if [ -d "$lang_dir" ]; then
-        for program in "$lang_dir"/*; do
-            if [ -d "$program" ]; then
-                makefile_path="$program/Makefile"
-                if [ -f "$makefile_path" ]; then
-                    python3 updateParams.py NTIMES=$NTIMES TIME_OUT_LIMIT=$TIME_OUT_LIMIT VARIANCE=$VARIANCE SLEEP_SECS=$IDLE_SECONDS "$makefile_path"
-                else
-                    echo "Makefile not found: $makefile_path"
-                fi
-            fi
-        done
-    else
-        echo "Directory not found for language: $lang"
-    fi
-done
 cd ..
 
 # Initialize output CSV
@@ -135,7 +95,6 @@ for limit in "${POWER_LIMITS[@]}"; do
     make
     cd ..
     
-    pwd
     for lang in "${SELECTED_LANGUAGES[@]}"; do
         lang_dir="Languages/$lang"
 
@@ -153,7 +112,7 @@ for limit in "${POWER_LIMITS[@]}"; do
                     cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
 
                     make compile
-                    make measure POWERCAP="$limit"
+                    make measure POWERCAP="$limit" TIME_OUT_LIMIT=$TIME_OUT_LIMIT VARIANCE=$VARIANCE SLEEP_SECS=$IDLE_SECONDS
 
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> ../../../measurements.csv
