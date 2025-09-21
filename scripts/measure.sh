@@ -63,7 +63,7 @@ else
 fi
 
 # Define number of times to execute each program
-NTIMES=10
+NTIMES=3
 
 # Define time limit (here it's in hours) for the execution of each program
 TIME_OUT_LIMIT=4
@@ -112,7 +112,7 @@ for limit in "${POWER_LIMITS[@]}"; do
                     cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
 
                     make compile
-                    make measure POWERCAP="$limit" TIME_OUT_LIMIT=$TIME_OUT_LIMIT VARIANCE=$VARIANCE SLEEP_SECS=$IDLE_SECONDS
+                    make measure ntimes=$NTIMES POWERCAP="$limit" TIME_OUT_LIMIT=$TIME_OUT_LIMIT VARIANCE=$VARIANCE SLEEP_SECS=$IDLE_SECONDS
 
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> ../../../measurements.csv
