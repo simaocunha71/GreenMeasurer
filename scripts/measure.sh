@@ -63,7 +63,7 @@ else
 fi
 
 # Define number of times to execute each program
-NTIMES=3
+NTIMES=10
 
 # Define time limit (here it's in hours) for the execution of each program
 TIME_OUT_LIMIT=4
@@ -72,7 +72,7 @@ TIME_OUT_LIMIT=4
 VARIANCE=5
 
 # Define the number of seconds for the idle execution and for temperature calibration
-IDLE_SECONDS=1
+IDLE_SECONDS=60
 
 # Define power cap values
 POWER_CAPS=(-1 2)
@@ -112,7 +112,7 @@ for cap in "${POWER_CAPS[@]}"; do
                     cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
 
                     make compile
-                    make measure ntimes=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS input=$fib_number
+                    make measure n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
 
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> ../../../measurements.csv

@@ -1,10 +1,10 @@
-ntimes ?= 20
+n_times ?= 20
 time_out_limit ?= 4
 variance ?= 5
 sleep_secs ?= 60
-input ?= 500
+input ?= 40
 powercap ?= -1
-export ntimes
+export n_times
 
 include ../../../config.env
 
@@ -17,10 +17,10 @@ compile:
 	
 measure:
 	sudo modprobe msr
-	sudo ../../../RAPL/main "./factorial $(input)" C factorial $(ntimes) $(variance) $(time_out_limit) $(sleep_secs) $(powercap)
+	sudo ../../../RAPL/main "./factorial $(input)" C factorial $(n_times) $(variance) $(time_out_limit) $(sleep_secs) $(powercap)
 
 run:
-	./factorial $(INPUT)
+	./factorial $(input)
 
 clean:
 	rm -f factorial

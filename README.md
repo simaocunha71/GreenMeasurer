@@ -16,7 +16,6 @@ GreenMeasurer is a powerful tool that leverages RAPL (Running Average Power Limi
 - Non-containerized environment
 
 ## Required Libraries
-
 1. RAPL
 2. lm-sensors
 3. Powercap
