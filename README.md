@@ -56,10 +56,10 @@ Ensure the following environment variable is set:
 export LANG=C.UTF-8
 ```
 
-### 4. Power Limits Configuration
-The script uses power limit values defined in `POWER_LIMITS` array. By default, it's set to `(-1)` which means no power capping. You can modify this in the script to test different power limits:
+### 4. Power Caps Configuration
+The script uses power caps values defined in `POWER_CAPS` array. By default, it's set to `(-1)` which means no power capping. You can modify this in the script to test different power caps:
 ```bash
-POWER_LIMITS=(7 11 15)  # Test with 7W, 11W, and 15W limits
+POWER_CAPS=(7 11 15)  # Test with 7W, 11W, and 15W power caps
 ```
 
 ---
@@ -122,23 +122,23 @@ To determine the most energy-efficient power cap setting for your system, you mu
 cd RAPL
 make
 # For compiled languages (11 arguments)
-sudo -E ./main --powercap-calibration min-max VARIANCE TIME_OUT_LIMIT SECS_TO_SLEEP N_TIMES "COMPILE_CMD" "RUN_CMD" LANGUAGE PROGRAM_NAME
+sudo -E ./main --powercap-calibration min-max variance time_out_limit secs_to_sleep n_times "compile_cmd" "run_cmd" language program
 
 # For interpreted languages (10 arguments - no compile command)
-sudo -E ./main --powercap-calibration min-max VARIANCE TIME_OUT_LIMIT SECS_TO_SLEEP N_TIMES "RUN_CMD" LANGUAGE PROGRAM_NAME
+sudo -E ./main --powercap-calibration min-max variance time_out_limit secs_to_sleep n_times "run_cmd" language program
 ```
 
 ### Parameters
 
 - Replace `min`-`max` with the desired power cap range in Watts (e.g., 2-25).
-- `VARIANCE` is the allowed temperature fluctuation (e.g., 5), and can be set to 0.
-- `TIME_OUT_LIMIT` is the maximum time in minutes allowed for each test iteration.
-- `SECS_TO_SLEEP` is the number of seconds where the CPU is idle before measuring the temperature.
-- `N_TIMES` is the number of times to execute the test program.
-- `COMPILE_CMD` (for compiled languages): Compilation command for your test program.
-- `RUN_CMD`: Execution command for your test program.
-- `LANGUAGE`: Programming language (e.g., C, Python).
-- `PROGRAM_NAME`: Name identifier for the program being tested.
+- `variance` is the allowed temperature fluctuation (e.g., 5), and can be set to 0.
+- `time_out_limit` is the maximum time in minutes allowed for each test iteration.
+- `secs_to_sleep` is the number of seconds where the CPU is idle before measuring the temperature.
+- `n_times` is the number of times to execute the test program.
+- `compile_cmd` (for compiled languages): Compilation command for your test program.
+- `run_cmd`: Execution command for your test program.
+- `language`: Programming language (e.g., C, Python).
+- `program`: Name identifier for the program being tested.
 
 ### Examples
 
@@ -174,11 +174,11 @@ To perform energy measurements on a specific program, use the following syntax:
 | `<command>`       | The command to execute (e.g., `./my_program`)                               |
 | `<language>`      | Programming language (e.g., `C`, `Python`)                                  |
 | `<program>`       | Name of the program being tested                                            |
-| `<n_times>`        | Number of times to execute the program (must be > 0)                        |
+| `<n_times>`       | Number of times to execute the program (must be > 0)                        |
 | `<variance>`      | Acceptable temperature variance (in Celsius, must be ≥ 0)                   |
 | `<time_out_limit>`| Timeout limit per execution (in minutes, must be > 0)                       |
 | `<sleep_time>`    | Idle time before execution (in seconds, must be ≥ 0)                        |
-| `<powercap>`      | Power cap in watts (-1 for no power cap, or ≥ 1 for power cap)             |
+| `<powercap>`      | Power cap in watts (-1 for no power cap, or ≥ 1 for power cap)              |
 
 ### Examples
 
@@ -210,16 +210,16 @@ The `measurements.csv` contains the following columns:
 
 |      Column       | Description                                                                 |
 |-------------------|-----------------------------------------------------------------------------|
-| **Language**       | Programming language                                                        |
-| **Program**        | Program name                                                                |
-| **PowerLimit**     | Power cap value applied (Watts)                                             |
-| **Package**        | Energy used by the full socket (cores + GPU + other components)            |
-| **Core**           | Energy used by CPU cores and caches                                         |
-| **GPU**            | Energy used by GPU                                                          |
-| **DRAM**           | Energy used by RAM                                                          |
-| **Time**           | Execution time (in milliseconds)                                            |
-| **Temperature**    | Average core temperature (in Celsius)                                       |
-| **Memory**         | Total physical memory used (in KBytes)                                      |
+| **Language**      | Programming language                                                        |
+| **Program**       | Program name                                                                |
+| **Powercap**      | Power cap value applied (Watts)                                             |
+| **Package**       | Energy used by the full socket (cores + GPU + other components)            |
+| **Core**          | Energy used by CPU cores and caches                                         |
+| **GPU**           | Energy used by GPU                                                          |
+| **DRAM**          | Energy used by RAM                                                          |
+| **Time**          | Execution time (in milliseconds)                                            |
+| **Temperature**   | Average core temperature (in Celsius)                                       |
+| **Memory**        | Total physical memory used (in KBytes)                                      |
 
 ---
 
@@ -262,7 +262,7 @@ Measures energy consumption and executing time by running the program using the 
 
 **Command breakdown:**
 ```sh
-sudo ../../../RAPL/main "./my_program [input]" [Language] [Program] $(NTIMES) $(VARIANCE) $(TIME_OUT_LIMIT) $(SLEEP_SECS)
+sudo ../../../RAPL/main "./my_program [input]" [language] [program] $(n_times) $(variance) $(time_out_limit) $(sleep_secs)
 ```
 
 ## 4. `clean`

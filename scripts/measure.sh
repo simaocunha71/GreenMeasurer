@@ -1,7 +1,7 @@
 #!/bin/bash
 export LANG=C.UTF-8
 
-WIFI_INTERFACE="wlo1"  # Change this if your Wi-Fi interface has a different name
+WIFI_INTERFACE="wlp2s0"  # Change this if your Wi-Fi interface has a different name
 
 # Function to restore system settings on exit
 cleanup() {
@@ -72,10 +72,10 @@ TIME_OUT_LIMIT=4
 VARIANCE=5
 
 # Define the number of seconds for the idle execution and for temperature calibration
-IDLE_SECONDS=60
+IDLE_SECONDS=1
 
-# Define power limit values
-POWER_LIMITS=(-1 2)
+# Define power cap values
+POWER_CAPS=(-1 2)
 
 # Move to project root
 cd "$(dirname "$0")/.." || exit 1
@@ -86,10 +86,10 @@ gcc -fPIC -shared -o sensors.so sensors.c
 cd ..
 
 # Initialize output CSV
-echo "Language,Program,PowerLimit,Package,Core,GPU,DRAM,Time,Temperature,Memory" > measurements.csv
+echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory" > measurements.csv
 
-# Run benchmarks for each power limit
-for limit in "${POWER_LIMITS[@]}"; do
+# Run benchmarks for each power cap
+for cap in "${POWER_CAPS[@]}"; do
     cd RAPL/
     make clean
     make
@@ -112,7 +112,7 @@ for limit in "${POWER_LIMITS[@]}"; do
                     cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
 
                     make compile
-                    make measure ntimes=$NTIMES POWERCAP="$limit" TIME_OUT_LIMIT=$TIME_OUT_LIMIT VARIANCE=$VARIANCE SLEEP_SECS=$IDLE_SECONDS
+                    make measure ntimes=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS input=$fib_number
 
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> ../../../measurements.csv
