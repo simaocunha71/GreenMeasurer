@@ -11,7 +11,7 @@
  * Authors: Simão Cunha, João Saraiva
  * University of Minho, Portugal
  */
-
+ 
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -263,7 +263,7 @@ void performMeasurements(const char *command, const char *language, const char *
            exit(-1);
        }
 
-       fprintf(fp, "Language,Program,PowerLimit,Package,Core,GPU,DRAM,Time,Temperature,Memory\n");
+       fprintf(fp, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory\n");
     }
 
 
@@ -415,7 +415,7 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
        perror("[ERROR] Powercap calibration: Error opening powercap_calibration.csv for writing");
        return;
    }
-   fprintf(outputFile, "Language,Program,PowerLimit,Package,Core,GPU,DRAM,Time,Temperature,Memory\n");
+   fprintf(outputFile, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory\n");
 
    // Flag to indicate if the header has been written
    int headerWritten = 0;

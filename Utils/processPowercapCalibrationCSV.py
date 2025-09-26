@@ -8,17 +8,17 @@ def process_csv(filename):
     # Create a dictionary to store average results
     results = {}
 
-    # Group the data by 'PowerLimit'
-    grouped = data.groupby('PowerLimit')
+    # Group the data by 'Powercap'
+    grouped = data.groupby('Powercap')
 
     print(f"\n{'=' * 50}")
-    print(f"{' Power Limit Average Package Report ':^50}")
+    print(f"{' Powercap Average Package Report ':^50}")
     print(f"{'=' * 50}\n")
 
-    for power_limit, group in grouped:
+    for powercap, group in grouped:
         if len(group) <= 2:
             # If there are 2 or fewer entries, averaging is not possible
-            print(f"PowerLimit: {power_limit}, not enough entries to calculate the average.")
+            print(f"Powercap: {powercap}, not enough entries to calculate the average.")
             continue
         
         # Remove the entries with the maximum and minimum values in the 'Package' column
@@ -32,29 +32,29 @@ def process_csv(filename):
         average_package = filtered_group['Package'].mean()
         
         # Store the result
-        results[power_limit] = average_package
+        results[powercap] = average_package
 
-    # Display the results and find the PowerLimit with the lowest average package
+    # Display the results and find the Powercap with the lowest average package
     lowest_average_powercap = None
     lowest_average_value = float('inf')
 
-    print(f"{'PowerLimit':<15}{'Average Package':<20}")
+    print(f"{'Powercap':<15}{'Average Package':<20}")
     print(f"{'-' * 35}")
     
-    for power_limit, average in results.items():
-        print(f"{power_limit:<15}{average:<20.6f}")
+    for powercap, average in results.items():
+        print(f"{powercap:<15}{average:<20.6f}")
 
         # Check if this is the lowest average package value
         if average < lowest_average_value:
             lowest_average_value = average
-            lowest_average_powercap = power_limit
+            lowest_average_powercap = powercap
 
-    # Display the PowerLimit with the lowest average package
+    # Display the Powercap with the lowest average package
     print(f"\n{'=' * 35}")
     if lowest_average_powercap is not None:
-        print(f"{'PowerLimit with the lowest average package:':<35} {lowest_average_powercap} (Average: {lowest_average_value:.6f})")
+        print(f"{'Powercap with the lowest average package:':<35} {lowest_average_powercap} (Average: {lowest_average_value:.6f})")
     else:
-        print("No valid PowerLimits to determine the lowest average.")
+        print("No valid Powercaps to determine the lowest average.")
 
     print(f"{'=' * 35}")
 
