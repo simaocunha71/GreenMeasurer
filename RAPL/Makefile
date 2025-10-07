@@ -9,4 +9,4 @@ sensors.o : sensors.c sensors.h
 	gcc -O2  -c sensors.c  -lm
 
 clean:
-	rm -rf main main.o rapl.o sensors.o
+	rm -rf main main.o rapl.o sensors.o sensors.so

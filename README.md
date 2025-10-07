@@ -87,6 +87,12 @@ sudo -E bash scripts/measure.sh Python "C#" Rust
 ```
 If a specified language or directory is not found, the script will exit with an error message.
 
+**NOTE**: To collect CPU performance metrics (using Linux perf) for all programs, run the measurement script with the `-perf` flag:
+```bash
+sudo -E bash scripts/measure.sh -perf <language1> [language2] ... | all
+```
+This will aggregate all results in the top-level perf_stats.csv file.
+
 ### Automatic System Restoration
 The measurement script automatically handles system cleanup:
 - **Wi-Fi**: Automatically restored when the script completes or encounters an error
@@ -264,7 +270,28 @@ Measures energy consumption and executing time by running the program using the 
 sudo ../../../RAPL/main "./my_program [input]" [language] [program] $(n_times) $(variance) $(time_out_limit) $(sleep_secs)
 ```
 
-## 4. `clean`
+## 4. `perf`
+
+**Command:**
+```sh
+sudo make perf
+```
+Uses Linux `perf` to gather the following CPU performance metrics:
+
+| Metric                              | Description                                                          |
+|-------------------------------------|----------------------------------------------------------------------|
+| `cycles`                            | The total number of CPU cycles consumed by the program.             |
+| `instructions`                      | The total number of instructions executed by the program.           |
+| `cache-misses`                      | The total number of cache misses (both data and instruction cache). |
+| `branch-misses`                     | The total number of branch prediction misses.                       |
+| `stalled-cycles-frontend`           | The number of cycles the instruction fetch unit was stalled.        |
+| `stalled-cycles-backend`            | The number of cycles the instruction execution unit was stalled.    |
+| `resource_stalls.any`               | Total number of cycles where execution was stalled due to resource limitations. |
+| `mem_trans_retired.load_latency_gt_128` | Number of memory transactions with load latency greater than 128 cycles. |
+| `cpu-cycles`                        | Total number of CPU cycles, a repeat of the `cycles` metric.        |
+| `uops_executed.stall_cycles`        | Number of cycles during which micro-operations (uops) were stalled. |
+
+## 5. `clean`
 
 **Command:**
 ```sh

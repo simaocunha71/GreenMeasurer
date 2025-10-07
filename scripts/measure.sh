@@ -46,6 +46,13 @@ if [ "$#" -lt 1 ]; then
     exit 1
 fi
 
+# Check for -perf mode
+PERF_MODE=0
+if [[ "$1" == "-perf" ]]; then
+    PERF_MODE=1
+    shift # Remove -perf from arguments
+fi
+
 # Select languages
 if [[ "$1" == "all" ]]; then
     SELECTED_LANGUAGES=("${VALID_LANGUAGES[@]}")
@@ -63,7 +70,7 @@ else
 fi
 
 # Define number of times to execute each program
-NTIMES=10
+NTIMES=3
 
 # Define time limit (here it's in hours) for the execution of each program
 TIME_OUT_LIMIT=4
@@ -72,7 +79,7 @@ TIME_OUT_LIMIT=4
 VARIANCE=5
 
 # Define the number of seconds for the idle execution and for temperature calibration
-IDLE_SECONDS=60
+IDLE_SECONDS=3
 
 # Define power cap values
 POWER_CAPS=(-1 2)
@@ -86,7 +93,13 @@ gcc -fPIC -shared -o sensors.so sensors.c
 cd ..
 
 # Initialize output CSV
-echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory" > measurements.csv
+if [[ $PERF_MODE -eq 1 ]]; then
+    OUT_CSV="perf_stats.csv"
+    echo "Language,Program,Powercap,cycles,instructions,cache-misses,branch-misses,stalled-cycles-frontend,stalled-cycles-backend,resource_stalls.any,mem_trans_retired.load_latency_gt_128,cpu-cycles,uops_executed.stall_cycles" > "$OUT_CSV"
+else
+    OUT_CSV="measurements.csv"
+    echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory" > "$OUT_CSV"
+fi
 
 # Run benchmarks for each power cap
 for cap in "${POWER_CAPS[@]}"; do
@@ -112,12 +125,20 @@ for cap in "${POWER_CAPS[@]}"; do
                     cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
 
                     make compile
-                    make measure n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
-
-                    if [ -f "measurements.csv" ]; then
-                        tail -n +2 measurements.csv >> ../../../measurements.csv
+                    if [[ $PERF_MODE -eq 1 ]]; then
+                        make perf n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS language="$lang" program="$(basename "$program_dir")"
+                        if [ -f "perf_stats.csv" ]; then
+                            tail -n +2 perf_stats.csv >> ../../../perf_stats.csv
+                        else
+                            echo "Warning: perf_stats.csv not found in $program_dir"
+                        fi
                     else
-                        echo "Warning: measurements.csv not found in $program_dir"
+                        make measure n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
+                        if [ -f "measurements.csv" ]; then
+                            tail -n +2 measurements.csv >> ../../../measurements.csv
+                        else
+                            echo "Warning: measurements.csv not found in $program_dir"
+                        fi
                     fi
 
                     make clean
@@ -129,6 +150,7 @@ for cap in "${POWER_CAPS[@]}"; do
             fi
         done
     done
+
 done
 
 # Clean RAPL
