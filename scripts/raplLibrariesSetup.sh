@@ -9,9 +9,6 @@ sudo apt install cmake
 echo "#### Installing lm-sensors"
 sudo apt install lm-sensors
 
-echo "### Installing Sloc Cloc and Code (scc)"
-sudo snap install scc
-
 echo "#### Installing Powercap"
 git clone https://github.com/powercap/powercap.git
 cd powercap
@@ -21,7 +18,6 @@ cmake ..
 make
 make install
 cd ../..
-
 
 echo "#### Installing package config"
 sudo apt install pkg-config
@@ -39,3 +35,9 @@ cd ../../
 
 echo "#### Installing Perf"
 sudo apt-get install linux-tools-common linux-tools-generic linux-tools-`uname -r`
+
+echo "#### Installing pip3"
+sudo apt install python3-pip
+
+echo "#### Installing pandas"
+pip3 install pandas

@@ -138,6 +138,3 @@ cd ..
 
 # Script completed successfully - cleanup will be handled by the trap
 echo "Measurement process completed successfully."
-
-# Optional reboot
-# sudo reboot

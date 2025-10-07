@@ -177,7 +177,7 @@ To perform energy measurements on a specific program, use the following syntax:
 | `<variance>`      | Acceptable temperature variance (in Celsius, must be ≥ 0)                   |
 | `<time_out_limit>`| Timeout limit per execution (in minutes, must be > 0)                       |
 | `<sleep_time>`    | Idle time before execution (in seconds, must be ≥ 0)                        |
-| `<powercap>`      | Power cap in watts (-1 for no power cap, or ≥ 1 for power cap)              |
+| `<powercap>`      | Power cap in watts (-1 for no power cap, or > 0 for power cap)             |
 
 ### Examples
 
@@ -188,7 +188,7 @@ make
 # Run with 15W power cap
 sudo -E ./main "./my_program" C my_program 5 3 20 10 15
 
-# Run without power cap
+# Run without power cap (set to -1)
 sudo -E ./main "./my_program" C my_program 5 3 20 10 -1
 
 # Python example with 20W power cap

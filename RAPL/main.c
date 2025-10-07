@@ -1,13 +1,4 @@
 /*
- * GreenMeasurer - Energy Consumption Measurement Framework
- * 
- * A comprehensive tool for measuring energy consumption of programs
- * across multiple programming languages using RAPL technology.
- * 
- * Authors: Simão Cunha, João Saraiva
- * University of Minho
- */
-/*
  * Authors: Simão Cunha, João Saraiva
  * University of Minho, Portugal
  */
@@ -678,7 +669,7 @@ int main(int argc, char **argv) {
    }
    
    if (powercap < -1 || powercap == 0) {
-       fprintf(stderr, "[ERROR] powercap must be -1 (no power cap) or >= 1 (power cap in watts).\n");
+       fprintf(stderr, "[ERROR] powercap must be -1 (no power cap) or > 0 (power cap in watts).\n");
        return -1;
    }
    
@@ -688,9 +679,8 @@ int main(int argc, char **argv) {
 
    int memory = measureMemoryUsage(command);
 
-   if (powercap != -1) {
-       if (initializeRapl(&rc, powercap))
-           return -1;
+   if (initializeRapl(&rc, powercap) != 0) {
+        return -1;
    }
    
    // Command to execute for measuring metrics while the OS is idle
@@ -705,14 +695,12 @@ int main(int argc, char **argv) {
    runTesting(n_times, core, command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, 0);
    printf("\n\n END of PARAMETRIZED PROGRAM: \n");
 
-   if (powercap != -1) {
-       if (raplcap_destroy(&rc)) {
-           printf("[ERROR] Error destroying CAP\n");
-           perror("[ERROR] raplcap_destroy");
-       } else {
-           printf("[INFO] Successfully destroyed CAP\n");
-       }
-   }
+    if (raplcap_destroy(&rc)) {
+        printf("[ERROR] Error destroying CAP\n");
+        perror("[ERROR] raplcap_destroy");
+    } else {
+        printf("[INFO] Successfully destroyed CAP\n");
+    }
 
    return 0;
 }
