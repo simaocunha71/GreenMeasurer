@@ -70,7 +70,7 @@ else
 fi
 
 # Define number of times to execute each program
-NTIMES=3
+NTIMES=10
 
 # Define time limit (here it's in hours) for the execution of each program
 TIME_OUT_LIMIT=4
@@ -79,7 +79,7 @@ TIME_OUT_LIMIT=4
 VARIANCE=5
 
 # Define the number of seconds for the idle execution and for temperature calibration
-IDLE_SECONDS=3
+IDLE_SECONDS=60
 
 # Define power cap values
 POWER_CAPS=(-1 2)
