@@ -301,6 +301,33 @@ make clean
 Removes generated files and cleans up the project directory.
 
 ---
+
+## Over-time session mode
+
+This feature allows running a program while a background thread records the energy consumption of the **Package**, **Core**, **DRAM**, and **GPU** components during its execution.  
+You can specify an **interval** (in milliseconds) that determines how often the measurements are recorded.
+
+Usage:
+
+```bash
+sudo -E ./main --over-time "<command>" <interval-ms> <language> <program> [ -powercap WATT ] [ -sleep-secs SECS ]
+```
+
+Options:
+- `<command>`: Command to execute while logging (quote if it contains spaces).
+- `<interval-ms>`: Logging interval in milliseconds (positive integer).
+- `<language>`: Programming language label (e.g., `C`, `Python`).
+- `<program>`: Program identifier/name used in CSV output.
+- `-powercap WATTS`: Optional power cap in watts (use `-1` for no cap). Defaults to `-1`.
+- `-sleep-secs SECS`: Optional quick temperature calibration sleep (seconds) used before measuring. Defaults to `30`.
+
+Example:
+
+```bash
+# Log every 100 ms while running a program once and do a temperature calibration of 60 seconds
+sudo -E ./main --over-time "./my_program" 100 C my_program -powercap 15 -sleep-secs 60
+```
+---
 ### NOTE
 
 1. The `config.env` file contains the paths to all interpreters and compilers installed on your machine - you may need to update these paths to match your system configuration.

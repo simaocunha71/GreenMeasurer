@@ -18,9 +18,22 @@
 #include <string.h>
 #include <regex.h>
 #include <sys/time.h>
-#include <unistd.h>
 
 void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE, int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int idle);
+
+// Forward declarations for over-time mode (only used when --over-time flag is passed)
+struct OverTimeCtx {
+    volatile int run_flag;
+    long usecs;
+    char language[128];
+    char program[128];
+    float baseline_temperature;
+    int powercap; // -1 = no cap, >0 = watts
+    int calib_secs; // seconds to run temperature calibration (over-time mode)
+};
+
+void runOverTimeMode(struct OverTimeCtx *ctx, const char *command);
+void *runRaplLogger(void *arg);
 
 
 // Structure to hold function return value and timeout flag
@@ -33,7 +46,6 @@ struct ThreadData threadData;
 
 
 int initializeRapl(raplcap *rc, int POWERCAP){
-    printf("Running with CAP\n");
     raplcap_limit rl_short, rl_long;
     uint32_t q, j, n, d;
 
@@ -490,7 +502,130 @@ int main(int argc, char **argv) {
    int variance = 0;
    int time_out_limit = 0;
 
+   // Detect --over-time used for single-session over-time mode.
+   int over_idx = -1;
+   for (int i = 1; i < argc; ++i) {
+       if (strcmp(argv[i], "--over-time") == 0) { over_idx = i; break; }
+   }
+   if (over_idx != -1) {
+      // Flexible parsing: collect remaining positional args
+      // Defaults
+      int powercap_arg = -1;
+      int calib_secs_arg = 30; // default quick calibration time (seconds)
 
+      // Mark tokens to skip (flags and their values and the --over-time token)
+      char skip[argc];
+      for (int i = 0; i < argc; ++i) skip[i] = 0;
+      skip[0] = 1; // executable name
+      skip[over_idx] = 1; // remove --over-time itself
+
+      for (int i = 1; i < argc; ++i) {
+           if (strcmp(argv[i], "-powercap") == 0 && i+1 < argc) {
+                powercap_arg = atoi(argv[i+1]);
+                if (powercap_arg < -1 || powercap_arg == 0) {
+                  fprintf(stderr, "[ERROR] invalid powercap: %s (use -1 for no cap or >=1)\n", argv[i+1]);
+                  return -1;
+              }
+              skip[i] = 1; skip[i+1] = 1; i++;
+              continue;
+          }
+         if (strcmp(argv[i], "-sleep-secs") == 0 && i+1 < argc) {
+              calib_secs_arg = atoi(argv[i+1]);
+              if (calib_secs_arg <= 0) {
+                  fprintf(stderr, "[ERROR] invalid sleep-secs: %s (must be > 0)\n", argv[i+1]);
+                  return -1;
+              }
+              skip[i] = 1; skip[i+1] = 1; i++;
+              continue;
+          }
+       }
+
+      // Build list of positional tokens (command, interval, language, program expected)
+      const char *pos[argc];
+      int posc = 0;
+      for (int i = 1; i < argc; ++i) {
+          if (!skip[i]) {
+              pos[posc++] = argv[i];
+          }
+      }
+
+      if (posc < 4) {
+          fprintf(stderr, "[ERROR] Usage: %s <command> <interval-ms> <language> <program> --over-time\n", argv[0]);
+          return -1;
+      }
+
+      char cli_command[500];
+      char cli_language[256] = "";
+      char cli_program[256] = "";
+      long interval_ms = 0;
+      float baseline_temp = 0.0;
+
+      strncpy(cli_command, pos[0], sizeof(cli_command)-1);
+      cli_command[sizeof(cli_command)-1] = '\0';
+      interval_ms = atol(pos[1]);
+      strncpy(cli_language, pos[2], sizeof(cli_language)-1);
+      cli_language[sizeof(cli_language)-1] = '\0';
+      strncpy(cli_program, pos[3], sizeof(cli_program)-1);
+      cli_program[sizeof(cli_program)-1] = '\0';
+
+      if (interval_ms <= 0) {
+          fprintf(stderr, "[ERROR] interval-ms must be a positive integer\n");
+          return -1;
+      }
+
+      if (access("/tmp/cores_temperatures.txt", F_OK) != 0) {
+        printf("[WARNING] Over time session: File /tmp/cores_temperatures.txt not found. Running temperature calibration...\n");
+        baseline_temp = calibrateTemperature(calib_secs_arg);
+      } else {
+        printf("[INFO] Over time session: File /tmp/cores_temperatures.txt found. Skipping temperature calibration.\n");
+      }
+
+      baseline_temp = getInitialTemperature();
+
+      struct OverTimeCtx ctx;
+      ctx.run_flag = 0;
+      ctx.usecs = interval_ms * 1000; // convert ms to microseconds
+      ctx.powercap = powercap_arg;
+      ctx.calib_secs = calib_secs_arg;
+      ctx.baseline_temperature = baseline_temp;
+      strncpy(ctx.language, cli_language, sizeof(ctx.language)-1);
+      ctx.language[sizeof(ctx.language)-1] = '\0';
+      strncpy(ctx.program, cli_program, sizeof(ctx.program)-1);
+      ctx.program[sizeof(ctx.program)-1] = '\0';
+
+      if (ctx.powercap == -1) {
+          printf(
+              "[INFO] Starting in RAPL over-time mode (single session).\n"
+              "       Command:  %s\n"
+              "       Interval: %ld ms\n"
+              "       Language: %s\n"
+              "       Program:  %s\n"
+              "       Powercap: not used\n",
+              cli_command,
+              interval_ms,
+              ctx.language,
+              ctx.program
+          );
+      } else {
+          printf(
+              "[INFO] Starting in RAPL over-time mode (single session).\n"
+              "       Command:  %s\n"
+              "       Interval: %ld ms\n"
+              "       Language: %s\n"
+              "       Program:  %s\n"
+              "       Powercap: %d W\n",
+              cli_command,
+              interval_ms,
+              ctx.language,
+              ctx.program,
+              ctx.powercap
+          );
+      }
+
+
+       runOverTimeMode(&ctx, cli_command);
+       return 0;
+   }
 
    // Check for --help command
    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
@@ -500,34 +635,36 @@ int main(int argc, char **argv) {
        
        printf("  %s --powercap-calibration <min>-<max> <variance> <time_out_limit> <n_times> <secs_to_sleep> [compile_command] <run_command> <language> <program_name>\n", argv[0]);
        printf("      Calibrate the system's power cap by testing power limits within the specified range (e.g., 2-25 Watts) using a custom program.\n");
-       printf("      The process runs multiple tests within the given power cap range and applies the provided temperature variance (in °C) and time_out_limit (in minutes) for each test.\n");
+       printf("      The process runs multiple tests within the given power cap range and applies the provided temperature variance (in \u00B0C) and time_out_limit (in minutes) for each test.\n");
        printf("      For compiled languages: provide both compile_command and run_command.\n");
        printf("      For interpreted languages: provide only run_command (compile_command can be empty string \"\").\n");
        printf("      The n_times argument specifies how many times to run the program to gather data at each power cap setting.\n\n");
        
-   
+       
        printf("  %s <command> <language> <program> <n_times> <variance> <time_out_limit> <sleep_time> <powercap>\n", argv[0]);
        printf("      Run the specified command for the given program and language, repeating it <n_times> times.\n");
        printf("      Uses the provided variance (temperature) and time_out_limit (in minutes).\n");
        printf("      sleep_time specifies how long to idle before running the command (in seconds).\n");
        printf("      powercap specifies the power cap in watts (use -1 for no power cap, or any value >= 1).\n\n");
-   
-       printf("Arguments:\n");
-       printf("  <command>         The command to execute (e.g., './program').\n");
-       printf("  <language>        The programming language (e.g., 'C', 'Python').\n");
-       printf("  <program>         The name of the program being tested.\n");
-       printf("  <n_times>          Number of times to execute the command (must be > 0).\n");
-       printf("  <variance>        Acceptable temperature variance (>= 0).\n");
-       printf("  <time_out_limit>  Timeout limit in minutes (must be > 0).\n");
-       printf("  <sleep_time>      Idle time before execution in seconds (>= 0).\n");
-       printf("  <powercap>       Power cap in watts (-1 for no cap, or >= 1 for power cap).\n\n");
-   
+       
+       // over-time mode help
+       printf("over-time mode (single session):\n");
+       printf("  The program starts a short-lived over-time session that logs RAPL values to a file and runs the provided command once.\n\n");
+       printf("Forms:\n");
+       printf("  %s \"<command>\" <interval-ms> <language> <program> --over-time\n", argv[0]);
+       printf("  %s --over-time \"<command>\" <interval-ms> <language> <program>\n", argv[0]);
+       printf("  <command>        Command to execute while logging (quote if contains spaces).\n");
+       printf("  <interval-ms>    Logging interval in milliseconds (positive integer).\n");
+       printf("  -powercap WATT   Optional: power cap in watts (use -1 for no cap). Default: -1 (no cap).\n\n");
+
+       printf("Behavior:\n");
+       printf("  The program starts an over-time session, starts logging to a file at the requested interval, executes <command> once, then stops logging and exits.\n\n");
        printf("Examples:\n");
-       printf("  %s --temperature-calibration 10\n", argv[0]);
-       printf("  %s --powercap-calibration 2-25 5 120 30 7 \"gcc fibonacci.c -o fib\" \"./fib\" C fibonacci\n", argv[0]);
-       printf("  %s --powercap-calibration 2-25 5 120 30 7 \"\" \"python3 script.py\" Python script\n", argv[0]);
-       printf("  %s \"./my_program\" C my_program 5 3 2 10 15\n", argv[0]);
-   
+       printf("  %s \"./my_program --arg\" 100 --over-time\n", argv[0]);
+       printf("  %s --over-time \"./my_program --arg\" 100\n", argv[0]);
+       printf("\nNotes:\n");
+       printf("  - Use sudo if RAPL access or perf requires elevated privileges.\n");
+       
        return 0;
    }
 
@@ -703,4 +840,143 @@ int main(int argc, char **argv) {
     }
 
    return 0;
+}
+
+// Thread that logs RAPL values to a file while the session run_flag is true
+void *runRaplLogger(void *arg) {
+     struct OverTimeCtx *ctx = (struct OverTimeCtx *)arg;
+     int core = 0;
+     raplcap rc;
+
+     // We'll also maintain a central measurements file with the requested CSV layout
+     const char *measurements_path = "measurements_ot.csv";
+     FILE *mot = fopen(measurements_path, "a+");
+     if (!mot) {
+         perror("[ERROR] opening measurements_ot.csv");
+         pthread_exit(NULL);
+     }
+
+
+     initializeRapl(&rc, ctx->powercap);
+
+     // If the file is empty, write header
+     if (fseek(mot, 0, SEEK_END) == 0) {
+         long mpos = ftell(mot);
+         if (mpos == 0) {
+             fprintf(mot, "Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,Temperature\n");
+             fflush(mot);
+         }
+     }
+
+     // Ensure RAPL interface is initialized
+     while (rapl_init(core) != 0) {
+         sleep(1);
+     }
+
+     // sample counter and interval in ms
+     long sample_idx = 0;
+     long interval_ms = (ctx->usecs + 500) / 1000; // round to nearest ms
+
+     while (ctx->run_flag) {
+         // create an in-memory stream for this sample
+         char *mem = NULL;
+         size_t mem_sz = 0;
+         FILE *mfp = open_memstream(&mem, &mem_sz);
+         if (!mfp) {
+             perror("[ERROR] open_memstream");
+             break;
+         }
+
+         if (rapl_before(mfp, core) == -1) {
+             fclose(mfp); free(mem);
+             while (rapl_init(core) != 0) sleep(1);
+             continue;
+         }
+
+         fflush(mfp);
+         usleep(ctx->usecs);
+
+         if (ctx->run_flag) {
+             if (rapl_after(mfp, core) == -1) {
+                 fclose(mfp); free(mem);
+                 while (rapl_init(core) != 0) sleep(1);
+                 continue;
+             }
+
+             fflush(mfp);
+
+             // mem contains the textual output; extract last non-empty line
+             if (mem && mem_sz > 0) {
+                 // find last newline
+                 char *lastnl = mem_sz ? strrchr(mem, '\n') : NULL;
+                 char *line = lastnl ? lastnl + 1 : mem;
+                 // trim trailing newline/carriage
+                 size_t len = line ? strlen(line) : 0;
+                 while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) { line[--len] = '\0'; }
+                 if (len > 0) {
+                     // parse CSV tokens from line (Package,Core,GPU,DRAM)
+                     char pkg[128] = "";
+                     char core_s[128] = "";
+                     char gpu[128] = "";
+                     char dram[128] = "";
+                     char tmp[1024];
+                     strncpy(tmp, line, sizeof(tmp)-1);
+                     tmp[sizeof(tmp)-1] = '\0';
+                     char *t = strtok(tmp, ",");
+                     if (t) strncpy(pkg, t, sizeof(pkg)-1);
+                     t = strtok(NULL, ","); if (t) strncpy(core_s, t, sizeof(core_s)-1);
+                     t = strtok(NULL, ","); if (t) strncpy(gpu, t, sizeof(gpu)-1);
+                     t = strtok(NULL, ","); if (t) strncpy(dram, t, sizeof(dram)-1);
+
+                     // Time is sample_idx * interval_ms (milliseconds)
+                     long elapsed_ms = sample_idx * interval_ms;
+                     char timebuf[64];
+                     snprintf(timebuf, sizeof(timebuf), "%ld", elapsed_ms);
+
+                     // Temperature reading
+                     double temperature = getTemperature(); char tempbuf[32]; snprintf(tempbuf, sizeof(tempbuf), "%.2f", temperature);
+
+                     const char *lang = ctx->language[0] ? ctx->language : "";
+                     const char *prog = ctx->program[0] ? ctx->program : "";
+                     /* Use the powercap value provided on the CLI for the Powercap CSV column */
+                     int powercap_val = ctx->powercap;
+                     
+                     fprintf(mot, "%s,%s,%d,%s,%s,%s,%s,%s,%s\n",
+                             lang, prog, powercap_val,
+                             pkg, core_s, gpu, dram,
+                             timebuf, tempbuf);
+                     fflush(mot);
+
+                     sample_idx++;
+                 }
+             }
+         }
+
+         fclose(mfp);
+         free(mem);
+     }
+
+     fclose(mot);
+     raplcap_destroy(&rc) != 0;
+     pthread_exit(NULL);
+     return NULL;
+ }
+
+// Over-time mode: start logging thread, execute command, then stop
+void runOverTimeMode(struct OverTimeCtx *ctx, const char *command) {
+    pthread_t raplThread;
+    ctx->run_flag = 1;
+    if (pthread_create(&raplThread, NULL, runRaplLogger, ctx) != 0) {
+        perror("[ERROR] pthread_create(runRaplLogger)");
+        ctx->run_flag = 0;
+        return;
+    }
+
+    runCommand(command);
+
+    // stop logging and wait for thread
+    ctx->run_flag = 0;
+    pthread_join(raplThread, NULL);
+
+    printf("[INFO] over-time session finished\n");
 }
