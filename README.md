@@ -87,11 +87,17 @@ sudo -E bash scripts/measure.sh Python "C#" Rust
 ```
 If a specified language or directory is not found, the script will exit with an error message.
 
-**NOTE**: To collect CPU performance metrics (using Linux perf) for all programs, run the measurement script with the `-perf` flag:
+**NOTE 1**: To collect CPU performance metrics (using Linux perf) for all programs, run the measurement script with the `-perf` flag:
 ```bash
 sudo -E bash scripts/measure.sh -perf <language1> [language2] ... | all
 ```
-This will aggregate all results in the top-level perf_stats.csv file.
+This will aggregate all results in the top-level `perf_stats.csv` file.
+
+**NOTE 2**: To collect CPU performance metrics over time for all programs, run the measurement script with the `-overtime` flag:
+```bash
+sudo -E bash scripts/measure.sh -overtime <language1> [language2] ... | all
+```
+This will aggregate all results in the top-level `measurements_ot.csv` file.
 
 ### Automatic System Restoration
 The measurement script automatically handles system cleanup:

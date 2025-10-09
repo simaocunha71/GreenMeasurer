@@ -53,6 +53,13 @@ if [[ "$1" == "-perf" ]]; then
     shift # Remove -perf from arguments
 fi
 
+# Check for -overtime mode
+OVERTIME_MODE=0
+if [[ "$1" == "-overtime" ]]; then
+    OVERTIME_MODE=1
+    shift # Remove -overtime from arguments
+fi
+
 # Select languages
 if [[ "$1" == "all" ]]; then
     SELECTED_LANGUAGES=("${VALID_LANGUAGES[@]}")
@@ -81,6 +88,9 @@ VARIANCE=5
 # Define the number of seconds for the idle execution and for temperature calibration
 IDLE_SECONDS=60
 
+# Define interval for overtime measurements (in milliseconds)
+INTERVAL=100
+
 # Define power cap values
 POWER_CAPS=(-1 2)
 
@@ -96,6 +106,9 @@ cd ..
 if [[ $PERF_MODE -eq 1 ]]; then
     OUT_CSV="perf_stats.csv"
     echo "Language,Program,Powercap,cycles,instructions,cache-misses,branch-misses,stalled-cycles-frontend,stalled-cycles-backend,resource_stalls.any,mem_trans_retired.load_latency_gt_128,cpu-cycles,uops_executed.stall_cycles" > "$OUT_CSV"
+elif [[ $OVERTIME_MODE -eq 1 ]]; then
+    OUT_CSV="measurements_ot.csv"
+    echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,Temperature" > "$OUT_CSV"
 else
     OUT_CSV="measurements.csv"
     echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory" > "$OUT_CSV"
@@ -126,11 +139,18 @@ for cap in "${POWER_CAPS[@]}"; do
 
                     make compile
                     if [[ $PERF_MODE -eq 1 ]]; then
-                        make perf n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS language="$lang" program="$(basename "$program_dir")"
+                        make perf n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
                         if [ -f "perf_stats.csv" ]; then
                             tail -n +2 perf_stats.csv >> ../../../perf_stats.csv
                         else
                             echo "Warning: perf_stats.csv not found in $program_dir"
+                        fi
+                    elif [[ $OVERTIME_MODE -eq 1 ]]; then
+                        make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS
+                        if [ -f "measurements_ot.csv" ]; then
+                            tail -n +2 measurements_ot.csv >> ../../../measurements_ot.csv
+                        else
+                            echo "Warning: measurements_ot.csv not found in $program_dir"
                         fi
                     else
                         make measure n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
@@ -150,7 +170,6 @@ for cap in "${POWER_CAPS[@]}"; do
             fi
         done
     done
-
 done
 
 # Clean RAPL

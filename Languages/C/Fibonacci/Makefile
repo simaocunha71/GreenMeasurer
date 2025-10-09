@@ -7,7 +7,8 @@ powercap ?= -1
 language ?= C
 program ?= fibonacci
 export n_times
-command = ./fib $(input)
+command ?= ./fib $(input)
+interval ?= 100
 
 include ../../../config.env
 
@@ -31,6 +32,10 @@ perf:
 		awk '{if ($$1 == "<not") print "not supported"; else print $$1}' | tr '\n' ',' | sed 's/,$$//' | \
 		awk -v powercap="$(powercap)" -v language="$(language)" -v program="$(program)" '{print language "," program "," powercap "," $$0}' >> perf_stats.csv; \
 	done
+
+overtime:
+	sudo ../../../RAPL/main --over-time "$(command)" $(interval) $(language) $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) 
+
 run:
 	$(command)
 
