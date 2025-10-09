@@ -1,37 +1,44 @@
 #include "sensors.h"
 
 float getTemperature() {
-    char command[100];
-    char output[200];
+    FILE *fp = popen("sensors", "r");
+    if (!fp) {
+        perror("[ERROR] Failed to run sensors command");
+        return -1.0;
+    }
+
+    char line[256];
     float temperature, mean_temp = 0.0;
     int count = 0;
 
-    // Run sensors command and capture output
-    int status = system("sensors > temp.txt");
-    if (status != 0) {
-        printf("[ERROR] Error executing command: sensors > temp.txt\n");
-        return -1;
-    }
-    FILE* temp_file = fopen("temp.txt", "r");
-        
-    // Parse temperature from output
-    while(fgets(output, 200, temp_file)) {
-        if(strstr(output, "Core")) {
-            sscanf(output, "Core %*d: +%f°C", &temperature);
-            mean_temp += temperature;
-            count++;
+    while (fgets(line, sizeof(line), fp)) {
+        if (strstr(line, "Core")) {
+            char *plus = strchr(line, '+');
+            if (plus) {
+                temperature = atof(plus + 1);
+                mean_temp += temperature;
+                count++;
+            }
         }
     }
 
-    if (count > 0)
-        mean_temp /= count;
-        
-    fclose(temp_file);
-    remove("temp.txt");
-    printf("\n[INFO] Current average temperature in all cores is %.10f°C\n", mean_temp);
+    int status = pclose(fp);
+    if (status == -1) {
+        perror("[ERROR] Error closing pipe");
+        return -1.0;
+    }
+
+    if (count == 0) {
+        fprintf(stderr, "[ERROR] No core temperatures found.\n");
+        return -1.0;
+    }
+
+    mean_temp /= count;
+    printf("[INFO] Average CPU temperature: %.2f°C\n", mean_temp);
 
     return mean_temp;
 }
+
 
 float getInitialTemperature() {
     FILE *file = fopen("/tmp/cores_temperatures.txt", "r");

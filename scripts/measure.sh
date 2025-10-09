@@ -146,7 +146,7 @@ for cap in "${POWER_CAPS[@]}"; do
                             echo "Warning: perf_stats.csv not found in $program_dir"
                         fi
                     elif [[ $OVERTIME_MODE -eq 1 ]]; then
-                        make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS
+                        make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE
                         if [ -f "measurements_ot.csv" ]; then
                             tail -n +2 measurements_ot.csv >> ../../../measurements_ot.csv
                         else
@@ -177,5 +177,4 @@ cd RAPL/
 make clean
 cd ..
 
-# Script completed successfully - cleanup will be handled by the trap
-echo "Measurement process completed successfully."
+echo "Measurement process completed."

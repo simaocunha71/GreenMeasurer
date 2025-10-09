@@ -2,7 +2,7 @@ n_times ?= 3
 time_out_limit ?= 4
 variance ?= 5
 sleep_secs ?= 10
-input ?= 45
+input ?= 55
 powercap ?= -1
 language ?= C
 program ?= fibonacci
@@ -34,7 +34,8 @@ perf:
 	done
 
 overtime:
-	sudo ../../../RAPL/main --over-time "$(command)" $(interval) $(language) $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) 
+	sudo modprobe msr
+	sudo ../../../RAPL/main --over-time "$(command)" $(interval) $(language) $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
 
 run:
 	$(command)
