@@ -297,7 +297,34 @@ Uses Linux `perf` to gather the following CPU performance metrics:
 | `cpu-cycles`                        | Total number of CPU cycles, a repeat of the `cycles` metric.        |
 | `uops_executed.stall_cycles`        | Number of cycles during which micro-operations (uops) were stalled. |
 
-## 5. `clean`
+## 5. `overtime`
+
+**Command:**
+```sh
+sudo make overtime
+```
+Collects the following metrics:
+
+|      Metric       | Description                                                                 |
+|-------------------|-----------------------------------------------------------------------------|
+| **Language**      | Programming language                                                        |
+| **Program**       | Program name                                                                |
+| **Powercap**      | Power cap value applied (Watts)                                             |
+| **Package**       | Energy used by the full socket (cores + GPU + other components)             |
+| **Core**          | Energy used by CPU cores and caches                                         |
+| **GPU**           | Energy used by GPU                                                          |
+| **DRAM**          | Energy used by RAM                                                          |
+| **Timestamp**     | Timestamp for each measurement interval (in milliseconds)                   |
+| **Temperature**   | Average core temperature at a certain timestamp (in Celsius)                |
+
+This command runs a program once and, over time, collects all the metrics listed above at each timestamp interval.
+
+**Command breakdown:**
+```sh
+sudo ../../../RAPL/main --over-time "$(command)" $(interval) $(language) $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
+```
+
+## 6. `clean`
 
 **Command:**
 ```sh
