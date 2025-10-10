@@ -640,14 +640,7 @@ void *runRaplLogger(void *arg) {
 
 /* Over-time mode runner */
 void runOverTimeMode(struct OverTimeCtx *ctx, const char *command) {
-    float temperature = getTemperature();
 
-    while (temperature > ctx->baseline_temperature + ctx->temperature_variance) {
-        printf("[INFO] Sleeping 1 second... Current temperature: %.1f°C | Reference temperature: %.1f°C + Variance: %d°C | Waiting for temperature to drop below reference...\n",
-               temperature, ctx->baseline_temperature, ctx->temperature_variance);
-        sleep(1);
-        temperature = getTemperature();
-    }
 
     pthread_t raplThread;
     ctx->run_flag = 1;
@@ -764,10 +757,32 @@ int main(int argc, char **argv) {
         strncpy(ctx.language, cli_language, sizeof(ctx.language)-1); ctx.language[sizeof(ctx.language)-1] = '\0';
         strncpy(ctx.program, cli_program, sizeof(ctx.program)-1); ctx.program[sizeof(ctx.program)-1] = '\0';
 
-        printf("[INFO] Starting in RAPL over-time mode (single session).\n       Command: %s\n       Interval: %ld ms\n       Language: %s\n       Program: %s\n       Powercap: %s\n       Variance: %d\n",
+        char powercap_str[32];
+        if (ctx.powercap == -1)
+            snprintf(powercap_str, sizeof(powercap_str), "not used");
+        else
+            snprintf(powercap_str, sizeof(powercap_str), "%d W", ctx.powercap);
+            
+        printf("[INFO] Starting in RAPL over-time mode (single session).\n"
+               "       Command: %s\n"
+               "       Interval: %ld ms\n"
+               "       Language: %s\n"
+               "       Program: %s\n"
+               "       Powercap: %s\n"
+               "       Variance: %d\n",
                cli_command, interval_ms, ctx.language, ctx.program,
-               (ctx.powercap == -1 ? "not used" : "used"),
-               ctx.temperature_variance);
+               powercap_str, ctx.temperature_variance);
+
+
+
+        float temperature = getTemperature();
+
+        while (temperature > ctx.baseline_temperature + ctx.temperature_variance) {
+            printf("[INFO] Sleeping 1 second... Current temperature: %.1f°C | Reference temperature: %.1f°C + Variance: %d°C | Waiting for temperature to drop below reference...\n",
+                   temperature, ctx.baseline_temperature, ctx.temperature_variance);
+            sleep(1);
+            temperature = getTemperature();
+        }
 
         runOverTimeMode(&ctx, cli_command);
         return 0;

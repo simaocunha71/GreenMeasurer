@@ -154,44 +154,29 @@ int detect_cpu(void) {
 }
 
 int rapl_init(int core) {
-  int fd;
-  uint64_t result;
+    int fd;
+    uint64_t result;
 
-  cpu_model = detect_cpu();
-  if (cpu_model < 0) {
-      printf("[ERROR] Unsupported CPU type\n");
-      return -1;
-  }
+    cpu_model = detect_cpu();
+    if (cpu_model < 0) {
+        printf("[ERROR] Unsupported CPU type\n");
+        return -1;
+    }
 
-  fd = open_msr(core);
+    fd = open_msr(core);
+    result = read_msr(fd, MSR_RAPL_POWER_UNIT);
+    close(fd);  // ✅ fechar o descritor
 
-  while (1) {
-      result = read_msr(fd, MSR_RAPL_POWER_UNIT);
+    if (result == (uint64_t)-1) {
+        fprintf(stderr, "[ERROR] Failed to read MSR_RAPL_POWER_UNIT\n");
+        return -1;
+    }
 
-      if (result == (uint64_t)-1) {
-          fprintf(stderr, "[ERROR] Failed to read MSR_RAPL_POWER_UNIT\n");
-          return -1;
-      }
+    power_units  = pow(0.5, (double)(result & 0xf));
+    energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
+    time_units   = pow(0.5, (double)((result >> 16) & 0xf));
 
-      power_units  = pow(0.5, (double)(result & 0xf));
-      energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
-      time_units   = pow(0.5, (double)((result >> 16) & 0xf));
-
-      if (power_units >= 0 && energy_units >= 0 && time_units >= 0) {
-          break;
-      } else {
-          if (power_units < 0)
-              fprintf(stderr, "[ERROR] Negative RAPL unit detected: power_units = %f. Retrying...\n", power_units);
-          if (energy_units < 0)
-              fprintf(stderr, "[ERROR] Negative RAPL unit detected: energy_units = %f. Retrying...\n", energy_units);
-          if (time_units < 0)
-              fprintf(stderr, "[ERROR] Negative RAPL unit detected: time_units = %f. Retrying...\n", time_units);
-          
-          sleep(5);  // Wait 5 seconds before retrying
-      }
-  }
-
-  return 0;
+    return 0;
 }
 
 void show_power_info(int core) {
@@ -201,6 +186,7 @@ void show_power_info(int core) {
 
   fd = open_msr(core);
   result = read_msr(fd, MSR_PKG_POWER_INFO);
+  close(fd);
 
   if (result == (uint64_t)-1) return;
 
@@ -223,6 +209,7 @@ void show_power_limit(int core) {
 
   fd = open_msr(core);
   result = read_msr(fd, MSR_PKG_RAPL_POWER_LIMIT);
+  close(fd);
 
   if (result == (uint64_t)-1) return;
 
@@ -299,6 +286,8 @@ int rapl_before(FILE *fp, int core) {
       flag = -1;
   }
 
+  close(fd);
+
   return flag;
 }
 
@@ -342,7 +331,9 @@ int rapl_after(FILE *fp, int core) {
       fprintf(stderr, "[WARNING]: dram_diff is negative: %f\n", dram_diff);
       has_negative = 1;
   }
-
+  
+  close(fd);
+  
   if (has_negative) {
       fprintf(stderr, "[ERROR]: Negative values detected - rapl_after().\n");
       return -1;
