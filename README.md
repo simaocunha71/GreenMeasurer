@@ -1,5 +1,5 @@
 # GreenMeasurer
-**A comprehensive framework for measuring energy consumption of programs across multiple programming languages**
+**A comprehensive framework for measuring energy consumption of your software**
 
 GreenMeasurer is a powerful tool that leverages RAPL (Running Average Power Limit) technology to provide accurate energy consumption measurements for any program, helping developers write more sustainable and energy-efficient code.
 
