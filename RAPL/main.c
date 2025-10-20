@@ -1,8 +1,3 @@
-/*
- * Authors: Simão Cunha, João Saraiva
- * University of Minho, Portugal
- */
-
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -790,13 +785,30 @@ int main(int argc, char **argv) {
 
     /* --help handling etc. (kept as in original) */
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
-        printf("Usage:\n");
+        printf("\nUsage:\n");
         printf("  %s --temperature-calibration <seconds>\n", argv[0]);
-        printf("  %s --powercap-calibration <min>-<max> <variance> <time_out_limit> <n_times> <secs_to_sleep> [compile_command] <run_command> <language> <program_name>\n", argv[0]);
-        printf("  %s <command> <language> <program> <n_times> <variance> <time_out_limit> <sleep_time> <powercap>\n", argv[0]);
-        printf("  Over-time form: %s \"<command>\" <interval-ms> <language> <program> --over-time\n", argv[0]);
+        printf("      Calibrates CPU temperature\n\n");
+
+        printf("  %s --powercap-calibration <min>-<max> <variance> <time_out_limit(min)> <n_times> <secs_to_sleep> [compile_command] <run_command> <language> <program_name>\n", argv[0]);
+        printf("      Runs a powercap calibration between <min> and <max> watts\n\n");
+
+        printf("  %s <command> <language> <program> <n_times> <variance> <time_out_limit(hrs)> <sleep_time(sec)> <powercap>\n", argv[0]);
+        printf("      Standard measurement mode.\n\n");
+
+        printf("  %s \"<command>\" <interval-ms> <language> <program> --over-time [-powercap X] [-sleep-secs Y] [-variance Z]\n", argv[0]);
+        printf("      Overtime measurement mode. Optional arguments:\n");
+        printf("          -powercap X     Apply a power cap (use -1 for no cap)\n");
+        printf("          -sleep-secs Y   Calibration delay before starting in seconds (default 30)\n");
+        printf("          -variance Z     Temperature tolerance in °C (default 0)\n\n");
+
+        printf("Examples:\n");
+        printf("  %s ./my_program C myprog 3 2 1 60 -1\n", argv[0]);
+        printf("  %s --temperature-calibration 20\n", argv[0]);
+        printf("  %s --powercap-calibration 40-60 3 10 3 30 gcc myprog.c ./myprog C myprog\n", argv[0]);
+        printf("  %s \"./myprog\" 1000 C myprog --over-time -powercap 45 -sleep-secs 20 -variance 3\n", argv[0]);
         return 0;
     }
+
 
     if (argc == 3 && strcmp(argv[1], "--temperature-calibration") == 0) {
         int sleepTime = atoi(argv[2]);
