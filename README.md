@@ -273,7 +273,7 @@ Measures energy consumption and executing time by running the program using the 
 
 **Command breakdown:**
 ```sh
-sudo ../../../RAPL/main "./my_program [input]" [language] [program] $(n_times) $(variance) $(time_out_limit) $(sleep_secs)
+sudo ./main "./my_program [input]" [language] [program] $(n_times) $(variance) $(time_out_limit) $(sleep_secs)
 ```
 
 ## 4. `perf`
@@ -321,7 +321,7 @@ This command runs a program once and, over time, collects all the metrics listed
 
 **Command breakdown:**
 ```sh
-sudo ../../../RAPL/main --over-time "$(command)" $(interval) $(language) $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
+sudo ./main --over-time "$(command)" $(interval) $(language) $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
 ```
 
 ## 6. `clean`
