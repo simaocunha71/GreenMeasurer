@@ -6,10 +6,8 @@ WIFI_INTERFACE="wlp2s0"  # Change this if your Wi-Fi interface has a different n
 # Function to restore system settings on exit
 cleanup() {
     echo "Cleaning up system settings..."
-    
-    # Turn Wi-Fi interface $WIFI_INTERFACE on
-    if ip link show $WIFI_INTERFACE > /dev/null 2>&1; then
-        sudo ip link set $WIFI_INTERFACE up
+    if ip link show "$WIFI_INTERFACE" > /dev/null 2>&1; then
+        sudo ip link set "$WIFI_INTERFACE" up
         echo "Wi-Fi interface $WIFI_INTERFACE turned on."
     fi
 }
@@ -17,9 +15,9 @@ cleanup() {
 # Set trap to call cleanup function on script exit (normal or error)
 trap cleanup EXIT
 
-# Turn Wi-Fi interface $WIFI_INTERFACE off 
-if ip link show $WIFI_INTERFACE > /dev/null 2>&1; then
-    sudo ip link set $WIFI_INTERFACE down
+# Turn Wi-Fi interface off
+if ip link show "$WIFI_INTERFACE" > /dev/null 2>&1; then
+    sudo ip link set "$WIFI_INTERFACE" down
     echo "Wi-Fi interface $WIFI_INTERFACE turned off."
 else
     echo "[ERROR] Wi-Fi interface $WIFI_INTERFACE not found."
@@ -39,26 +37,48 @@ is_valid_language() {
     return 1
 }
 
+# Function to show help
+show_help() {
+    echo "Usage: $0 [--perf] [--overtime] <language1> [language2] ... or 'all'"
+    echo
+    echo "Options:"
+    echo "  --perf       Run in perf measurement mode"
+    echo "  --overtime   Run in overtime measurement mode"
+    echo "  --help, -h   Show this help message"
+    echo
+    echo "Supported languages: ${VALID_LANGUAGES[*]}"
+    exit 0
+}
+
 # Ensure at least one argument is provided
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <language1> [language2] ... or 'all'"
-    echo "Supported languages: ${VALID_LANGUAGES[*]}"
-    exit 1
+    show_help
 fi
 
-# Check for -perf mode
+# Initialize modes
 PERF_MODE=0
-if [[ "$1" == "-perf" ]]; then
-    PERF_MODE=1
-    shift # Remove -perf from arguments
-fi
-
-# Check for -overtime mode
 OVERTIME_MODE=0
-if [[ "$1" == "-overtime" ]]; then
-    OVERTIME_MODE=1
-    shift # Remove -overtime from arguments
-fi
+
+# Process options
+while [[ "$1" == --* ]] || [[ "$1" == -h ]]; do
+    case "$1" in
+        --perf)
+            PERF_MODE=1
+            shift
+            ;;
+        --overtime)
+            OVERTIME_MODE=1
+            shift
+            ;;
+        --help|-h)
+            show_help
+            ;;
+        *)
+            echo "Unknown option: $1"
+            show_help
+            ;;
+    esac
+done
 
 # Select languages
 if [[ "$1" == "all" ]]; then
@@ -77,28 +97,28 @@ else
 fi
 
 # Define number of times to execute each program
-NTIMES=10
+NTIMES=3
 
-# Define time limit (here it's in hours) for the execution of each program
+# Define time limit (hours) for execution of each program
 TIME_OUT_LIMIT=4
 
 # Define the CPU temperature variance 
 VARIANCE=5
 
-# Define the number of seconds for the idle execution and for temperature calibration
-IDLE_SECONDS=60
+# Define the number of seconds for idle execution and temperature calibration
+IDLE_SECONDS=3
 
-# Define interval for overtime measurements (in milliseconds)
+# Define interval for overtime measurements (ms)
 INTERVAL=100
 
 # Define power cap values
-POWER_CAPS=(-1 2)
+POWER_CAPS=(-1)
 
 # Move to project root
 cd "$(dirname "$0")/.." || exit 1
 
 # Build RAPL sensor library
-cd RAPL
+cd RAPL || exit 1
 gcc -fPIC -shared -o sensors.so sensors.c
 cd ..
 
@@ -116,11 +136,11 @@ fi
 
 # Run benchmarks for each power cap
 for cap in "${POWER_CAPS[@]}"; do
-    cd RAPL/
+    cd RAPL || exit 1
     make clean
     make
     cd ..
-    
+
     for lang in "${SELECTED_LANGUAGES[@]}"; do
         lang_dir="Languages/$lang"
 
@@ -129,51 +149,49 @@ for cap in "${POWER_CAPS[@]}"; do
             continue
         fi
 
-        for program_dir in "$lang_dir"/*; do
-            if [ -d "$program_dir" ]; then
-                makefile_path="$program_dir/Makefile"
-                if [ -f "$makefile_path" ]; then
-                    echo "Processing $program_dir"
+        # Iterate over program directories safely (handles spaces)
+        find "$lang_dir" -mindepth 1 -maxdepth 1 -type d | while read -r program_dir; do
+            makefile_path="$program_dir/Makefile"
+            if [ -f "$makefile_path" ]; then
+                echo "Processing $program_dir"
+                cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
 
-                    cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
+                make compile
 
-                    make compile
-                    if [[ $PERF_MODE -eq 1 ]]; then
-                        make perf n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
-                        if [ -f "perf_stats.csv" ]; then
-                            tail -n +2 perf_stats.csv >> ../../../perf_stats.csv
-                        else
-                            echo "Warning: perf_stats.csv not found in $program_dir"
-                        fi
-                    elif [[ $OVERTIME_MODE -eq 1 ]]; then
-                        make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE
-                        if [ -f "measurements_ot.csv" ]; then
-                            tail -n +2 measurements_ot.csv >> ../../../measurements_ot.csv
-                        else
-                            echo "Warning: measurements_ot.csv not found in $program_dir"
-                        fi
+                if [[ $PERF_MODE -eq 1 ]]; then
+                    make perf n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
+                    if [ -f "perf_stats.csv" ]; then
+                        tail -n +2 perf_stats.csv >> "../../../$OUT_CSV"
                     else
-                        make measure n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
-                        if [ -f "measurements.csv" ]; then
-                            tail -n +2 measurements.csv >> ../../../measurements.csv
-                        else
-                            echo "Warning: measurements.csv not found in $program_dir"
-                        fi
+                        echo "Warning: perf_stats.csv not found in $program_dir"
                     fi
-
-                    make clean
-
-                    cd - > /dev/null
+                elif [[ $OVERTIME_MODE -eq 1 ]]; then
+                    make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE
+                    if [ -f "measurements_ot.csv" ]; then
+                        tail -n +2 measurements_ot.csv >> "../../../$OUT_CSV"
+                    else
+                        echo "Warning: measurements_ot.csv not found in $program_dir"
+                    fi
                 else
-                    echo "Makefile not found: $makefile_path"
+                    make measure n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
+                    if [ -f "measurements.csv" ]; then
+                        tail -n +2 measurements.csv >> "../../../$OUT_CSV"
+                    else
+                        echo "Warning: measurements.csv not found in $program_dir"
+                    fi
                 fi
+
+                make clean
+                cd - > /dev/null
+            else
+                echo "Makefile not found: $makefile_path"
             fi
         done
     done
 done
 
 # Clean RAPL
-cd RAPL/
+cd RAPL || exit 1
 make clean
 cd ..
 
