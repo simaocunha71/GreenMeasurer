@@ -24,7 +24,7 @@ GreenMeasurer is a powerful tool that leverages RAPL (Running Average Power Limi
 Install all dependencies by running:
 
 ```bash
-sudo bash scripts/raplLibrariesSetup.sh
+sudo bash scripts/install.sh
 ```
 
 ## Prerequisites and Configuration
