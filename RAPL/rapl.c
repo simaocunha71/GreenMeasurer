@@ -78,6 +78,7 @@ uint64_t read_msr(int fd, int which) {
 #define CPU_ATOM_GOLDMONT       92
 #define CPU_ATOM_GEMINI_LAKE    122
 #define CPU_ATOM_DENVERTON      95
+#define CPU_RAPTORLAKE          186
 
 int detect_cpu(void) {
     FILE *fff;
@@ -144,6 +145,7 @@ int detect_cpu(void) {
         case CPU_ATOM_GOLDMONT:          printf("[INFO] Found Atom Goldmont CPU\n"); break;
         case CPU_ATOM_GEMINI_LAKE:       printf("[INFO] Found Atom Gemini Lake CPU\n"); break;
         case CPU_ATOM_DENVERTON:         printf("[INFO] Found Atom Denverton CPU\n"); break;
+        case CPU_RAPTORLAKE:           printf("[INFO] Found Raptor Lake CPU\n"); break;
         default:
             fprintf(stderr, "[ERROR] Unsupported CPU model %d\n", model);
             model = -1;
