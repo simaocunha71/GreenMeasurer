@@ -145,7 +145,7 @@ int detect_cpu(void) {
         case CPU_ATOM_GOLDMONT:          printf("[INFO] Found Atom Goldmont CPU\n"); break;
         case CPU_ATOM_GEMINI_LAKE:       printf("[INFO] Found Atom Gemini Lake CPU\n"); break;
         case CPU_ATOM_DENVERTON:         printf("[INFO] Found Atom Denverton CPU\n"); break;
-        case CPU_RAPTORLAKE:           printf("[INFO] Found Raptor Lake CPU\n"); break;
+        case CPU_RAPTORLAKE:             printf("[INFO] Found Raptor Lake CPU\n"); break;
         default:
             fprintf(stderr, "[ERROR] Unsupported CPU model %d\n", model);
             model = -1;
@@ -162,12 +162,12 @@ int rapl_init(int core) {
     cpu_model = detect_cpu();
     if (cpu_model < 0) {
         printf("[ERROR] Unsupported CPU type\n");
-        return -1;
+        exit(EXIT_FAILURE);
     }
 
     fd = open_msr(core);
     result = read_msr(fd, MSR_RAPL_POWER_UNIT);
-    close(fd);  // ✅ fechar o descritor
+    close(fd);
 
     if (result == (uint64_t)-1) {
         fprintf(stderr, "[ERROR] Failed to read MSR_RAPL_POWER_UNIT\n");
