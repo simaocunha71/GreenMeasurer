@@ -112,7 +112,7 @@ IDLE_SECONDS=60
 INTERVAL=100
 
 # Define power cap values
-POWER_CAPS=(-1 4)
+POWER_CAPS=(-1 5)
 
 # Move to project root
 cd "$(dirname "$0")/.." || exit 1
