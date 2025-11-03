@@ -291,7 +291,7 @@ Uses Linux `perf` to gather the following CPU performance metrics expressed in `
 | `branch-misses`                     | The total number of branch prediction misses.                       |
 | `stalled-cycles-frontend`           | The number of cycles the instruction fetch unit was stalled.        |
 | `stalled-cycles-backend`            | The number of cycles the instruction execution unit was stalled.    |
-| `resource_stalls.sb`               | Total number of CPU cycles during which execution was stalled due to resource limitations. |
+| `resource_stalls.any`               | Total number of cycles where execution was stalled due to resource limitations. |
 | `mem_trans_retired.load_latency_gt_128` | Number of memory transactions with load latency greater than 128 cycles. |
 | `cpu-cycles`                        | Total number of CPU cycles, a repeat of the `cycles` metric.        |
 | `uops_executed.stall_cycles`        | Number of cycles during which micro-operations (uops) were stalled. |
