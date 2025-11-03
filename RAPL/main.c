@@ -907,12 +907,12 @@ int main(int argc, char **argv) {
     temperature_threshold = getInitialTemperature();
 
     printf("\n[INFO]\n======= Execution Details ========\n");
-    printf(" Command   : %s\n", command);
-    printf(" Language  : %s\n", language);
-    printf(" Program   : %s\n", program);
+    printf(" Command    : %s\n", command);
+    printf(" Language   : %s\n", language);
+    printf(" Program    : %s\n", program);
     printf(" N_times    : %d\n", n_times);
-    printf(" Variance  : %d°C\n", variance);
-    printf(" Timeout   : %d hours\n", time_out_limit);
+    printf(" Variance   : %d°C\n", variance);
+    printf(" Timeout    : %d hours\n", time_out_limit);
     printf(" Sleep_time : %d seconds\n", sleep_time);
     if (powercap == -1) printf(" PowerCap  : No power cap\n"); else printf(" PowerCap  : %d watts\n", powercap);
     printf(" Reference temperature : %.2f °C\n", temperature_threshold);
