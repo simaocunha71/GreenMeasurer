@@ -263,11 +263,11 @@ Runs the program - either runs a executable binary or runs a interpreted program
 ./my_program [input]
 ```
 
-## 3. `measure`
+## 3. `standard`
 
 **Command:**
 ```sh
-make measure
+make standard
 ```
 
 **Purpose:**  
