@@ -52,6 +52,7 @@ uint64_t read_msr(int fd, int which) {
 #include <stdio.h>
 #include <string.h>
 
+
 #define CPU_SANDYBRIDGE         42
 #define CPU_SANDYBRIDGE_EP      45
 #define CPU_IVYBRIDGE           58
@@ -78,7 +79,25 @@ uint64_t read_msr(int fd, int which) {
 #define CPU_ATOM_GOLDMONT       92
 #define CPU_ATOM_GEMINI_LAKE    122
 #define CPU_ATOM_DENVERTON      95
-#define CPU_RAPTORLAKE          186
+#define CANNONLAKE_L            102
+#define ICELAKE_L               126
+#define ICELAKE                 125
+#define COMETLAKE_L             166
+#define COMETLAKE               165
+#define TIGERLAKE_L             140
+#define TIGERLAKE               141
+#define ALDERLAKE               151
+#define ALDERLAKE_L             154
+#define ALDERLAKE_N             190
+#define RAPTORLAKE              183
+#define RAPTORLAKE_P            186
+#define RAPTORLAKE_S            191
+#define METEORLAKE              172
+#define METEORLAKE_L            170
+#define ICELAKE_D               108
+#define ICELAKE_X               106
+#define SAPPHIRERAPIDS_X        143
+#define EMERALDRAPIDS_X         207
 
 int detect_cpu(void) {
     FILE *fff;
@@ -145,7 +164,25 @@ int detect_cpu(void) {
         case CPU_ATOM_GOLDMONT:          printf("[INFO] Found Atom Goldmont CPU\n"); break;
         case CPU_ATOM_GEMINI_LAKE:       printf("[INFO] Found Atom Gemini Lake CPU\n"); break;
         case CPU_ATOM_DENVERTON:         printf("[INFO] Found Atom Denverton CPU\n"); break;
-        case CPU_RAPTORLAKE:             printf("[INFO] Found Raptor Lake CPU\n"); break;
+        case CANNONLAKE_L:               printf("[INFO] Found Cannon Lake-L CPU\n"); break;
+        case ICELAKE_L:                  printf("[INFO] Found Ice Lake-L CPU\n"); break;
+        case ICELAKE:                    printf("[INFO] Found Ice Lake CPU\n"); break;
+        case ICELAKE_D:                  printf("[INFO] Found Ice Lake-D CPU\n"); break;
+        case ICELAKE_X:                  printf("[INFO] Found Ice Lake X CPU\n"); break;
+        case COMETLAKE_L:                printf("[INFO] Found Comet Lake-L CPU\n"); break;
+        case COMETLAKE:                  printf("[INFO] Found Comet Lake CPU\n"); break;
+        case TIGERLAKE_L:                printf("[INFO] Found Tiger Lake-L CPU\n"); break;
+        case TIGERLAKE:                  printf("[INFO] Found Tiger Lake CPU\n"); break;
+        case ALDERLAKE:                  printf("[INFO] Found Alder Lake CPU\n"); break;
+        case ALDERLAKE_L:                printf("[INFO] Found Alder Lake-L CPU\n"); break;
+        case ALDERLAKE_N:                printf("[INFO] Found Alder Lake-N CPU\n"); break;
+        case RAPTORLAKE:                 printf("[INFO] Found Raptor Lake CPU\n"); break;
+        case RAPTORLAKE_P:               printf("[INFO] Found Raptor Lake-P CPU\n"); break;
+        case RAPTORLAKE_S:               printf("[INFO] Found Raptor Lake-S CPU\n"); break;
+        case METEORLAKE:                 printf("[INFO] Found Meteor Lake CPU\n"); break;
+        case METEORLAKE_L:               printf("[INFO] Found Meteor Lake-L CPU\n"); break;
+        case SAPPHIRERAPIDS_X:           printf("[INFO] Found Sapphire Rapids X CPU\n"); break;
+        case EMERALDRAPIDS_X:            printf("[INFO] Found Emerald Rapids X CPU\n"); break;
         default:
             fprintf(stderr, "[ERROR] Unsupported CPU model %d\n", model);
             model = -1;
