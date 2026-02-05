@@ -774,7 +774,7 @@ int main(int argc, char **argv) {
         printf("  %s --temperature-calibration -sleep-secs <seconds>\n", argv[0]);
         printf("      Calibrates CPU temperature (sleep before measuring)\n\n");
 
-        printf("  %s --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <minutes> -n_times <N> -secs_to_sleep <secs> [-compile_cmd \"<cmd>\"] -run_cmd \"<cmd>\" -language <language> -program <program>\n", argv[0]);
+        printf("  %s --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <hours> -n_times <N> -secs_to_sleep <secs> [-compile_cmd \"<cmd>\"] -run_cmd \"<cmd>\" -language <language> -program <program>\n", argv[0]);
         printf("      Runs a powercap calibration between <min> and <max> watts\n\n");
 
         printf("  %s --standard -command \"<command>\" -language <language> -program <program> -n_times <N> -variance <V> -time_out_limit <hours> -sleep_time <secs> -powercap <W>\n", argv[0]);
@@ -828,7 +828,7 @@ int main(int argc, char **argv) {
         char lang[500] = "";
         char program_name[500] = "";
         int variance_arg = -1;
-        int time_out_limit_min = -1; /* minutes */
+        int time_out_limit_hours = -1; /* hours */
 
         /* Parse named flags */
         for (int i = 2; i < argc; ++i) {
@@ -840,7 +840,7 @@ int main(int argc, char **argv) {
                 i++; continue;
             }
             if (strcmp(argv[i], "-variance") == 0 && i + 1 < argc) { variance_arg = atoi(argv[i+1]); i++; continue; }
-            if (strcmp(argv[i], "-time_out_limit") == 0 && i + 1 < argc) { time_out_limit_min = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-time_out_limit") == 0 && i + 1 < argc) { time_out_limit_hours = atoi(argv[i+1]); i++; continue; }
             if (strcmp(argv[i], "-secs_to_sleep") == 0 && i + 1 < argc) { secs_to_sleep = atoi(argv[i+1]); i++; continue; }
             if (strcmp(argv[i], "-n_times") == 0 && i + 1 < argc) { n_times_arg = atoi(argv[i+1]); i++; continue; }
             if (strcmp(argv[i], "-compile_cmd") == 0 && i + 1 < argc) { strncpy(compile_command, argv[i+1], sizeof(compile_command)-1); compile_command[sizeof(compile_command)-1] = '\0'; i++; continue; }
@@ -853,7 +853,7 @@ int main(int argc, char **argv) {
         }
 
         /* If named flags not provided, try legacy positional form for backward compatibility */
-        if (min_powercap == -1 || max_powercap == -1 || variance_arg == -1 || time_out_limit_min == -1 || secs_to_sleep == -1 || n_times_arg == -1 || strlen(run_command) == 0 || strlen(lang) == 0 || strlen(program_name) == 0) {
+        if (min_powercap == -1 || max_powercap == -1 || variance_arg == -1 || time_out_limit_hours == -1 || secs_to_sleep == -1 || n_times_arg == -1 || strlen(run_command) == 0 || strlen(lang) == 0 || strlen(program_name) == 0) {
             /* Attempt legacy parse if argument count matches */
             if (argc == 11 || argc == 10) {
                 int min_p, max_p, variance_l, time_out_limit_l, secs_sleep_l, n_times_l;
@@ -873,11 +873,11 @@ int main(int argc, char **argv) {
                 }
 
                 if (sscanf(argv[4], "%d", &time_out_limit_l) != 1 || time_out_limit_l <= 0) {
-                    fprintf(stderr, "[ERROR] Powercap calibration: Invalid time_out_limit. Must be positive (minutes).\n");
+                    fprintf(stderr, "[ERROR] Powercap calibration: Invalid time_out_limit. Must be positive (hours).\n");
                     return 1;
                 }
 
-                time_out_limit_min = time_out_limit_l;
+                time_out_limit_hours = time_out_limit_l;
 
                 if (sscanf(argv[5], "%d", &secs_sleep_l) != 1 || secs_sleep_l < 0) {
                     fprintf(stderr, "[ERROR] Powercap calibration: Invalid secs_to_sleep.\n");
@@ -912,13 +912,13 @@ int main(int argc, char **argv) {
         }
 
         /* Validate required fields */
-        if (min_powercap < 0 || max_powercap < 0 || variance_arg < 0 || time_out_limit_min <= 0 || secs_to_sleep < 0 || n_times_arg <= 0 || strlen(run_command) == 0 || strlen(lang) == 0 || strlen(program_name) == 0) {
+        if (min_powercap < 0 || max_powercap < 0 || variance_arg < 0 || time_out_limit_hours <= 0 || secs_to_sleep < 0 || n_times_arg <= 0 || strlen(run_command) == 0 || strlen(lang) == 0 || strlen(program_name) == 0) {
             fprintf(stderr, "[ERROR] --powercap-calibration usage: missing or invalid required flags.\n");
-            fprintf(stderr, "Usage: %s --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <minutes> -n_times <N> -secs_to_sleep <secs> [-compile_cmd \"<cmd>\"] -run_cmd \"<cmd>\" -language <language> -program <program>\n", argv[0]);
+            fprintf(stderr, "Usage: %s --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <hours> -n_times <N> -secs_to_sleep <secs> [-compile_cmd \"<cmd>\"] -run_cmd \"<cmd>\" -language <language> -program <program>\n", argv[0]);
             return 1;
         }
 
-        time_out_limit = time_out_limit_min * 60;
+        time_out_limit = time_out_limit_hours * 3600;
 
         if (strlen(compile_command) > 0) {
             printf("[INFO] Powercap calibration: Compiling program with command: %s\n", compile_command);
@@ -1041,3 +1041,4 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+

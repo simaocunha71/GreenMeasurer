@@ -4,7 +4,7 @@ GreenMeasurer is a powerful tool that leverages RAPL (Running Average Power Limi
 
 | Authors               | Contacts                            |
 |:---------------------:|:-----------------------------------:|
-| Simão Cunha           | d14299@di.uminho.pt                 |
+| Simão Cunha           | simao.s.cunha@inesctec.pt           |
 | ???                   | ???                                 |
 | João Saraiva          | saraiva@di.uminho.pt                |
 
@@ -133,10 +133,10 @@ To determine the most energy-efficient power cap setting for your system, you mu
 cd RAPL
 make
 # For compiled languages (named flags)
-sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <minutes> -secs_to_sleep <secs> -n_times <N> -compile_cmd "<compile_cmd>" -run_cmd "<run_cmd>" -language <language> -program <program>
+sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <hours> -secs_to_sleep <secs> -n_times <N> -compile_cmd "<compile_cmd>" -run_cmd "<run_cmd>" -language <language> -program <program>
 
 # For interpreted languages (named flags - no compile command)
-sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <minutes> -secs_to_sleep <secs> -n_times <N> -run_cmd "<run_cmd>" -language <language> -program <program>
+sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <hours> -secs_to_sleep <secs> -n_times <N> -run_cmd "<run_cmd>" -language <language> -program <program>
 
 (Legacy positional forms are still accepted but deprecated.)
 ```
@@ -145,7 +145,7 @@ sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out
 
 - Replace `min`-`max` with the desired power cap range in Watts (e.g., 2-25).
 - `variance` is the allowed temperature fluctuation (e.g., 5), and can be set to 0.
-- `time_out_limit` is the maximum time in minutes allowed for each test iteration.
+- `time_out_limit` is the maximum time in hours allowed for each test iteration.
 - `secs_to_sleep` is the number of seconds where the CPU is idle before measuring the temperature.
 - `n_times` is the number of times to execute the test program.
 - `compile_cmd` (for compiled languages): Compilation command for your test program.
@@ -157,20 +157,20 @@ sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out
 
 **C program calibration (named flags example):**
 ```bash
-sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 120 -secs_to_sleep 30 -n_times 10 -compile_cmd "gcc myprogram.c -o myprogram" -run_cmd "./myprogram" -language C -program myprogram
+sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 2 -secs_to_sleep 30 -n_times 10 -compile_cmd "gcc myprogram.c -o myprogram" -run_cmd "./myprogram" -language C -program myprogram
 ```
 
 **Python script calibration (named flags example):**
 ```bash
-sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 120 -secs_to_sleep 30 -n_times 5 -run_cmd "python3 myscript.py" -language Python -program myscript
+sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 2 -secs_to_sleep 30 -n_times 5 -run_cmd "python3 myscript.py" -language Python -program myscript
 ```
 
 **Compiled program with specific arguments (named flags):**
 ```bash
-sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 120 -secs_to_sleep 30 -n_times 7 -compile_cmd "gcc fibonacci.c -o fib" -run_cmd "./fib 20" -language C -program fibonacci
+sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 2 -secs_to_sleep 30 -n_times 7 -compile_cmd "gcc fibonacci.c -o fib" -run_cmd "./fib 20" -language C -program fibonacci
 ```
 
-This will calibrate power caps from 2W to 25W, running 7 executions per power cap value, allowing for a 5°C temperature variance and a 120-minute limit per execution. If the initial temperature is not calculated, it will calibrate the temperature while waiting for 30 seconds of idle time.
+This will calibrate power caps from 2W to 25W, running 7 executions per power cap value, allowing for a 5°C temperature variance and a 2-hour limit per execution. If the initial temperature is not calculated, it will calibrate the temperature while waiting for 30 seconds of idle time.
 
 ## Parametrized Execution
 
@@ -189,7 +189,7 @@ To perform energy measurements on a specific program, use the following syntax (
 | `<program>`       | Name of the program being tested                                            |
 | `<n_times>`       | Number of times to execute the program (must be > 0)                        |
 | `<variance>`      | Acceptable temperature variance (in Celsius, must be ≥ 0)                   |
-| `<time_out_limit>`| Timeout limit per execution (in minutes, must be > 0)                       |
+| `<time_out_limit>`| Timeout limit per execution (in hours, must be > 0)                       |
 | `<sleep_time>`    | Idle time before execution (in seconds, must be ≥ 0)                        |
 | `<powercap>`      | Power cap in watts (-1 for no power cap, or > 0 for power cap)             |
 
@@ -200,20 +200,20 @@ cd RAPL
 make
 
 # Run with 15W power cap
-sudo -E ./main --standard -command "./my_program" -language C -program my_program -n_times 5 -variance 3 -time_out_limit 20 -sleep_time 10 -powercap 15
+sudo -E ./main --standard -command "./my_program" -language C -program my_program -n_times 5 -variance 3 -time_out_limit 1 -sleep_time 10 -powercap 15
 
 # Run without power cap (set to -1)
-sudo -E ./main --standard -command "./my_program" -language C -program my_program -n_times 5 -variance 3 -time_out_limit 20 -sleep_time 10 -powercap -1
+sudo -E ./main --standard -command "./my_program" -language C -program my_program -n_times 5 -variance 3 -time_out_limit 1 -sleep_time 10 -powercap -1
 
 # Python example with 20W power cap
-sudo -E ./main --standard -command "python3 script.py" -language Python -program script -n_times 3 -variance 5 -time_out_limit 30 -sleep_time 5 -powercap 20
+sudo -E ./main --standard -command "python3 script.py" -language Python -program script -n_times 3 -variance 5 -time_out_limit 1 -sleep_time 5 -powercap 20
 ```
 
 The first example will:
 - Perform idle measurement for 10 seconds
 - Execute the program 5 times with a 15W power cap
 - Add 3°C to the temperature variance 
-- Terminate executions exceeding 20 minutes
+- Terminate executions exceeding 1 hour
 
 ---
 
