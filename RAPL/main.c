@@ -676,71 +676,58 @@ int main(int argc, char **argv) {
         int calib_secs_arg = 30;
         int variance_arg = 0;
 
-        char *skip = calloc(argc, 1);
-        if (!skip) { perror("calloc"); return -1; }
-        skip[0] = 1;
-        skip[over_idx] = 1;
-
-        for (int i = 1; i < argc; ++i) {
-            if (strcmp(argv[i], "-powercap") == 0 && i + 1 < argc) {
-                powercap_arg = atoi(argv[i + 1]);
-                if (powercap_arg < -1 || powercap_arg == 0) {
-                    fprintf(stderr, "[ERROR] invalid powercap: %s (use -1 for no cap or >=1)\n", argv[i + 1]);
-                    free(skip); return -1;
-                }
-                skip[i] = 1; skip[i+1] = 1; i++;
-                continue;
-            }
-            if (strcmp(argv[i], "-sleep-secs") == 0 && i + 1 < argc) {
-                calib_secs_arg = atoi(argv[i + 1]);
-                if (calib_secs_arg <= 0) {
-                    fprintf(stderr, "[ERROR] invalid sleep-secs: %s (must be > 0)\n", argv[i + 1]);
-                    free(skip); return -1;
-                }
-                skip[i] = 1; skip[i+1] = 1; i++;
-                continue;
-            }
-            if (strcmp(argv[i], "-variance") == 0 && i + 1 < argc) {
-                variance_arg = atoi(argv[i + 1]);
-                if (variance_arg < 0) {
-                    fprintf(stderr, "[ERROR] invalid variance: %s (must be >= 0)\n", argv[i + 1]);
-                    free(skip); return -1;
-                }
-                skip[i] = 1; skip[i+1] = 1; i++;
-                continue;
-            }
-        }
-
+        /* Accept named flags: -command, -interval, -language, -program, optional -powercap, -sleep-secs, -variance
+           Also accept deprecated positional form: <command> <interval-ms> <language> <program> */
         const char *pos[argc];
         int posc = 0;
-        for (int i = 1; i < argc; ++i) if (!skip[i]) pos[posc++] = argv[i];
-        free(skip);
 
-        if (posc < 4) {
-            fprintf(stderr, "[ERROR] Usage: %s <command> <interval-ms> <language> <program> --over-time [-powercap X] [-sleep-secs Y] [-variance Z]\n", argv[0]);
-            return -1;
-        }
-
-        char cli_command[500];
+        char cli_command[500] = "";
         char cli_language[256] = "";
         char cli_program[256] = "";
         long interval_ms = 0;
-        float baseline_temp = 0.0;
 
-        strncpy(cli_command, pos[0], sizeof(cli_command)-1); cli_command[sizeof(cli_command)-1] = '\0';
-        interval_ms = atol(pos[1]);
-        strncpy(cli_language, pos[2], sizeof(cli_language)-1); cli_language[sizeof(cli_language)-1] = '\0';
-        strncpy(cli_program, pos[3], sizeof(cli_program)-1); cli_program[sizeof(cli_program)-1] = '\0';
+        for (int i = 1; i < argc; ++i) {
+            if (strcmp(argv[i], "--over-time") == 0) { continue; }
+            if (strcmp(argv[i], "-command") == 0 && i + 1 < argc) { strncpy(cli_command, argv[i+1], sizeof(cli_command)-1); cli_command[sizeof(cli_command)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-interval") == 0 && i + 1 < argc) { interval_ms = atol(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-language") == 0 && i + 1 < argc) { strncpy(cli_language, argv[i+1], sizeof(cli_language)-1); cli_language[sizeof(cli_language)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-program") == 0 && i + 1 < argc) { strncpy(cli_program, argv[i+1], sizeof(cli_program)-1); cli_program[sizeof(cli_program)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-powercap") == 0 && i + 1 < argc) {
+                powercap_arg = atoi(argv[i+1]);
+                if (powercap_arg < -1 || powercap_arg == 0) { fprintf(stderr, "[ERROR] invalid powercap: %s (use -1 for no cap or >=1)\n", argv[i+1]); return -1; }
+                i++; continue;
+            }
+            if (strcmp(argv[i], "-sleep-secs") == 0 && i + 1 < argc) { calib_secs_arg = atoi(argv[i+1]); if (calib_secs_arg <= 0) { fprintf(stderr, "[ERROR] invalid sleep-secs: %s (must be > 0)\n", argv[i+1]); return -1; } i++; continue; }
+            if (strcmp(argv[i], "-variance") == 0 && i + 1 < argc) { variance_arg = atoi(argv[i+1]); if (variance_arg < 0) { fprintf(stderr, "[ERROR] invalid variance: %s (must be >= 0)\n", argv[i+1]); return -1; } i++; continue; }
 
-        if (interval_ms <= 0) { fprintf(stderr, "[ERROR] interval-ms must be a positive integer\n"); return -1; }
+            /* Collect positional remnants for backward compatibility */
+            pos[posc++] = argv[i];
+        }
+
+        /* If named flags not fully provided, try positional fallback */
+        if (strlen(cli_command) == 0 && posc >= 1) { strncpy(cli_command, pos[0], sizeof(cli_command)-1); cli_command[sizeof(cli_command)-1] = '\0'; }
+        if (interval_ms == 0 && posc >= 2) { interval_ms = atol(pos[1]); }
+        if (strlen(cli_language) == 0 && posc >= 3) { strncpy(cli_language, pos[2], sizeof(cli_language)-1); cli_language[sizeof(cli_language)-1] = '\0'; }
+        if (strlen(cli_program) == 0 && posc >= 4) { strncpy(cli_program, pos[3], sizeof(cli_program)-1); cli_program[sizeof(cli_program)-1] = '\0'; }
+
+        if ((strlen(cli_command) == 0) || (interval_ms <= 0) || (strlen(cli_language) == 0) || (strlen(cli_program) == 0)) {
+            fprintf(stderr, "[ERROR] Usage: %s --over-time -command \"<command>\" -interval <interval-ms> -language <language> -program <program> [-powercap X] [-sleep-secs Y] [-variance Z]\n", argv[0]);
+            return -1;
+        }
+
+        /* If positional fallback used, warn */
+        if (posc > 0) {
+            fprintf(stderr, "[WARNING] Positional over-time invocation is deprecated: prefer --over-time with named flags.\n");
+        }
 
         if (access("/tmp/cores_temperatures.txt", F_OK) != 0) {
             printf("[WARNING] Over time session: File /tmp/cores_temperatures.txt not found. Running temperature calibration...\n");
-            baseline_temp = calibrateTemperature(calib_secs_arg);
+            calibrateTemperature(calib_secs_arg);
         } else {
             printf("[INFO] Over time session: File /tmp/cores_temperatures.txt found. Skipping temperature calibration.\n");
-            baseline_temp = getInitialTemperature();
         }
+
+        float baseline_temp = getInitialTemperature();
 
         struct OverTimeCtx ctx;
         ctx.run_flag = 0;
@@ -768,8 +755,6 @@ int main(int argc, char **argv) {
                cli_command, interval_ms, ctx.language, ctx.program,
                powercap_str, ctx.temperature_variance);
 
-
-
         float temperature = getTemperature();
 
         while (temperature > ctx.baseline_temperature + ctx.temperature_variance) {
@@ -786,14 +771,14 @@ int main(int argc, char **argv) {
     /* --help handling etc. (kept as in original) */
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         printf("\nUsage:\n");
-        printf("  %s --temperature-calibration <seconds>\n", argv[0]);
-        printf("      Calibrates CPU temperature\n\n");
+        printf("  %s --temperature-calibration -sleep-secs <seconds>\n", argv[0]);
+        printf("      Calibrates CPU temperature (sleep before measuring)\n\n");
 
-        printf("  %s --powercap-calibration <min>-<max> <variance> <time_out_limit(min)> <n_times> <secs_to_sleep> [compile_command] <run_command> <language> <program_name>\n", argv[0]);
+        printf("  %s --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <minutes> -n_times <N> -secs_to_sleep <secs> [-compile_cmd \"<cmd>\"] -run_cmd \"<cmd>\" -language <language> -program <program>\n", argv[0]);
         printf("      Runs a powercap calibration between <min> and <max> watts\n\n");
 
-        printf("  %s <command> <language> <program> <n_times> <variance> <time_out_limit(hrs)> <sleep_time(sec)> <powercap>\n", argv[0]);
-        printf("      Standard measurement mode.\n\n");
+        printf("  %s --standard -command \"<command>\" -language <language> -program <program> -n_times <N> -variance <V> -time_out_limit <hours> -sleep_time <secs> -powercap <W>\n", argv[0]);
+        printf("      Standard measurement mode (use named flags).\n\n");
 
         printf("  %s \"<command>\" <interval-ms> <language> <program> --over-time [-powercap X] [-sleep-secs Y] [-variance Z]\n", argv[0]);
         printf("      Overtime measurement mode. Optional arguments:\n");
@@ -802,64 +787,138 @@ int main(int argc, char **argv) {
         printf("          -variance Z     Temperature tolerance in °C (default 0)\n\n");
 
         printf("Examples:\n");
-        printf("  %s ./my_program C myprog 3 2 1 60 -1\n", argv[0]);
+        printf("  %s --standard -command \"./my_program\" -language C -program myprog -n_times 3 -variance 2 -time_out_limit 1 -sleep_time 60 -powercap -1\n", argv[0]);
         printf("  %s --temperature-calibration 20\n", argv[0]);
-        printf("  %s --powercap-calibration 40-60 3 10 3 30 gcc myprog.c ./myprog C myprog\n", argv[0]);
-        printf("  %s \"./myprog\" 1000 C myprog --over-time -powercap 45 -sleep-secs 20 -variance 3\n", argv[0]);
+        printf("  %s --powercap-calibration -range 40-60 -variance 3 -time_out_limit 10 -n_times 3 -secs_to_sleep 30 -compile_cmd \"gcc myprog.c -o myprog\" -run_cmd \"./myprog\" -language C -program myprog\n", argv[0]);
+        printf("  %s --over-time -command \"./myprog\" -interval 1000 -language C -program myprog -powercap 45 -sleep-secs 20 -variance 3\n", argv[0]);
         return 0;
     }
 
 
-    if (argc == 3 && strcmp(argv[1], "--temperature-calibration") == 0) {
-        int sleepTime = atoi(argv[2]);
+    if (argc >= 2 && strcmp(argv[1], "--temperature-calibration") == 0) {
+        int sleepTime = -1;
+        /* Parse named flag -sleep-secs if provided */
+        for (int i = 2; i < argc; ++i) {
+            if (strcmp(argv[i], "-sleep-secs") == 0 && i + 1 < argc) {
+                sleepTime = atoi(argv[i+1]);
+                i++;
+                continue;
+            }
+        }
+        /* Fallback to legacy positional form: --temperature-calibration <seconds> (deprecated) */
+        if (sleepTime == -1) {
+            if (argc == 3) {
+                sleepTime = atoi(argv[2]);
+                fprintf(stderr, "[WARNING] Positional invocation for --temperature-calibration is deprecated; use -sleep-secs <seconds> instead.\n");
+            } else {
+                fprintf(stderr, "[ERROR] Usage: %s --temperature-calibration -sleep-secs <seconds>\n", argv[0]);
+                return -1;
+            }
+        }
+
+        if (sleepTime <= 0) { fprintf(stderr, "[ERROR] sleep-secs must be > 0.\n"); return -1; }
         calibrateTemperature(sleepTime);
         return 0;
     }
 
-    if ((argc == 11 || argc == 10) && strcmp(argv[1], "--powercap-calibration") == 0) {
-        int min_powercap, max_powercap, secs_to_sleep, n_times;
+    if (argc >= 2 && strcmp(argv[1], "--powercap-calibration") == 0) {
+        int min_powercap = -1, max_powercap = -1, secs_to_sleep = -1, n_times_arg = -1;
         char compile_command[500] = "";
         char run_command[500] = "";
         char lang[500] = "";
         char program_name[500] = "";
+        int variance_arg = -1;
+        int time_out_limit_min = -1; /* minutes */
 
-        if (sscanf(argv[2], "%d-%d", &min_powercap, &max_powercap) != 2 || min_powercap < 0 || max_powercap < 0) {
-            fprintf(stderr, "[ERROR] Powercap calibration: Invalid format. Use --powercap-calibration <min>-<max>\n");
+        /* Parse named flags */
+        for (int i = 2; i < argc; ++i) {
+            if (strcmp(argv[i], "-range") == 0 && i + 1 < argc) {
+                if (sscanf(argv[i+1], "%d-%d", &min_powercap, &max_powercap) != 2) {
+                    fprintf(stderr, "[ERROR] Powercap calibration: Invalid -range format. Use -range <min>-<max>\n");
+                    return 1;
+                }
+                i++; continue;
+            }
+            if (strcmp(argv[i], "-variance") == 0 && i + 1 < argc) { variance_arg = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-time_out_limit") == 0 && i + 1 < argc) { time_out_limit_min = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-secs_to_sleep") == 0 && i + 1 < argc) { secs_to_sleep = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-n_times") == 0 && i + 1 < argc) { n_times_arg = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-compile_cmd") == 0 && i + 1 < argc) { strncpy(compile_command, argv[i+1], sizeof(compile_command)-1); compile_command[sizeof(compile_command)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-run_cmd") == 0 && i + 1 < argc) { strncpy(run_command, argv[i+1], sizeof(run_command)-1); run_command[sizeof(run_command)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-language") == 0 && i + 1 < argc) { strncpy(lang, argv[i+1], sizeof(lang)-1); lang[sizeof(lang)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-program") == 0 && i + 1 < argc) { strncpy(program_name, argv[i+1], sizeof(program_name)-1); program_name[sizeof(program_name)-1] = '\0'; i++; continue; }
+
+            /* Collect positional fallback values if present */
+            /* positional fallback handled below */
+        }
+
+        /* If named flags not provided, try legacy positional form for backward compatibility */
+        if (min_powercap == -1 || max_powercap == -1 || variance_arg == -1 || time_out_limit_min == -1 || secs_to_sleep == -1 || n_times_arg == -1 || strlen(run_command) == 0 || strlen(lang) == 0 || strlen(program_name) == 0) {
+            /* Attempt legacy parse if argument count matches */
+            if (argc == 11 || argc == 10) {
+                int min_p, max_p, variance_l, time_out_limit_l, secs_sleep_l, n_times_l;
+                char compile_cmd_l[500] = "";
+                char run_cmd_l[500] = "";
+                char lang_l[500] = "";
+                char program_l[500] = "";
+
+                if (sscanf(argv[2], "%d-%d", &min_p, &max_p) != 2 || min_p < 0 || max_p < 0) {
+                    fprintf(stderr, "[ERROR] Powercap calibration: Invalid format. Use --powercap-calibration -range <min>-<max>\n");
+                    return 1;
+                }
+
+                if (sscanf(argv[3], "%d", &variance_l) != 1 || variance_l < 0) {
+                    fprintf(stderr, "[ERROR] Powercap calibration: Invalid variance. Must be non-negative.\n");
+                    return 1;
+                }
+
+                if (sscanf(argv[4], "%d", &time_out_limit_l) != 1 || time_out_limit_l <= 0) {
+                    fprintf(stderr, "[ERROR] Powercap calibration: Invalid time_out_limit. Must be positive (minutes).\n");
+                    return 1;
+                }
+
+                time_out_limit_min = time_out_limit_l;
+
+                if (sscanf(argv[5], "%d", &secs_sleep_l) != 1 || secs_sleep_l < 0) {
+                    fprintf(stderr, "[ERROR] Powercap calibration: Invalid secs_to_sleep.\n");
+                    return 1;
+                }
+
+                if (sscanf(argv[6], "%d", &n_times_l) != 1 || n_times_l <= 0) {
+                    fprintf(stderr, "[ERROR] Powercap calibration: Invalid n_times.\n");
+                    return 1;
+                }
+
+                if (argc == 11) {
+                    strncpy(compile_cmd_l, argv[7], sizeof(compile_cmd_l)-1); compile_cmd_l[sizeof(compile_cmd_l)-1] = '\0';
+                    strncpy(run_cmd_l, argv[8], sizeof(run_cmd_l)-1); run_cmd_l[sizeof(run_cmd_l)-1] = '\0';
+                    strncpy(lang_l, argv[9], sizeof(lang_l)-1); lang_l[sizeof(lang_l)-1] = '\0';
+                    strncpy(program_l, argv[10], sizeof(program_l)-1); program_l[sizeof(program_l)-1] = '\0';
+                } else {
+                    strncpy(run_cmd_l, argv[7], sizeof(run_cmd_l)-1); run_cmd_l[sizeof(run_cmd_l)-1] = '\0';
+                    strncpy(lang_l, argv[8], sizeof(lang_l)-1); lang_l[sizeof(lang_l)-1] = '\0';
+                    strncpy(program_l, argv[9], sizeof(program_l)-1); program_l[sizeof(program_l)-1] = '\0';
+                }
+
+                /* Copy legacy parsed values into variables */
+                min_powercap = min_p; max_powercap = max_p; variance_arg = variance_l; secs_to_sleep = secs_sleep_l; n_times_arg = n_times_l;
+                if (strlen(compile_cmd_l) > 0) strncpy(compile_command, compile_cmd_l, sizeof(compile_command)-1);
+                strncpy(run_command, run_cmd_l, sizeof(run_command)-1);
+                strncpy(lang, lang_l, sizeof(lang)-1);
+                strncpy(program_name, program_l, sizeof(program_name)-1);
+
+                fprintf(stderr, "[WARNING] Positional invocation for --powercap-calibration is deprecated; prefer named flags (e.g., -range -variance -n_times -run_cmd ...).\n");
+            }
+        }
+
+        /* Validate required fields */
+        if (min_powercap < 0 || max_powercap < 0 || variance_arg < 0 || time_out_limit_min <= 0 || secs_to_sleep < 0 || n_times_arg <= 0 || strlen(run_command) == 0 || strlen(lang) == 0 || strlen(program_name) == 0) {
+            fprintf(stderr, "[ERROR] --powercap-calibration usage: missing or invalid required flags.\n");
+            fprintf(stderr, "Usage: %s --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <minutes> -n_times <N> -secs_to_sleep <secs> [-compile_cmd \"<cmd>\"] -run_cmd \"<cmd>\" -language <language> -program <program>\n", argv[0]);
             return 1;
         }
 
-        if (sscanf(argv[3], "%d", &variance) != 1 || variance < 0) {
-            fprintf(stderr, "[ERROR] Powercap calibration: Invalid variance. Must be non-negative.\n");
-            return 1;
-        }
-
-        if (sscanf(argv[4], "%d", &time_out_limit) != 1 || time_out_limit <= 0) {
-            fprintf(stderr, "[ERROR] Powercap calibration: Invalid time_out_limit. Must be positive (minutes).\n");
-            return 1;
-        }
-
-        time_out_limit = time_out_limit * 60;
-
-        if (sscanf(argv[5], "%d", &secs_to_sleep) != 1 || secs_to_sleep < 0) {
-            fprintf(stderr, "[ERROR] Powercap calibration: Invalid secs_to_sleep.\n");
-            return 1;
-        }
-
-        if (sscanf(argv[6], "%d", &n_times) != 1 || n_times <= 0) {
-            fprintf(stderr, "[ERROR] Powercap calibration: Invalid n_times.\n");
-            return 1;
-        }
-
-        if (argc == 11) {
-            strcpy(compile_command, argv[7]);
-            strcpy(run_command, argv[8]);
-            strcpy(lang, argv[9]);
-            strcpy(program_name, argv[10]);
-        } else {
-            strcpy(run_command, argv[7]);
-            strcpy(lang, argv[8]);
-            strcpy(program_name, argv[9]);
-        }
+        time_out_limit = time_out_limit_min * 60;
 
         if (strlen(compile_command) > 0) {
             printf("[INFO] Powercap calibration: Compiling program with command: %s\n", compile_command);
@@ -877,25 +936,56 @@ int main(int argc, char **argv) {
         }
         temperature_threshold = getInitialTemperature();
 
-        calibratePowercap(n_times, core, run_command, lang, program_name, min_powercap, max_powercap, powercap, time_out_limit, temperature_threshold, variance);
+        calibratePowercap(n_times_arg, core, run_command, lang, program_name, min_powercap, max_powercap, powercap, time_out_limit, temperature_threshold, variance_arg);
 
         return 0;
     }
 
-    if (argc != 9) {
-        fprintf(stderr, "[ERROR] Incorrect number of arguments.\n");
-        fprintf(stderr, "Usage: %s <command> <language> <program> <n_times> <variance> <time_out_limit> <sleep_time> <powercap>\n", argv[0]);
+    /* Standard mode: requires --standard and named flags. Backwards-compatible positional invocation is deprecated. */
+    int standard_idx = -1;
+    for (int i = 1; i < argc; ++i) if (strcmp(argv[i], "--standard") == 0) { standard_idx = i; break; }
+
+    if (standard_idx != -1) {
+        /* Parse named flags */
+        for (int i = 1; i < argc; ++i) {
+            if (strcmp(argv[i], "-command") == 0 && i + 1 < argc) { strncpy(command, argv[i+1], sizeof(command)-1); command[sizeof(command)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-language") == 0 && i + 1 < argc) { strncpy(language, argv[i+1], sizeof(language)-1); language[sizeof(language)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-program") == 0 && i + 1 < argc) { strncpy(program, argv[i+1], sizeof(program)-1); program[sizeof(program)-1] = '\0'; i++; continue; }
+            if (strcmp(argv[i], "-n_times") == 0 && i + 1 < argc) { n_times = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-variance") == 0 && i + 1 < argc) { variance = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-time_out_limit") == 0 && i + 1 < argc) { time_out_limit = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-sleep_time") == 0 && i + 1 < argc) { sleep_time = atoi(argv[i+1]); i++; continue; }
+            if (strcmp(argv[i], "-powercap") == 0 && i + 1 < argc) { powercap = atoi(argv[i+1]); i++; continue; }
+        }
+
+        /* Validate required fields */
+        if (strlen(command) == 0 || strlen(language) == 0 || strlen(program) == 0) {
+            fprintf(stderr, "[ERROR] --standard usage: missing required flags.\n");
+            fprintf(stderr, "Usage: %s --standard -command \"<command>\" -language <language> -program <program> -n_times <N> -variance <V> -time_out_limit <hours> -sleep_time <secs> -powercap <W>\n", argv[0]);
+            return -1;
+        }
+
+        if (n_times <= 0) { fprintf(stderr, "[ERROR] n_times must be > 0.\n"); return -1; }
+        if (variance < 0) { fprintf(stderr, "[ERROR] variance must be >= 0.\n"); return -1; }
+        if (time_out_limit <= 0) { fprintf(stderr, "[ERROR] time_out_limit must be > 0.\n"); return -1; }
+        if (sleep_time < 0) { fprintf(stderr, "[ERROR] sleep_time must be >= 0.\n"); return -1; }
+        if (powercap < -1 || powercap == 0) { fprintf(stderr, "[ERROR] powercap must be -1 or > 0.\n"); return -1; }
+
+    } else if (argc == 9) {
+        /* Backwards-compatible legacy positional invocation (deprecated) */
+        fprintf(stderr, "[WARNING] Positional invocation is deprecated: prefer --standard with named flags.\n");
+        strncpy(command, argv[1], sizeof(command)-1); command[sizeof(command)-1] = '\0';
+        strncpy(language, argv[2], sizeof(language)-1); language[sizeof(language)-1] = '\0';
+        strncpy(program, argv[3], sizeof(program)-1); program[sizeof(program)-1] = '\0';
+        n_times = atoi(argv[4]);
+        variance = atoi(argv[5]);
+        time_out_limit = atoi(argv[6]); /* hours */
+        sleep_time = atoi(argv[7]);
+        powercap = atoi(argv[8]);
+    } else {
+        fprintf(stderr, "[ERROR] Incorrect usage. Use --standard with named flags or see --help.\n");
         return -1;
     }
-
-    strncpy(command, argv[1], sizeof(command)-1); command[sizeof(command)-1] = '\0';
-    strncpy(language, argv[2], sizeof(language)-1); language[sizeof(language)-1] = '\0';
-    strncpy(program, argv[3], sizeof(program)-1); program[sizeof(program)-1] = '\0';
-    n_times = atoi(argv[4]);
-    variance = atoi(argv[5]);
-    time_out_limit = atoi(argv[6]); /* hours */
-    sleep_time = atoi(argv[7]);
-    powercap = atoi(argv[8]);
 
     if (access("/tmp/cores_temperatures.txt", F_OK) != 0) {
         printf("[WARNING] File /tmp/cores_temperatures.txt not found. Running temperature calibration...\n");
@@ -914,7 +1004,7 @@ int main(int argc, char **argv) {
     printf(" Variance   : %d°C\n", variance);
     printf(" Timeout    : %d hours\n", time_out_limit);
     printf(" Sleep_time : %d seconds\n", sleep_time);
-    if (powercap == -1) printf(" PowerCap  : No power cap\n"); else printf(" PowerCap  : %d watts\n", powercap);
+    if (powercap == -1) printf(" PowerCap   : No power cap\n"); else printf(" PowerCap   : %d watts\n", powercap);
     printf(" Reference temperature : %.2f °C\n", temperature_threshold);
     printf("====================================\n\n");
 

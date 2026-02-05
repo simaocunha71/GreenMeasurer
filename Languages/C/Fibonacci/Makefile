@@ -2,7 +2,7 @@ n_times ?= 3
 time_out_limit ?= 4
 variance ?= 5
 sleep_secs ?= 10
-input ?= 55
+input ?= 42
 powercap ?= -1
 language ?= C
 program ?= fibonacci
@@ -19,9 +19,9 @@ endif
 compile:
 	$(GCC_PATH) -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge fibonacci.c -o fib -lm
 	
-measure:
+standard:
 	sudo modprobe msr
-	sudo ../../../RAPL/main "./fib $(input)" C fib_$(input) $(n_times) $(variance) $(time_out_limit) $(sleep_secs) $(powercap)
+	sudo ../../../RAPL/main --standard -command "$(command)" -language $(language) -program $(program)_$(input) -n_times $(n_times) -variance $(variance) -time_out_limit $(time_out_limit) -sleep_time $(sleep_secs) -powercap $(powercap)
 
 perf:
 	@events_all=$$(grep -o '"[^"]\+"' ../../../perf_events.json | tr -d '"' | grep -v events | tr '\n' ',' | sed 's/,$$//'); \
@@ -72,7 +72,7 @@ perf:
 
 overtime:
 	sudo modprobe msr
-	sudo ../../../RAPL/main --over-time "$(command)" $(interval) $(language) $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
+	sudo ../../../RAPL/main --over-time -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
 
 run:
 	$(command)

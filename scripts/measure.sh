@@ -39,9 +39,10 @@ is_valid_language() {
 
 # Function to show help
 show_help() {
-    echo "Usage: $0 [--perf] [--overtime] <language1> [language2] ... or 'all'"
+    echo "Usage: $0 [--standard] [--perf] [--overtime] <language1> [language2] ... or 'all'"
     echo
     echo "Options:"
+    echo "  --standard   Run in standard measurement mode"
     echo "  --perf       Run in perf measurement mode"
     echo "  --overtime   Run in overtime measurement mode"
     echo "  --help, -h   Show this help message"
@@ -50,18 +51,21 @@ show_help() {
     exit 0
 }
 
-# Ensure at least one argument is provided
-if [ "$#" -lt 1 ]; then
-    show_help
-fi
+# If no arguments are provided, proceed with defaults (standard mode and all languages)
+# (Previously the script showed help and exited; now it defaults to --standard and selects all languages.)
 
 # Initialize modes
+STANDARD_MODE=0
 PERF_MODE=0
 OVERTIME_MODE=0
 
 # Process options
 while [[ "$1" == --* ]] || [[ "$1" == -h ]]; do
     case "$1" in
+        --standard)
+            STANDARD_MODE=1
+            shift
+            ;;
         --perf)
             PERF_MODE=1
             shift
@@ -80,8 +84,21 @@ while [[ "$1" == --* ]] || [[ "$1" == -h ]]; do
     esac
 done
 
-# Select languages
-if [[ "$1" == "all" ]]; then
+# Require an explicit mode. If none is provided, show an error and help.
+if [[ $STANDARD_MODE -eq 0 && $PERF_MODE -eq 0 && $OVERTIME_MODE -eq 0 ]]; then
+    echo "Error: missing mode. Please specify one of --standard, --perf or --overtime."
+    show_help
+fi
+
+# Ensure only one mode is active
+mode_count=$((STANDARD_MODE + PERF_MODE + OVERTIME_MODE))
+if [[ $mode_count -gt 1 ]]; then
+    echo "Error: only one of --standard, --perf or --overtime can be used at a time"
+    exit 1
+fi
+
+# Select languages (if none specified, default to all)
+if [[ "$#" -eq 0 || "$1" == "all" ]]; then
     SELECTED_LANGUAGES=("${VALID_LANGUAGES[@]}")
 else
     SELECTED_LANGUAGES=()
@@ -112,7 +129,7 @@ IDLE_SECONDS=60
 INTERVAL=100
 
 # Define power cap values
-POWER_CAPS=(-1 5)
+POWER_CAPS=(-1)
 
 # Move to project root
 cd "$(dirname "$0")/.." || exit 1
@@ -129,9 +146,12 @@ if [[ $PERF_MODE -eq 1 ]]; then
 elif [[ $OVERTIME_MODE -eq 1 ]]; then
     OUT_CSV="measurements_ot.csv"
     echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,Temperature" > "$OUT_CSV"
-else
+elif [[ $STANDARD_MODE -eq 1 ]]; then
     OUT_CSV="measurements.csv"
     echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory" > "$OUT_CSV"
+else
+    echo "Error: unknown mode (this should not happen)"
+    exit 1
 fi
 
 # Run benchmarks for each power cap
@@ -172,13 +192,16 @@ for cap in "${POWER_CAPS[@]}"; do
                     else
                         echo "Warning: measurements_ot.csv not found in $program_dir"
                     fi
-                else
-                    make measure n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
+                elif [[ $STANDARD_MODE -eq 1 ]]; then
+                    # Standard mode uses the 'measure' target in individual Makefiles
+                    make standard n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> "../../../$OUT_CSV"
                     else
                         echo "Warning: measurements.csv not found in $program_dir"
                     fi
+                else
+                    echo "Error: unknown mode (this should not happen)"
                 fi
 
                 make clean

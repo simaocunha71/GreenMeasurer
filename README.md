@@ -66,35 +66,36 @@ POWER_CAPS=(7 11 15)  # Test with 7W, 11W, and 15W power caps
 
 **Important:** Ensure you have completed the Prerequisites and Configuration section above before running measurements.
 
-To generate energy consumption measurements for all programs in all languages, run:
+To generate energy consumption measurements for all programs in all languages, run (the script requires an explicit mode):
 
 ```bash
-sudo -E bash scripts/measure.sh <language1> [language2] ... | all
+sudo -E bash scripts/measure.sh --standard <language1> [language2] ... | all
 ```
-- Replace <language1> [language2] ... with one or more of the supported languages listed below, or use all to run measurements for every supported language.
+- The script requires you to specify exactly one mode: `--standard`, `--perf`, or `--overtime`.
+- Replace `<language1> [language2] ...` with one or more of the supported languages listed below, or use `all` to run measurements for every supported language.
 - Supported languages: All supported languages correspond to the folders listed in the `Languages/` directory.
 
-This script will append the results to a top-level `measurements.csv` file.
+When using `--standard` results are appended to the top-level `measurements.csv` file.
 
 **Example usages:**
 ```bash
-# Measure all supported languages
-sudo -E bash scripts/measure.sh all
+# Measure all supported languages (standard mode)
+sudo -E bash scripts/measure.sh --standard all
 
-# Measure only Python, C# and Rust
-sudo -E bash scripts/measure.sh Python "C#" Rust
+# Measure only Python, C# and Rust (standard mode)
+sudo -E bash scripts/measure.sh --standard Python "C#" Rust
 ```
-If a specified language or directory is not found, the script will exit with an error message.
+If a specified language or directory is not found, or if no mode is provided, the script will exit with an error message.
 
-**NOTE 1**: To collect CPU performance metrics (using Linux perf) for all programs, run the measurement script with the `-perf` flag:
+**NOTE 1**: To collect CPU performance metrics (using Linux perf) for selected languages, run the measurement script with the `--perf` mode:
 ```bash
-sudo -E bash scripts/measure.sh -perf <language1> [language2] ... | all
+sudo -E bash scripts/measure.sh --perf <language1> [language2] ... | all
 ```
 This will aggregate all results in the top-level `perf_stats.csv` file.
 
-**NOTE 2**: To collect CPU performance metrics over time for all programs, run the measurement script with the `-overtime` flag:
+**NOTE 2**: To collect CPU performance metrics over time for selected languages, run the measurement script with the `--overtime` mode:
 ```bash
-sudo -E bash scripts/measure.sh -overtime <language1> [language2] ... | all
+sudo -E bash scripts/measure.sh --overtime <language1> [language2] ... | all
 ```
 This will aggregate all results in the top-level `measurements_ot.csv` file.
 
@@ -114,11 +115,11 @@ To calibrate the average CPU core temperature, execute the following:
 ```bash
 cd RAPL
 make
-./main --temperature-calibration XX
+./main --temperature-calibration -sleep-secs XX
 ```
 
 Replace `XX` with the number of seconds to idle (sleep) before measuring the temperature.
-The output will be saved to `/tmp/cores_temperature.txt`.
+The output will be saved to `/tmp/cores_temperature.txt`.  (Legacy positional form `--temperature-calibration XX` is still accepted but deprecated.)
 
 ---
 
@@ -131,11 +132,13 @@ To determine the most energy-efficient power cap setting for your system, you mu
 ```bash
 cd RAPL
 make
-# For compiled languages (11 arguments)
-sudo -E ./main --powercap-calibration min-max variance time_out_limit secs_to_sleep n_times "compile_cmd" "run_cmd" language program
+# For compiled languages (named flags)
+sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <minutes> -secs_to_sleep <secs> -n_times <N> -compile_cmd "<compile_cmd>" -run_cmd "<run_cmd>" -language <language> -program <program>
 
-# For interpreted languages (10 arguments - no compile command)
-sudo -E ./main --powercap-calibration min-max variance time_out_limit secs_to_sleep n_times "run_cmd" language program
+# For interpreted languages (named flags - no compile command)
+sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <minutes> -secs_to_sleep <secs> -n_times <N> -run_cmd "<run_cmd>" -language <language> -program <program>
+
+(Legacy positional forms are still accepted but deprecated.)
 ```
 
 ### Parameters
@@ -152,29 +155,29 @@ sudo -E ./main --powercap-calibration min-max variance time_out_limit secs_to_sl
 
 ### Examples
 
-**C program calibration:**
+**C program calibration (named flags example):**
 ```bash
-sudo -E ./main --powercap-calibration 2-25 5 120 30 10 "gcc myprogram.c -o myprogram" "./myprogram" C myprogram
+sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 120 -secs_to_sleep 30 -n_times 10 -compile_cmd "gcc myprogram.c -o myprogram" -run_cmd "./myprogram" -language C -program myprogram
 ```
 
-**Python script calibration:**
+**Python script calibration (named flags example):**
 ```bash
-sudo -E ./main --powercap-calibration 2-25 5 120 30 5 "python3 myscript.py" Python myscript
+sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 120 -secs_to_sleep 30 -n_times 5 -run_cmd "python3 myscript.py" -language Python -program myscript
 ```
 
-**Compiled program with specific arguments:**
+**Compiled program with specific arguments (named flags):**
 ```bash
-sudo -E ./main --powercap-calibration 2-25 5 120 30 7 "gcc fibonacci.c -o fib" "./fib 20" C fibonacci
+sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 120 -secs_to_sleep 30 -n_times 7 -compile_cmd "gcc fibonacci.c -o fib" -run_cmd "./fib 20" -language C -program fibonacci
 ```
 
 This will calibrate power caps from 2W to 25W, running 7 executions per power cap value, allowing for a 5°C temperature variance and a 120-minute limit per execution. If the initial temperature is not calculated, it will calibrate the temperature while waiting for 30 seconds of idle time.
 
 ## Parametrized Execution
 
-To perform energy measurements on a specific program, use the following syntax:
+To perform energy measurements on a specific program, use the following syntax (recommended --standard named flags):
 
 ```bash
-./main <command> <language> <program> <n_times> <variance> <time_out_limit> <sleep_time> <powercap>
+./main --standard -command "<command>" -language <language> -program <program> -n_times <N> -variance <V> -time_out_limit <hours> -sleep_time <secs> -powercap <W>
 ```
 
 ### Arguments
@@ -197,13 +200,13 @@ cd RAPL
 make
 
 # Run with 15W power cap
-sudo -E ./main "./my_program" C my_program 5 3 20 10 15
+sudo -E ./main --standard -command "./my_program" -language C -program my_program -n_times 5 -variance 3 -time_out_limit 20 -sleep_time 10 -powercap 15
 
 # Run without power cap (set to -1)
-sudo -E ./main "./my_program" C my_program 5 3 20 10 -1
+sudo -E ./main --standard -command "./my_program" -language C -program my_program -n_times 5 -variance 3 -time_out_limit 20 -sleep_time 10 -powercap -1
 
 # Python example with 20W power cap
-sudo -E ./main "python3 script.py" Python script 3 5 30 5 20
+sudo -E ./main --standard -command "python3 script.py" -language Python -program script -n_times 3 -variance 5 -time_out_limit 30 -sleep_time 5 -powercap 20
 ```
 
 The first example will:
@@ -272,7 +275,7 @@ Measures energy consumption and executing time by running the program using the 
 
 **Command breakdown:**
 ```sh
-sudo ./main "./my_program [input]" [language] [program] $(n_times) $(variance) $(time_out_limit) $(sleep_secs)
+sudo ./main --standard -command "./my_program [input]" -language [language] -program [program] -n_times $(n_times) -variance $(variance) -time_out_limit $(time_out_limit) -sleep_time $(sleep_secs)
 ```
 
 ## 4. `perf`
@@ -320,7 +323,7 @@ This command runs a program once and, over time, collects all the metrics listed
 
 **Command breakdown:**
 ```sh
-sudo ./main --over-time "$(command)" $(interval) $(language) $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
+sudo ./main --over-time -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
 ```
 
 ## 6. `clean`
@@ -342,7 +345,7 @@ You can specify an **interval** (in milliseconds) that determines how often the 
 Usage:
 
 ```bash
-sudo -E ./main --over-time "<command>" <interval-ms> <language> <program> [ -powercap WATT ] [ -sleep-secs SECS ]
+sudo -E ./main --over-time -command "<command>" -interval <interval-ms> -language <language> -program <program> [-powercap WATT] [-sleep-secs SECS] [-variance V]
 ```
 
 Options:
@@ -357,7 +360,7 @@ Example:
 
 ```bash
 # Log every 100 ms while running a program once and do a temperature calibration of 60 seconds
-sudo -E ./main --over-time "./my_program" 100 C my_program -powercap 15 -sleep-secs 60
+sudo -E ./main --over-time -command "./my_program" -interval 100 -language C -program my_program -powercap 15 -sleep-secs 60
 ```
 ---
 ### NOTE
