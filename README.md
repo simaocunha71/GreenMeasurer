@@ -115,7 +115,7 @@ To calibrate the average CPU core temperature, execute the following:
 ```bash
 cd RAPL
 make
-./main --temperature-calibration -sleep-secs XX
+sudo ./main --temperature-calibration -sleep-secs XX
 ```
 
 Replace `XX` with the number of seconds to idle (sleep) before measuring the temperature.
