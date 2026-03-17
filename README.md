@@ -127,6 +127,18 @@ The output will be saved to `/tmp/cores_temperature.txt`.  (Legacy positional fo
 
 To determine the most energy-efficient power cap setting for your system, you must specify custom programs for calibration. The tool supports both compiled and interpreted languages.
 
+### How it works
+
+The calibration runs the program in two phases:
+1. **Baseline run** (`Powercap = -1`): executes the program without any power cap to collect reference energy and time measurements.
+2. **Capped runs**: iterates over every integer watt value in the specified `<min>`–`<max>` range, applying each power cap and collecting measurements.
+
+All results are written to `Utils/powercap_calibration.csv`. After calibration, `Utils/processPowercapCalibrationCSV.py` is automatically invoked to display a summary table that includes, for each power cap value:
+- **Avg Package (J)** — average energy consumed by the CPU package
+- **Avg Time (ms)** — average execution time
+- **Speedup** — ratio of baseline time to capped time (> 1 means faster; < 1 means slower), with percentage gain/loss relative to the baseline
+- **Greenup** — ratio of baseline energy to capped energy (> 1 means less energy used; < 1 means more energy used), with percentage gain/loss relative to the baseline
+
 ### Usage
 
 ```bash
@@ -171,6 +183,8 @@ sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 2 
 ```
 
 This will calibrate power caps from 2W to 25W, running 7 executions per power cap value, allowing for a 5°C temperature variance and a 2-hour limit per execution. If the initial temperature is not calculated, it will calibrate the temperature while waiting for 30 seconds of idle time.
+
+The calibration first executes the program without any power cap (`Powercap = -1`) to establish a baseline, then iterates from 2W to 25W. The final summary report shows the **Speedup** and **Greenup** for each capped value relative to the uncapped baseline.
 
 ## Parametrized Execution
 

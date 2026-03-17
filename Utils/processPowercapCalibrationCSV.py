@@ -11,57 +11,92 @@ def process_csv(filename):
     # Group the data by 'Powercap'
     grouped = data.groupby('Powercap')
 
-    print(f"\n{'=' * 50}")
-    print(f"{' Powercap Average Package Report ':^50}")
-    print(f"{'=' * 50}\n")
+    print(f"\n{'=' * 90}")
+    print(f"{' Powercap Average Package Report ':^90}")
+    print(f"{'=' * 90}\n")
 
     for powercap, group in grouped:
         if len(group) <= 2:
             # If there are 2 or fewer entries, averaging is not possible
             print(f"Powercap: {powercap}, not enough entries to calculate the average.")
             continue
-        
+
         # Remove the entries with the maximum and minimum values in the 'Package' column
         max_package = group['Package'].max()
         min_package = group['Package'].min()
-        
+
         # Filter the group, removing max and min
         filtered_group = group[(group['Package'] != max_package) & (group['Package'] != min_package)]
 
-        # Calculate the average of the 'Package' column for the remaining values
+        # Calculate the averages of 'Package' and 'Time' for the remaining values
         average_package = filtered_group['Package'].mean()
-        
+        average_time = filtered_group['Time'].mean()
+
         # Store the result
-        results[powercap] = average_package
+        results[powercap] = {'Package': average_package, 'Time': average_time}
 
-    # Display the results and find the Powercap with the lowest average package
-    lowest_average_powercap = None
-    lowest_average_value = float('inf')
+    # Baseline is powercap = -1 (no power limit)
+    baseline = results.get(-1)
+    if baseline is None:
+        print("Warning: No baseline (Powercap = -1) found. Speedup and Greenup will not be calculated.")
 
-    print(f"{'Powercap':<15}{'Average Package':<20}")
-    print(f"{'-' * 35}")
-    
-    for powercap, average in results.items():
-        print(f"{powercap:<15}{average:<20.6f}")
+    # Display order: baseline (-1) first, then the rest sorted ascending
+    ordered_keys = ([-1] if -1 in results else []) + sorted(k for k in results if k != -1)
 
-        # Check if this is the lowest average package value
-        if average < lowest_average_value:
-            lowest_average_value = average
-            lowest_average_powercap = powercap
+    col_widths = (16, 18, 14, 25, 25)
+    header = (f"{'Powercap':<{col_widths[0]}}"
+              f"{'Avg Package (J)':<{col_widths[1]}}"
+              f"{'Avg Time (ms)':<{col_widths[2]}}"
+              f"{'Speedup':<{col_widths[3]}}"
+              f"{'Greenup':<{col_widths[4]}}")
+    separator = '-' * sum(col_widths)
+
+    print(header)
+    print(separator)
+
+    for powercap in ordered_keys:
+        avg_pkg  = results[powercap]['Package']
+        avg_time = results[powercap]['Time']
+
+        if powercap == -1:
+            speedup_str = "baseline"
+            greenup_str = "baseline"
+        elif baseline is None:
+            speedup_str = "N/A"
+            greenup_str = "N/A"
+        else:
+            # Speedup: how much faster/slower vs no-powercap baseline
+            speedup = baseline['Time'] / avg_time
+            # Greenup: how much more/less energy spent vs no-powercap baseline
+            greenup = baseline['Package'] / avg_pkg
+
+            speedup_pct = (speedup - 1) * 100
+            greenup_pct = (greenup - 1) * 100
+
+            speedup_str = f"{speedup:.4f} ({speedup_pct:+.2f}%)"
+            greenup_str = f"{greenup:.4f} ({greenup_pct:+.2f}%)"
+
+        powercap_label = str(powercap) + (" (baseline)" if powercap == -1 else "")
+        print(f"{powercap_label:<{col_widths[0]}}"
+              f"{avg_pkg:<{col_widths[1]}.6f}"
+              f"{avg_time:<{col_widths[2]}.2f}"
+              f"{speedup_str:<{col_widths[3]}}"
+              f"{greenup_str:<{col_widths[4]}}")
 
     # Display the Powercap with the lowest average package
-    print(f"\n{'=' * 35}")
-    if lowest_average_powercap is not None:
-        print(f"{'Powercap with the lowest average package:':<35} {lowest_average_powercap} (Average: {lowest_average_value:.6f})")
+    print(f"\n{'=' * sum(col_widths)}")
+    if results:
+        lowest_powercap = min(results, key=lambda k: results[k]['Package'])
+        lowest_value    = results[lowest_powercap]['Package']
+        print(f"{'Powercap with the lowest average package:':<45} {lowest_powercap} (Average: {lowest_value:.6f})")
     else:
         print("No valid Powercaps to determine the lowest average.")
-
-    print(f"{'=' * 35}")
+    print(f"{'=' * sum(col_widths)}")
 
 def main():
     # Check if the filename was provided as a command-line argument
     if len(sys.argv) < 2:
-        print("Usage: python process_csv.py <filename>")
+        print("Usage: python processPowercapCalibrationCSV.py <filename>")
         sys.exit(1)
 
     # Get the filename from the command-line arguments

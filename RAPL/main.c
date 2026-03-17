@@ -461,6 +461,28 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
 
     int memory = measureMemoryUsage(command);
 
+    /* Run without any power cap first (baseline, Powercap = -1) */
+    char filename[256];
+    snprintf(filename, sizeof(filename), "%s_no_powercap.csv", program);
+    printf("[INFO] Powercap calibration: Testing without power cap (baseline, POWERCAP = -1)\n");
+    runTesting(ntimes, core, command, language, program, filename, -1, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, 0);
+
+    {
+        FILE *inputFile = fopen(filename, "r");
+        if (inputFile == NULL) {
+            perror("[ERROR] Powercap calibration: Error opening no-powercap CSV file for reading");
+        } else {
+            char buffer[1024];
+            while (fgets(buffer, sizeof(buffer), inputFile) != NULL) {
+                fputs(buffer, outputFile);
+            }
+            fclose(inputFile);
+            if (remove(filename) != 0) {
+                perror("[ERROR] Powercap calibration: Error removing no-powercap CSV file");
+            }
+        }
+    }
+
     for (int power_cap = min_powercap; power_cap <= max_powercap; power_cap++) {
         POWERCAP = power_cap;
         printf("[INFO] Powercap calibration: Testing with POWERCAP = %d\n", power_cap);
@@ -471,7 +493,6 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
             continue;
         }
 
-        char filename[256];
         snprintf(filename, sizeof(filename), "%s_%d.csv", program, power_cap);
 
         runTesting(ntimes, core, command, language, program, filename, POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, 0);
@@ -1025,9 +1046,9 @@ int main(int argc, char **argv) {
     char sleep_command[100];
     snprintf(sleep_command, sizeof(sleep_command), "sleep %d", sleep_time);
 
-    printf("\n\n BEGINNING of IDLE EXECUTION: \n");
-    runTesting(n_times, core, sleep_command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, 1);
-    printf("\n\n END of IDLE EXECUTION: \n");
+    //printf("\n\n BEGINNING of IDLE EXECUTION: \n");
+    //runTesting(n_times, core, sleep_command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, 1);
+    //printf("\n\n END of IDLE EXECUTION: \n");
 
     printf("\n\n BEGINNING of PARAMETRIZED PROGRAM: \n");
     runTesting(n_times, core, command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, 0);
