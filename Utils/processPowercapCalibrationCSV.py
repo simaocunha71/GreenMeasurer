@@ -1,6 +1,25 @@
 import pandas as pd
 import sys
 
+
+def remove_package_outliers_iqr(group):
+    if len(group) < 4:
+        return group
+
+    q1 = group['Package'].quantile(0.25)
+    q3 = group['Package'].quantile(0.75)
+    iqr = q3 - q1
+
+    if iqr == 0:
+        return group
+
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    filtered_group = group[group['Package'].between(lower_bound, upper_bound)]
+
+    return filtered_group if not filtered_group.empty else group
+
+
 def process_csv(filename):
     # Read the CSV file
     data = pd.read_csv(filename)
@@ -21,12 +40,8 @@ def process_csv(filename):
             print(f"Powercap: {powercap}, not enough entries to calculate the average.")
             continue
 
-        # Remove the entries with the maximum and minimum values in the 'Package' column
-        max_package = group['Package'].max()
-        min_package = group['Package'].min()
-
-        # Filter the group, removing max and min
-        filtered_group = group[(group['Package'] != max_package) & (group['Package'] != min_package)]
+        # Remove Package outliers using the IQR rule.
+        filtered_group = remove_package_outliers_iqr(group)
 
         # Calculate the averages of 'Package' and 'Time' for the remaining values
         average_package = filtered_group['Package'].mean()

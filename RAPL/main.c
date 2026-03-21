@@ -447,9 +447,10 @@ double calibrateTemperature(int NUMBER_OF_SECONDS) {
     return mean_temp;
 }
 
-/* Calibrate powercap across a range, appending results to a CSV and processing them */
-void calibratePowercap(int ntimes, int core, char* command, char* language, char* program, int min_powercap, int max_powercap, int POWERCAP,
+void calibratePowercap(int ntimes, int core, char* command, char* language, char* program,
+                       int min_powercap, int max_powercap, int POWERCAP,
                        int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE) {
+
     printf("[INFO] Powercap calibration: Calibrating power cap by running %s (%s) with different power limits...\n", program, language);
 
     FILE *outputFile = fopen("../Utils/powercap_calibration.csv", "w");
@@ -457,34 +458,29 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
         perror("[ERROR] Powercap calibration: Error opening powercap_calibration.csv for writing");
         return;
     }
+
     fprintf(outputFile, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory\n");
 
     int memory = measureMemoryUsage(command);
 
-    /* Run without any power cap first (baseline, Powercap = -1) */
-    char filename[256];
-    snprintf(filename, sizeof(filename), "%s_no_powercap.csv", program);
-    printf("[INFO] Powercap calibration: Testing without power cap (baseline, POWERCAP = -1)\n");
-    runTesting(ntimes, core, command, language, program, filename, -1, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, 0);
+    // +1 iteração para incluir o -1 obrigatório
+    int total_iterations = (max_powercap - min_powercap + 1) + 1;
 
-    {
-        FILE *inputFile = fopen(filename, "r");
-        if (inputFile == NULL) {
-            perror("[ERROR] Powercap calibration: Error opening no-powercap CSV file for reading");
+    for (int i = 0; i < total_iterations; i++) {
+
+        int power_cap;
+
+        if (i == 0) {
+            power_cap = -1;  // sempre primeiro
         } else {
-            char buffer[1024];
-            while (fgets(buffer, sizeof(buffer), inputFile) != NULL) {
-                fputs(buffer, outputFile);
-            }
-            fclose(inputFile);
-            if (remove(filename) != 0) {
-                perror("[ERROR] Powercap calibration: Error removing no-powercap CSV file");
-            }
+            power_cap = min_powercap + (i - 1);
         }
-    }
 
-    for (int power_cap = min_powercap; power_cap <= max_powercap; power_cap++) {
+        // evitar repetir -1 caso esteja dentro do intervalo
+        if (power_cap == -1 && i != 0) continue;
+
         POWERCAP = power_cap;
+
         printf("[INFO] Powercap calibration: Testing with POWERCAP = %d\n", power_cap);
 
         raplcap rc;
@@ -493,16 +489,17 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
             continue;
         }
 
+        char filename[256];
         snprintf(filename, sizeof(filename), "%s_%d.csv", program, power_cap);
 
-        runTesting(ntimes, core, command, language, program, filename, POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, 0);
+        runTesting(ntimes, core, command, language, program, filename,
+                   POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD,
+                   VARIANCE, memory, 0);
 
         FILE *inputFile = fopen(filename, "r");
         if (inputFile == NULL) {
             perror("[ERROR] Powercap calibration: Error opening individual CSV file for reading");
-            if (raplcap_destroy(&rc) != 0) {
-                perror("[ERROR] Powercap calibration: raplcap_destroy failed");
-            }
+            raplcap_destroy(&rc);
             continue;
         }
 
@@ -510,6 +507,7 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
         while (fgets(buffer, sizeof(buffer), inputFile) != NULL) {
             fputs(buffer, outputFile);
         }
+
         fclose(inputFile);
 
         if (remove(filename) != 0) {
@@ -1062,4 +1060,3 @@ int main(int argc, char **argv) {
 
     return 0;
 }
-
