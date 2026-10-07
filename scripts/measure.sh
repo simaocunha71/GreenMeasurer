@@ -114,7 +114,7 @@ else
 fi
 
 # Define number of times to execute each program
-NTIMES=10
+NTIMES=3
 
 # Define time limit (here it's in hours) for the execution of each program
 TIME_OUT_LIMIT=4
@@ -123,7 +123,7 @@ TIME_OUT_LIMIT=4
 VARIANCE=5
 
 # Define the number of seconds for the idle execution and for temperature calibration
-IDLE_SECONDS=60
+IDLE_SECONDS=6
 
 # Define interval for overtime measurements (in milliseconds)
 INTERVAL=100

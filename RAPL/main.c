@@ -18,7 +18,7 @@
 #include <fcntl.h>
 
 /* Forward declarations */
-void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE, int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int idle);
+void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE, int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory);
 
 /* Over-time mode context (used when --over-time passed) */
 struct OverTimeCtx {
@@ -160,7 +160,7 @@ void writeErrorMessage(const char *language, const char *program, const char *er
 
 /* runTesting: verify program runs within timeout then measure (uses programWorks thread) */
 void runTesting(int ntimes, int core, const char *command, const char *language, const char *program, const char* MEASUREMENTS_FILE,
-                int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int idle) {
+                int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory) {
 
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
@@ -193,7 +193,7 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
     }
 
     if (threadData.returnValue == 1) {
-        performMeasurements(command, language, program, ntimes, core, MEASUREMENTS_FILE, POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, idle);
+        performMeasurements(command, language, program, ntimes, core, MEASUREMENTS_FILE, POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory);
     } else {
         writeErrorMessage(language, program, "ProgramError", MEASUREMENTS_FILE, POWERCAP);
     }
@@ -256,32 +256,23 @@ void* measure(void *arg) {
 
 /* performMeasurements: orchestrates multiple measure runs and writes CSV header when needed */
 void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE,
-                         int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int idle) {
+                         int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory) {
     struct timespec ts;
     FILE *fp;
     float temperature;
 
-    if (idle == 0) {
-        fp = fopen(MEASUREMENTS_FILE, "a");
-        if (fp == NULL) {
-            perror("[ERROR] Error opening measurements file for appending");
-            exit(-1);
-        }
-    } else {
-        fp = fopen(MEASUREMENTS_FILE, "w");
-        if (fp == NULL) {
-            perror("[ERROR] Error opening measurements file for writing");
-            exit(-1);
-        }
-        fprintf(fp, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory\n");
+    fp = fopen(MEASUREMENTS_FILE, "a");
+    if (fp == NULL) {
+        perror("[ERROR] Error opening measurements file for appending");
+        exit(-1);
     }
+    fprintf(fp, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory\n");
+    fflush(fp);
 
     for (int i = 0; i < ntimes; i++) {
-        if (idle == 1) {
-            fprintf(fp, "%s, idle_%s, %d, ", language, program, POWERCAP);
-        } else {
-            fprintf(fp, "%s, %s, %d, ", language, program, POWERCAP);
-        }
+
+        fprintf(fp, "%s, %s, %d, ", language, program, POWERCAP);
+
 
         temperature = getTemperature();
 
@@ -494,7 +485,7 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
 
         runTesting(ntimes, core, command, language, program, filename,
                    POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD,
-                   VARIANCE, memory, 0);
+                   VARIANCE, memory);
 
         FILE *inputFile = fopen(filename, "r");
         if (inputFile == NULL) {
@@ -1044,12 +1035,8 @@ int main(int argc, char **argv) {
     char sleep_command[100];
     snprintf(sleep_command, sizeof(sleep_command), "sleep %d", sleep_time);
 
-    //printf("\n\n BEGINNING of IDLE EXECUTION: \n");
-    //runTesting(n_times, core, sleep_command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, 1);
-    //printf("\n\n END of IDLE EXECUTION: \n");
-
     printf("\n\n BEGINNING of PARAMETRIZED PROGRAM: \n");
-    runTesting(n_times, core, command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, 0);
+    runTesting(n_times, core, command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory);
     printf("\n\n END of PARAMETRIZED PROGRAM: \n");
 
     if (raplcap_destroy(&rc) != 0) {
