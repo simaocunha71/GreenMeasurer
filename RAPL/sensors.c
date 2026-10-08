@@ -1,8 +1,17 @@
 #include "sensors.h"
 
-float getTemperature() {
-    // Robust one-liner: extracts all Core temps and averages them
-    const char *cmd = "sensors | grep -E 'Core [0-9]+' | awk -F'+' '{split($2,a,\"°\"); sum+=a[1]} END {if(NR>0) print sum/NR; else print -1}'";
+float getTemperature(int cpu) {
+    char cmd[512];
+
+    if (cpu == 0) {
+        // Intel: filtra linhas "Core X:", isola o valor após o primeiro '+' antes de '°' e calcula a média
+        snprintf(cmd, sizeof(cmd),
+            "sensors | awk -F: '/^Core [0-9]+:/ { split($2, a, \"+\"); split(a[2], b, \"°\"); sum += b[1]; count++ } END { if (count > 0) printf \"%%.2f\\n\", sum / count; else print -1 }'");
+    } else {
+        // AMD: filtra linhas "Tdie:" (ou "Tctl:"), isola o primeiro número após '+' e sai logo
+        snprintf(cmd, sizeof(cmd),
+            "sensors | awk -F: '/^(Tdie|Tctl):/ { split($2, a, \"+\"); split(a[2], b, \"°\"); printf \"%%.2f\\n\", b[1]; exit }'");
+    }
 
     FILE *fp = popen(cmd, "r");
     if (!fp) {
@@ -10,56 +19,41 @@ float getTemperature() {
         return -1.0f;
     }
 
-    char buf[64];
+    char buf[64] = "";
     if (!fgets(buf, sizeof(buf), fp)) {
-        perror("[ERROR] Failed to read sensors output");
         pclose(fp);
         return -1.0f;
     }
-
     pclose(fp);
 
     float avgTemp = atof(buf);
-    printf("\n[INFO] Current average CPU temperature: %.2f°C\n", avgTemp);
-
     return avgTemp;
 }
 
-float getInitialTemperature() {
+float getInitialTemperature(int cpu) {
+    (void)cpu;
     FILE *file = fopen("/tmp/cores_temperatures.txt", "r");
     if (!file) {
         perror("[ERROR] Error opening file /tmp/cores_temperatures.txt");
-        return -1;
+        return -1.0f;
     }
 
     char line[256];
-    regex_t regex;
-    regmatch_t matches[2];
-    const char *pattern = "Average temperature: ([0-9]+\\.[0-9]+)°C";
+    float result = -1.0f;
 
-    // Compile the regular expression
-    if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-        fprintf(stderr, "[ERROR] Error compiling regex (getInitialTemperature())\n");
-        fclose(file);
-        return -1;
-    }
-
-    float result = -1.0;
-
-    // Read lines from the file
     while (fgets(line, sizeof(line), file)) {
-        if (regexec(&regex, line, 2, matches, 0) == 0) {
-            // Extract the substring corresponding to the number
-            char buffer[16];
-            int start = matches[1].rm_so;
-            int end = matches[1].rm_eo;
-            snprintf(buffer, end - start + 1, "%s", line + start);
-            result = atof(buffer);
-            break;
+        if (strstr(line, "Average temperature:") != NULL) {
+            char *colon = strchr(line, ':');
+            if (colon) {
+                float val = 0.0f;
+                if (sscanf(colon + 1, "%f", &val) == 1) {
+                    result = val;
+                    break;
+                }
+            }
         }
     }
 
-    regfree(&regex);
     fclose(file);
     return result;
 }

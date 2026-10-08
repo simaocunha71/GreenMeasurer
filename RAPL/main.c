@@ -2,8 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <powercap/powercap.h>
-#include <raplcap/raplcap.h>
+#if defined(CPU_AMD) || defined(NO_POWERCAP)
+    typedef void* raplcap;
+#else
+    #include <powercap/powercap.h>
+    #include <raplcap/raplcap.h>
+#endif
 #include <math.h>
 #include "rapl.h"
 #include "sensors.h"
@@ -17,8 +21,37 @@
 #include <errno.h>
 #include <fcntl.h>
 
+
+int getCPU_id(void) {
+    FILE *f = fopen("/proc/cpuinfo", "r");
+    if (!f) {
+        perror("[ERROR] Failed to open /proc/cpuinfo");
+        return -1;
+    }
+
+    char line[256];
+    char vendor[64] = "";
+    int cpu_id = -1;
+
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "vendor_id", 9) == 0) {
+            if (sscanf(line, "%*s%*s%63s", vendor) == 1) {
+                if (strcmp(vendor, "GenuineIntel") == 0) {
+                    cpu_id = 0; // Intel
+                } else if (strcmp(vendor, "AuthenticAMD") == 0) {
+                    cpu_id = 1; // AMD
+                }
+                break;
+            }
+        }
+    }
+
+    fclose(f);
+    return cpu_id;
+}
+
 /* Forward declarations */
-void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE, int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory);
+void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE, int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int cpu);
 
 /* Over-time mode context (used when --over-time passed) */
 struct OverTimeCtx {
@@ -30,6 +63,7 @@ struct OverTimeCtx {
     int temperature_variance;
     int powercap; /* -1 = no cap */
     int calib_secs;
+    int cpu;
 };
 
 void runOverTimeMode(struct OverTimeCtx *ctx, const char *command);
@@ -50,7 +84,17 @@ static void sigint_handler(int signum) {
 }
 
 /* Initialize RAPL caps with POWERCAP; returns 0 on success, -1 on failure */
-int initializeRapl(raplcap *rc, int POWERCAP){
+#if !defined(CPU_AMD) && !defined(NO_POWERCAP)
+int initializeRapl(raplcap *rc, int POWERCAP) {
+    if (POWERCAP == -1) {
+        return 0;
+    }
+
+    if (getCPU_id() == 1) { // AMD
+        fprintf(stderr, "[WARNING] Power capping via raplcap is not supported on AMD CPUs. Ignoring POWERCAP=%d.\n", POWERCAP);
+        return 0;
+    }
+
     raplcap_limit rl_short, rl_long;
     uint32_t q, j, n, d;
 
@@ -82,7 +126,6 @@ int initializeRapl(raplcap *rc, int POWERCAP){
         for (j = 0; j < d; j++) {
             if (raplcap_pd_set_limits(rc, q, j, RAPLCAP_ZONE_PACKAGE, &rl_long, &rl_short)) {
                 perror("raplcap_pd_set_limits");
-                /* continue trying others */
             }
         }
     }
@@ -96,6 +139,16 @@ int initializeRapl(raplcap *rc, int POWERCAP){
     }
     return 0;
 }
+#else
+/* Versão stub para AMD / nós sem powercap */
+int initializeRapl(raplcap *rc, int POWERCAP) {
+    (void)rc;
+    if (POWERCAP != -1) {
+        fprintf(stderr, "[WARNING] Power capping não é suportado nesta máquina/arquitetura. A ignorar POWERCAP=%d.\n", POWERCAP);
+    }
+    return 0;
+}
+#endif
 
 /* Safely run a system command */
 void runCommand(const char *command) {
@@ -160,7 +213,7 @@ void writeErrorMessage(const char *language, const char *program, const char *er
 
 /* runTesting: verify program runs within timeout then measure (uses programWorks thread) */
 void runTesting(int ntimes, int core, const char *command, const char *language, const char *program, const char* MEASUREMENTS_FILE,
-                int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory) {
+                int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int cpu) {
 
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
@@ -193,7 +246,7 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
     }
 
     if (threadData.returnValue == 1) {
-        performMeasurements(command, language, program, ntimes, core, MEASUREMENTS_FILE, POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory);
+        performMeasurements(command, language, program, ntimes, core, MEASUREMENTS_FILE, POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD, VARIANCE, memory, cpu);
     } else {
         writeErrorMessage(language, program, "ProgramError", MEASUREMENTS_FILE, POWERCAP);
     }
@@ -256,7 +309,7 @@ void* measure(void *arg) {
 
 /* performMeasurements: orchestrates multiple measure runs and writes CSV header when needed */
 void performMeasurements(const char *command, const char *language, const char *program, int ntimes, int core, const char* MEASUREMENTS_FILE,
-                         int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory) {
+                         int POWERCAP, int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE, int memory, int cpu) {
     struct timespec ts;
     FILE *fp;
     float temperature;
@@ -274,13 +327,13 @@ void performMeasurements(const char *command, const char *language, const char *
         fprintf(fp, "%s, %s, %d, ", language, program, POWERCAP);
 
 
-        temperature = getTemperature();
+        temperature = getTemperature(cpu);
 
         while (temperature > TEMPERATURETHRESHOLD + VARIANCE) {
             printf("[INFO] Sleeping 1 second... Current temperature: %.1f°C | Reference temperature: %.1f°C + Variance: %d°C | Waiting for temperature to drop below reference...\n",
                    temperature, TEMPERATURETHRESHOLD, VARIANCE);
             sleep(1);
-            temperature = getTemperature();
+            temperature = getTemperature(cpu);
         }
 
         if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
@@ -363,8 +416,7 @@ int measureMemoryUsage(const char *command) {
     return result;
 }
 
-/* calibrateTemperature: sleeps then parses sensors output, returns average temperature */
-double calibrateTemperature(int NUMBER_OF_SECONDS) {
+double calibrateTemperature(int NUMBER_OF_SECONDS, int cpu) {
     printf("[INFO] Sleeping %d seconds to calibrate the temperature...\n", NUMBER_OF_SECONDS);
     sleep(NUMBER_OF_SECONDS);
 
@@ -379,65 +431,59 @@ double calibrateTemperature(int NUMBER_OF_SECONDS) {
         return -1;
     }
 
-    FILE *output_file = fopen("/tmp/cores_temperatures.txt", "a");
-    if (output_file == NULL) {
-        perror("[ERROR] Error opening /tmp/cores_temperatures.txt for append");
-        fclose(file);
-        return -1;
-    }
-
     char line[256];
     double temperatures[256];
     int temp_count = 0;
-    regex_t regex;
-    regmatch_t matches[2];
-
-    if (regcomp(&regex, "Core [0-9]+: *\\+([0-9.]+)°C", REG_EXTENDED) != 0) {
-        fprintf(stderr, "[ERROR] regcomp failed\n");
-        fclose(file); fclose(output_file);
-        return -1;
-    }
 
     while (fgets(line, sizeof(line), file)) {
-        if (regexec(&regex, line, 2, matches, 0) == 0) {
-            char temp_str[32];
-            int len = matches[1].rm_eo - matches[1].rm_so;
-            if (len >= (int)sizeof(temp_str)) len = sizeof(temp_str)-1;
-            strncpy(temp_str, line + matches[1].rm_so, len);
-            temp_str[len] = '\0';
-            double temperature = atof(temp_str);
-            if (temp_count < (int)(sizeof(temperatures)/sizeof(temperatures[0]))) {
-                temperatures[temp_count++] = temperature;
-            }
-            /* Extract core number safely */
-            char copyline[256];
-            strncpy(copyline, line, sizeof(copyline)-1);
-            copyline[sizeof(copyline)-1] = '\0';
-            char *core_number = strtok(copyline, ":");
-            if (core_number) {
-                fprintf(output_file, "%s: %.1f°C\n", core_number, temperature);
+        int is_target = 0;
+        
+        // cpu == 0 (Intel): apenas linhas "Core 0:", "Core 4:", etc.
+        // cpu != 0 (AMD): apenas linhas "Tdie:" ou "Tctl:"
+        if (cpu == 0 && strncmp(line, "Core ", 5) == 0) {
+            is_target = 1;
+        } else if (cpu != 0 && (strncmp(line, "Tdie:", 5) == 0 || strncmp(line, "Tctl:", 5) == 0)) {
+            is_target = 1;
+        }
+
+        if (is_target) {
+            char *plus_sign = strchr(line, '+');
+            if (plus_sign) {
+                double temp = 0.0;
+                // Lê o número imediatamente a seguir ao '+'
+                if (sscanf(plus_sign + 1, "%lf", &temp) == 1) {
+                    if (temp > 0.0 && temp_count < 256) {
+                        temperatures[temp_count++] = temp;
+                    }
+                }
             }
         }
     }
+    fclose(file);
 
     double mean_temp = 0.0;
     if (temp_count > 0) {
-        for (int i = 0; i < temp_count; i++) mean_temp += temperatures[i];
+        for (int i = 0; i < temp_count; i++) {
+            mean_temp += temperatures[i];
+            printf("Sensor %d temperature: %.1f°C\n", i, temperatures[i]);
+        }
         mean_temp /= temp_count;
+    } else {
+        fprintf(stderr, "[WARNING] No sensors matched, defaulting to 40.0°C\n");
+        mean_temp = 40.0;
     }
 
-    for (int i = 0; i < temp_count; i++) {
-        printf("Core %d temperature: %.1f°C\n", i, temperatures[i]);
+    FILE *output_file = fopen("/tmp/cores_temperatures.txt", "a");
+    if (output_file != NULL) {
+        fprintf(output_file, "Average temperature: %.1f°C\n\n", mean_temp);
+        fclose(output_file);
     }
 
-    fprintf(output_file, "Average temperature: %.1f°C\n\n", mean_temp);
-    regfree(&regex);
-    fclose(file);
-    fclose(output_file);
-
+    printf("[INFO] Calibrated average temperature: %.1f°C\n", mean_temp);
     return mean_temp;
 }
 
+#if !defined(CPU_AMD) && !defined(NO_POWERCAP)
 void calibratePowercap(int ntimes, int core, char* command, char* language, char* program,
                        int min_powercap, int max_powercap, int POWERCAP,
                        int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE) {
@@ -485,7 +531,7 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
 
         runTesting(ntimes, core, command, language, program, filename,
                    POWERCAP, TIME_OUT_LIMIT, TEMPERATURETHRESHOLD,
-                   VARIANCE, memory);
+                   VARIANCE, memory, 0); // Assuming CPU 0 (Intel) for this calibration run
 
         FILE *inputFile = fopen(filename, "r");
         if (inputFile == NULL) {
@@ -505,9 +551,11 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
             perror("[ERROR] Powercap calibration: Error removing individual CSV file");
         }
 
-        if (raplcap_destroy(&rc) != 0) {
-            perror("[ERROR] Powercap calibration: Error destroying CAP");
-        }
+        #if !defined(CPU_AMD) && !defined(NO_POWERCAP)
+            if (POWERCAP != -1 && raplcap_destroy(&rc) != 0) {
+                perror("[ERROR] raplcap_destroy");
+            }
+        #endif
 
         sleep(1);
     }
@@ -521,6 +569,16 @@ void calibratePowercap(int ntimes, int core, char* command, char* language, char
         printf("[INFO] Power cap calibration CSV processed successfully\n");
     }
 }
+#else
+/* Versão stub para AMD / nós sem powercap */
+void calibratePowercap(int ntimes, int core, char* command, char* language, char* program,
+                       int min_powercap, int max_powercap, int POWERCAP,
+                       int TIME_OUT_LIMIT, float TEMPERATURETHRESHOLD, int VARIANCE) {
+
+    printf("[INFO] Powercap calibration: Stub version for AMD / no powercap\n");
+
+}
+#endif
 
 /* Logger thread that samples rapl values while ctx->run_flag is true */
 void *runRaplLogger(void *arg) {
@@ -550,7 +608,11 @@ void *runRaplLogger(void *arg) {
     }
 
     while (rapl_init(core) != 0) {
-        if (global_terminate) { fclose(mot); raplcap_destroy(&rc); pthread_exit(NULL); }
+        if (global_terminate) { fclose(mot); 
+            #if !defined(CPU_AMD) && !defined(NO_POWERCAP)
+            raplcap_destroy(&rc); 
+            #endif
+            pthread_exit(NULL); }
         sleep(1);
     }
 
@@ -613,7 +675,7 @@ void *runRaplLogger(void *arg) {
                     char timebuf[64];
                     snprintf(timebuf, sizeof(timebuf), "%ld", elapsed_ms);
 
-                    double temperature = getTemperature();
+                    double temperature = getTemperature(ctx->cpu);
                     char tempbuf[32]; snprintf(tempbuf, sizeof(tempbuf), "%.2f", temperature);
 
                     const char *lang = ctx->language[0] ? ctx->language : "";
@@ -636,9 +698,11 @@ void *runRaplLogger(void *arg) {
     }
 
     fclose(mot);
-    if (raplcap_destroy(&rc) != 0) {
-        perror("[ERROR] raplcap_destroy in runRaplLogger");
-    }
+    #if !defined(CPU_AMD) && !defined(NO_POWERCAP)
+        if (raplcap_destroy(&rc) != 0) {
+            perror("[ERROR] raplcap_destroy in runRaplLogger");
+        }
+    #endif
     pthread_exit(NULL);
     return NULL;
 }
@@ -676,6 +740,8 @@ int main(int argc, char **argv) {
     raplcap rc;
     int variance = 0;
     int time_out_limit = 0;
+
+    int cpu = getCPU_id();
 
     /* detect --over-time */
     int over_idx = -1;
@@ -732,12 +798,12 @@ int main(int argc, char **argv) {
 
         if (access("/tmp/cores_temperatures.txt", F_OK) != 0) {
             printf("[WARNING] Over time session: File /tmp/cores_temperatures.txt not found. Running temperature calibration...\n");
-            calibrateTemperature(calib_secs_arg);
+            calibrateTemperature(calib_secs_arg, cpu);
         } else {
             printf("[INFO] Over time session: File /tmp/cores_temperatures.txt found. Skipping temperature calibration.\n");
         }
 
-        float baseline_temp = getInitialTemperature();
+        float baseline_temp = getInitialTemperature(cpu);
 
         struct OverTimeCtx ctx;
         ctx.run_flag = 0;
@@ -765,13 +831,13 @@ int main(int argc, char **argv) {
                cli_command, interval_ms, ctx.language, ctx.program,
                powercap_str, ctx.temperature_variance);
 
-        float temperature = getTemperature();
+        float temperature = getTemperature(cpu);
 
         while (temperature > ctx.baseline_temperature + ctx.temperature_variance) {
             printf("[INFO] Sleeping 1 second... Current temperature: %.1f°C | Reference temperature: %.1f°C + Variance: %d°C | Waiting for temperature to drop below reference...\n",
                    temperature, ctx.baseline_temperature, ctx.temperature_variance);
             sleep(1);
-            temperature = getTemperature();
+            temperature = getTemperature(cpu);
         }
 
         runOverTimeMode(&ctx, cli_command);
@@ -827,7 +893,7 @@ int main(int argc, char **argv) {
         }
 
         if (sleepTime <= 0) { fprintf(stderr, "[ERROR] sleep-secs must be > 0.\n"); return -1; }
-        calibrateTemperature(sleepTime);
+        calibrateTemperature(sleepTime, cpu);
         return 0;
     }
 
@@ -940,11 +1006,11 @@ int main(int argc, char **argv) {
 
         if (access("/tmp/cores_temperatures.txt", F_OK) != 0) {
             printf("[WARNING] Powercap calibration: File /tmp/cores_temperatures.txt not found. Running temperature calibration...\n");
-            calibrateTemperature(secs_to_sleep);
+            calibrateTemperature(secs_to_sleep, cpu);
         } else {
             printf("[INFO] Powercap calibration: File /tmp/cores_temperatures.txt found. Skipping temperature calibration.\n");
         }
-        temperature_threshold = getInitialTemperature();
+        temperature_threshold = getInitialTemperature(cpu);
 
         calibratePowercap(n_times_arg, core, run_command, lang, program_name, min_powercap, max_powercap, powercap, time_out_limit, temperature_threshold, variance_arg);
 
@@ -999,12 +1065,12 @@ int main(int argc, char **argv) {
 
     if (access("/tmp/cores_temperatures.txt", F_OK) != 0) {
         printf("[WARNING] File /tmp/cores_temperatures.txt not found. Running temperature calibration...\n");
-        calibrateTemperature(sleep_time);
+        calibrateTemperature(sleep_time, cpu);
     } else {
         printf("[INFO] File /tmp/cores_temperatures.txt found. Skipping temperature calibration.\n");
     }
 
-    temperature_threshold = getInitialTemperature();
+    temperature_threshold = getInitialTemperature(cpu);
 
     printf("\n[INFO]\n======= Execution Details ========\n");
     printf(" Command    : %s\n", command);
@@ -1036,14 +1102,18 @@ int main(int argc, char **argv) {
     snprintf(sleep_command, sizeof(sleep_command), "sleep %d", sleep_time);
 
     printf("\n\n BEGINNING of PARAMETRIZED PROGRAM: \n");
-    runTesting(n_times, core, command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory);
+    runTesting(n_times, core, command, language, program, "measurements.csv", powercap, time_out_limit, temperature_threshold, variance, memory, cpu);
     printf("\n\n END of PARAMETRIZED PROGRAM: \n");
 
-    if (raplcap_destroy(&rc) != 0) {
-        perror("[ERROR] raplcap_destroy");
-    } else {
-        printf("[INFO] Successfully destroyed CAP\n");
+    #if !defined(CPU_AMD) && !defined(NO_POWERCAP)
+    if (powercap != -1 && cpu == 0) {
+        if (raplcap_destroy(&rc) != 0) {
+            perror("[ERROR] raplcap_destroy");
+        } else {
+            printf("[INFO] Successfully destroyed CAP\n");
+        }
     }
+    #endif
 
     return 0;
 }

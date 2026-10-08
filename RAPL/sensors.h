@@ -4,5 +4,5 @@
 #include <regex.h>
 
 
-float getTemperature();
+float getTemperature(int cpu);
 float getInitialTemperature();

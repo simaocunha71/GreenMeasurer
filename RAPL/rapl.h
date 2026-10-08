@@ -50,14 +50,21 @@
 #define TIME_UNIT_OFFSET	0x10
 #define TIME_UNIT_MASK		0xF000
 
+/* AMD MSRs (Zen / Family 17h+) */
+/* AMD MSRs (Zen Family 17h+ from turbostat.c) */
+#define AMD_MSR_RAPL_PWR_UNIT       0xC0010299
+#define AMD_MSR_CORE_ENERGY_STAT    0xC001029A
+#define AMD_MSR_PKG_ENERGY_STAT     0xC001029B
 
-
+/* 32-bit counter wrap-around delta macro from https://github.com/torvalds/linux/blob/master/tools/power/x86/turbostat/turbostat.c */
+#define DELTA_WRAP32(new, old) \
+    ((((unsigned long long)(new) << 32) - ((unsigned long long)(old) << 32)) >> 32)
 
 int open_msr(int core);
 uint64_t read_msr(int fd, int which);
-int detect_cpu(void) ;
+int detect_cpu(void);
 int rapl_init(int core);
 void show_power_info(int core);
 void show_power_limit(int core);
-int rapl_before (FILE * , int);
-int rapl_after  (FILE * , int);
+int rapl_before(FILE *fp, int core);
+int rapl_after(FILE *fp, int core);

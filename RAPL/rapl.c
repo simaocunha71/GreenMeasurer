@@ -1,12 +1,17 @@
 #include "rapl.h"
 
 int cpu_model;
+int is_amd = 0;
 int core = 0;
 
+/* Variables for Intel delta computation */
 double package_before, package_after;
 double pp0_before, pp0_after;
-double pp1_before = 0.0, pp1_after;
-double dram_before = 0.0, dram_after;
+double pp1_before = 0.0, pp1_after = 0.0;
+double dram_before = 0.0, dram_after = 0.0;
+
+/* 32-bit raw ticks for AMD delta computation */
+uint32_t amd_pkg_raw_before, amd_core_raw_before;
 
 double power_units, energy_units, time_units;
 
@@ -34,24 +39,19 @@ int open_msr(int core) {
 }
 
 uint64_t read_msr(int fd, int which) {
-  uint64_t data = (uint64_t)-1;
+    uint64_t data = (uint64_t)-1;
 
-  if (pread(fd, &data, sizeof(data), (off_t)which) != sizeof(data)) {
-    if (errno == EIO) {
-        fprintf(stderr, "[WARNING] MSR 0x%x not available on this CPU.\n", which);
-    } else {
-        fprintf(stderr, "[ERROR] reading MSR 0x%x: %s\n", which, strerror(errno));
+    if (pread(fd, &data, sizeof(data), (off_t)which) != sizeof(data)) {
+        if (errno == EIO) {
+            fprintf(stderr, "[WARNING] MSR 0x%x not available on this CPU.\n", which);
+        } else {
+            fprintf(stderr, "[ERROR] reading MSR 0x%x: %s\n", which, strerror(errno));
+        }
+        return (uint64_t)-1;
     }
-    return (uint64_t)-1;
-  }
 
-  return data;
+    return data;
 }
-
-
-#include <stdio.h>
-#include <string.h>
-
 
 #define CPU_SANDYBRIDGE         42
 #define CPU_SANDYBRIDGE_EP      45
@@ -101,9 +101,9 @@ uint64_t read_msr(int fd, int which) {
 
 int detect_cpu(void) {
     FILE *fff;
-    int family, model = -1;
+    int family = 0, model = -1;
     char buffer[BUFSIZ], *result;
-    char vendor[BUFSIZ];
+    char vendor[BUFSIZ] = "";
 
     fff = fopen("/proc/cpuinfo", "r");
     if (fff == NULL) return -1;
@@ -114,20 +114,10 @@ int detect_cpu(void) {
 
         if (!strncmp(result, "vendor_id", 9)) {
             sscanf(result, "%*s%*s%s", vendor);
-            if (strncmp(vendor, "GenuineIntel", 12)) {
-                fprintf(stderr, "[ERROR] %s is not an Intel chip\n", vendor);
-                fclose(fff);
-                return -1;
-            }
         }
 
         if (!strncmp(result, "cpu family", 10)) {
             sscanf(result, "%*s%*s%*s%d", &family);
-            if (family != 6) {
-                fprintf(stderr, "[ERROR] Wrong CPU family %d\n", family);
-                fclose(fff);
-                return -1;
-            }
         }
 
         if (!strncmp(result, "model", 5)) {
@@ -136,6 +126,26 @@ int detect_cpu(void) {
     }
 
     fclose(fff);
+
+    /* Detect AMD Zen architectures */
+    if (!strncmp(vendor, "AuthenticAMD", 12)) {
+        if (family >= 0x17) {
+            printf("[INFO] Found AMD Zen (Family >= 17h) CPU\n");
+            is_amd = 1;
+            return 0;
+        } else {
+            fprintf(stderr, "[ERROR] AMD CPU Family %d older than Zen is not supported\n", family);
+            return -1;
+        }
+    }
+
+    /* Detect Intel */
+    if (strncmp(vendor, "GenuineIntel", 12)) {
+        fprintf(stderr, "[ERROR] %s is not supported\n", vendor);
+        return -1;
+    }
+
+    is_amd = 0;
 
     switch (model) {
         case CPU_SANDYBRIDGE:            printf("[INFO] Found Sandy Bridge CPU\n"); break;
@@ -184,7 +194,7 @@ int detect_cpu(void) {
         case SAPPHIRERAPIDS_X:           printf("[INFO] Found Sapphire Rapids X CPU\n"); break;
         case EMERALDRAPIDS_X:            printf("[INFO] Found Emerald Rapids X CPU\n"); break;
         default:
-            fprintf(stderr, "[ERROR] Unsupported CPU model %d\n", model);
+            fprintf(stderr, "[ERROR] Unsupported Intel CPU model %d\n", model);
             model = -1;
             break;
     }
@@ -203,182 +213,236 @@ int rapl_init(int core) {
     }
 
     fd = open_msr(core);
-    result = read_msr(fd, MSR_RAPL_POWER_UNIT);
-    close(fd);
 
-    if (result == (uint64_t)-1) {
-        fprintf(stderr, "[ERROR] Failed to read MSR_RAPL_POWER_UNIT\n");
-        return -1;
+    if (is_amd) {
+        /* Read AMD energy units (turbostat: rapl_probe_amd) */
+        result = read_msr(fd, AMD_MSR_RAPL_PWR_UNIT);
+        close(fd);
+
+        if (result == (uint64_t)-1) {
+            fprintf(stderr, "[ERROR] Failed to read AMD_MSR_RAPL_PWR_UNIT\n");
+            return -1;
+        }
+
+        power_units  = pow(0.5, (double)(result & 0xf));
+        energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
+        time_units   = pow(0.5, (double)((result >> 16) & 0xf));
+    } else {
+        /* Read Intel energy units (turbostat: rapl_probe_intel) */
+        result = read_msr(fd, MSR_RAPL_POWER_UNIT);
+        close(fd);
+
+        if (result == (uint64_t)-1) {
+            fprintf(stderr, "[ERROR] Failed to read MSR_RAPL_POWER_UNIT\n");
+            return -1;
+        }
+
+        power_units  = pow(0.5, (double)(result & 0xf));
+        energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
+        time_units   = pow(0.5, (double)((result >> 16) & 0xf));
     }
-
-    power_units  = pow(0.5, (double)(result & 0xf));
-    energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
-    time_units   = pow(0.5, (double)((result >> 16) & 0xf));
 
     return 0;
 }
 
 void show_power_info(int core) {
-  int fd;
-  uint64_t result;
-  double thermal_spec_power, minimum_power, maximum_power, time_window;
+    if (is_amd) return;
 
-  fd = open_msr(core);
-  result = read_msr(fd, MSR_PKG_POWER_INFO);
-  close(fd);
+    int fd;
+    uint64_t result;
+    double thermal_spec_power, minimum_power, maximum_power, time_window;
 
-  if (result == (uint64_t)-1) return;
+    fd = open_msr(core);
+    result = read_msr(fd, MSR_PKG_POWER_INFO);
+    close(fd);
 
-  thermal_spec_power = power_units * (double)(result & 0x7fff);
-  printf("Package thermal spec: %.3fW\n", thermal_spec_power);
+    if (result == (uint64_t)-1) return;
 
-  minimum_power = power_units * (double)((result >> 16) & 0x7fff);
-  printf("Package minimum power: %.3fW\n", minimum_power);
+    thermal_spec_power = power_units * (double)(result & 0x7fff);
+    printf("Package thermal spec: %.3fW\n", thermal_spec_power);
 
-  maximum_power = power_units * (double)((result >> 32) & 0x7fff);
-  printf("Package maximum power: %.3fW\n", maximum_power);
+    minimum_power = power_units * (double)((result >> 16) & 0x7fff);
+    printf("Package minimum power: %.3fW\n", minimum_power);
 
-  time_window = time_units * (double)((result >> 48) & 0x7fff);
-  printf("Package maximum time window: %.6fs\n", time_window);
+    maximum_power = power_units * (double)((result >> 32) & 0x7fff);
+    printf("Package maximum power: %.3fW\n", maximum_power);
+
+    time_window = time_units * (double)((result >> 48) & 0x7fff);
+    printf("Package maximum time window: %.6fs\n", time_window);
 }
 
 void show_power_limit(int core) {
-  int fd;
-  uint64_t result;
+    if (is_amd) return;
 
-  fd = open_msr(core);
-  result = read_msr(fd, MSR_PKG_RAPL_POWER_LIMIT);
-  close(fd);
+    int fd;
+    uint64_t result;
 
-  if (result == (uint64_t)-1) return;
+    fd = open_msr(core);
+    result = read_msr(fd, MSR_PKG_RAPL_POWER_LIMIT);
+    close(fd);
 
-  printf("Package power limits are %s\n", (result >> 63) ? "locked" : "unlocked");
-  double pkg_power_limit_1 = power_units * (double)((result >> 0) & 0x7FFF);
-  double pkg_time_window_1 = time_units * (double)((result >> 17) & 0x007F);
-  printf("Package power limit #1: %.3fW for %.6fs (%s, %s)\n", pkg_power_limit_1, pkg_time_window_1,
+    if (result == (uint64_t)-1) return;
+
+    printf("Package power limits are %s\n", (result >> 63) ? "locked" : "unlocked");
+    double pkg_power_limit_1 = power_units * (double)((result >> 0) & 0x7FFF);
+    double pkg_time_window_1 = time_units * (double)((result >> 17) & 0x007F);
+    printf("Package power limit #1: %.3fW for %.6fs (%s, %s)\n", pkg_power_limit_1, pkg_time_window_1,
          (result & (1ULL << 15)) ? "enabled" : "disabled",
          (result & (1ULL << 16)) ? "clamped" : "not_clamped");
 
-  double pkg_power_limit_2 = power_units * (double)((result >> 32) & 0x7FFF);
-  double pkg_time_window_2 = time_units * (double)((result >> 49) & 0x007F);
-  printf("Package power limit #2: %.3fW for %.6fs (%s, %s)\n", pkg_power_limit_2, pkg_time_window_2,
+    double pkg_power_limit_2 = power_units * (double)((result >> 32) & 0x7FFF);
+    double pkg_time_window_2 = time_units * (double)((result >> 49) & 0x007F);
+    printf("Package power limit #2: %.3fW for %.6fs (%s, %s)\n", pkg_power_limit_2, pkg_time_window_2,
          (result & (1ULL << 47)) ? "enabled" : "disabled",
          (result & (1ULL << 48)) ? "clamped" : "not_clamped");
 
-  printf("\n");
+    printf("\n");
 }
 
 int rapl_before(FILE *fp, int core) {
-  int fd;
-  uint64_t result;
-  fd = open_msr(core);
+    int fd = open_msr(core);
+    uint64_t result;
+    int flag = 1;
 
-  double acc_pkg_throttled_time, acc_pp0_throttled_time;
-  int pp0_policy, pp1_policy;
-  int flag = 1; // Assume all values are valid (non-negative)
+    if (is_amd) {
+        /* AMD: Read 32-bit registers (turbostat: msr_mask = 0xFFFFFFFF) */
+        result = read_msr(fd, AMD_MSR_PKG_ENERGY_STAT);
+        amd_pkg_raw_before = (uint32_t)(result & 0xFFFFFFFF);
 
-  result = read_msr(fd, MSR_PKG_ENERGY_STATUS);
-  package_before = (double)result * energy_units;
-  if (package_before < 0) {
-      fprintf(stderr, "[WARNING]: package_before is negative: %f\n", package_before);
-      flag = -1;
-  }
+        result = read_msr(fd, AMD_MSR_CORE_ENERGY_STAT);
+        amd_core_raw_before = (uint32_t)(result & 0xFFFFFFFF);
 
-  result = read_msr(fd, MSR_PKG_PERF_STATUS);
-  acc_pkg_throttled_time = (double)result * time_units;
-  if (acc_pkg_throttled_time < 0) {
-      fprintf(stderr, "[WARNING]: acc_pkg_throttled_time is negative: %f\n", acc_pkg_throttled_time);
-      flag = -1;
-  }
+        close(fd);
+        return flag;
+    }
 
-  result = read_msr(fd, MSR_PP0_ENERGY_STATUS);
-  pp0_before = (double)result * energy_units;
-  if (pp0_before < 0) {
-      fprintf(stderr, "[WARNING]: pp0_before is negative: %f\n", pp0_before);
-      flag = -1;
-  }
+    /* Intel: Original flow */
+    double acc_pkg_throttled_time, acc_pp0_throttled_time;
+    int pp0_policy, pp1_policy;
 
-  result = read_msr(fd, MSR_PP0_POLICY);
-  pp0_policy = (int)result & 0x001f;
+    result = read_msr(fd, MSR_PKG_ENERGY_STATUS);
+    package_before = (double)result * energy_units;
+    if (package_before < 0) {
+        fprintf(stderr, "[WARNING]: package_before is negative: %f\n", package_before);
+        flag = -1;
+    }
 
-  result = read_msr(fd, MSR_PP0_PERF_STATUS);
-  acc_pp0_throttled_time = (double)result * time_units;
-  if (acc_pp0_throttled_time < 0) {
-      fprintf(stderr, "[WARNING]: acc_pp0_throttled_time is negative: %f\n", acc_pp0_throttled_time);
-      flag = -1;
-  }
+    result = read_msr(fd, MSR_PKG_PERF_STATUS);
+    acc_pkg_throttled_time = (double)result * time_units;
+    if (acc_pkg_throttled_time < 0) {
+        fprintf(stderr, "[WARNING]: acc_pkg_throttled_time is negative: %f\n", acc_pkg_throttled_time);
+        flag = -1;
+    }
 
-  result = read_msr(fd, MSR_PP1_ENERGY_STATUS);
-  pp1_before = (double)result * energy_units;
-  if (pp1_before < 0) {
-      fprintf(stderr, "[WARNING]: pp1_before is negative: %f\n", pp1_before);
-      flag = -1;
-  }
+    result = read_msr(fd, MSR_PP0_ENERGY_STATUS);
+    pp0_before = (double)result * energy_units;
+    if (pp0_before < 0) {
+        fprintf(stderr, "[WARNING]: pp0_before is negative: %f\n", pp0_before);
+        flag = -1;
+    }
 
-  result = read_msr(fd, MSR_PP1_POLICY);
-  pp1_policy = (int)result & 0x001f;
+    result = read_msr(fd, MSR_PP0_POLICY);
+    pp0_policy = (int)result & 0x001f;
 
-  result = read_msr(fd, MSR_DRAM_ENERGY_STATUS);
-  dram_before = (double)result * energy_units;
-  if (dram_before < 0) {
-      fprintf(stderr, "[WARNING]: dram_before is negative: %f\n", dram_before);
-      flag = -1;
-  }
+    result = read_msr(fd, MSR_PP0_PERF_STATUS);
+    acc_pp0_throttled_time = (double)result * time_units;
+    if (acc_pp0_throttled_time < 0) {
+        fprintf(stderr, "[WARNING]: acc_pp0_throttled_time is negative: %f\n", acc_pp0_throttled_time);
+        flag = -1;
+    }
 
-  close(fd);
+    result = read_msr(fd, MSR_PP1_ENERGY_STATUS);
+    pp1_before = (double)result * energy_units;
+    if (pp1_before < 0) {
+        fprintf(stderr, "[WARNING]: pp1_before is negative: %f\n", pp1_before);
+        flag = -1;
+    }
 
-  return flag;
+    result = read_msr(fd, MSR_PP1_POLICY);
+    pp1_policy = (int)result & 0x001f;
+
+    result = read_msr(fd, MSR_DRAM_ENERGY_STATUS);
+    dram_before = (double)result * energy_units;
+    if (dram_before < 0) {
+        fprintf(stderr, "[WARNING]: dram_before is negative: %f\n", dram_before);
+        flag = -1;
+    }
+
+    close(fd);
+    return flag;
 }
 
-
 int rapl_after(FILE *fp, int core) {
-  int fd;
-  uint64_t result;
-  double pkg_diff = 0, pp0_diff = 0, pp1_diff = 0, dram_diff = 0;
-  int has_negative = 0;
+    int fd = open_msr(core);
+    uint64_t result;
 
-  fd = open_msr(core);
+    if (is_amd) {
+        /* AMD: Read 32-bit registers and compute wrap-around delta */
+        result = read_msr(fd, AMD_MSR_PKG_ENERGY_STAT);
+        uint32_t amd_pkg_raw_after = (uint32_t)(result & 0xFFFFFFFF);
 
-  result = read_msr(fd, MSR_PKG_ENERGY_STATUS);
-  package_after = (double)result * energy_units;
-  pkg_diff = package_after - package_before;
-  if (pkg_diff < 0) {
-      fprintf(stderr, "[WARNING]: pkg_diff is negative: %f\n", pkg_diff);
-      has_negative = 1;
-  }
+        result = read_msr(fd, AMD_MSR_CORE_ENERGY_STAT);
+        uint32_t amd_core_raw_after = (uint32_t)(result & 0xFFFFFFFF);
 
-  result = read_msr(fd, MSR_PP0_ENERGY_STATUS);
-  pp0_after = (double)result * energy_units;
-  pp0_diff = pp0_after - pp0_before;
-  if (pp0_diff < 0) {
-      fprintf(stderr, "[WARNING]: pp0_diff is negative: %f\n", pp0_diff);
-      has_negative = 1;
-  }
+        close(fd);
 
-  result = read_msr(fd, MSR_PP1_ENERGY_STATUS);
-  pp1_after = (double)result * energy_units;
-  pp1_diff = pp1_after - pp1_before;
-  if (pp1_diff < 0) {
-      fprintf(stderr, "[WARNING]: pp1_diff is negative: %f\n", pp1_diff);
-      has_negative = 1;
-  }
+        uint32_t pkg_delta_ticks = (uint32_t)DELTA_WRAP32(amd_pkg_raw_after, amd_pkg_raw_before);
+        uint32_t core_delta_ticks = (uint32_t)DELTA_WRAP32(amd_core_raw_after, amd_core_raw_before);
 
-  result = read_msr(fd, MSR_DRAM_ENERGY_STATUS);
-  dram_after = (double)result * energy_units;
-  dram_diff = dram_after - dram_before;
-  if (dram_diff < 0) {
-      fprintf(stderr, "[WARNING]: dram_diff is negative: %f\n", dram_diff);
-      has_negative = 1;
-  }
-  
-  close(fd);
-  
-  if (has_negative) {
-      fprintf(stderr, "[ERROR]: Negative values detected - rapl_after().\n");
-      return -1;
-  }
+        double pkg_diff = (double)pkg_delta_ticks * energy_units;
+        double core_diff = (double)core_delta_ticks * energy_units;
+        double pp1_diff = 0.0;  /* GPU domain is not exposed via these MSRs on AMD */
+        double dram_diff = 0.0; /* DRAM domain is not exposed via these MSRs on AMD */
 
-  // Only log if all values are valid
-  fprintf(fp, "%.18f, %.18f, %.18f, %.18f, ", pkg_diff, pp0_diff, pp1_diff, dram_diff);
-  return 1;
+        /* Matches the standard 4 CSV columns: Package, Core, GPU, DRAM */
+        fprintf(fp, "%.18f, %.18f, %.18f, %.18f, ", pkg_diff, core_diff, pp1_diff, dram_diff);
+        return 1;
+    }
+
+    /* Intel: Original flow */
+    double pkg_diff = 0, pp0_diff = 0, pp1_diff = 0, dram_diff = 0;
+    int has_negative = 0;
+
+    result = read_msr(fd, MSR_PKG_ENERGY_STATUS);
+    package_after = (double)result * energy_units;
+    pkg_diff = package_after - package_before;
+    if (pkg_diff < 0) {
+        fprintf(stderr, "[WARNING]: pkg_diff is negative: %f\n", pkg_diff);
+        has_negative = 1;
+    }
+
+    result = read_msr(fd, MSR_PP0_ENERGY_STATUS);
+    pp0_after = (double)result * energy_units;
+    pp0_diff = pp0_after - pp0_before;
+    if (pp0_diff < 0) {
+        fprintf(stderr, "[WARNING]: pp0_diff is negative: %f\n", pp0_diff);
+        has_negative = 1;
+    }
+
+    result = read_msr(fd, MSR_PP1_ENERGY_STATUS);
+    pp1_after = (double)result * energy_units;
+    pp1_diff = pp1_after - pp1_before;
+    if (pp1_diff < 0) {
+        fprintf(stderr, "[WARNING]: pp1_diff is negative: %f\n", pp1_diff);
+        has_negative = 1;
+    }
+
+    result = read_msr(fd, MSR_DRAM_ENERGY_STATUS);
+    dram_after = (double)result * energy_units;
+    dram_diff = dram_after - dram_before;
+    if (dram_diff < 0) {
+        fprintf(stderr, "[WARNING]: dram_diff is negative: %f\n", dram_diff);
+        has_negative = 1;
+    }
+
+    close(fd);
+
+    if (has_negative) {
+        fprintf(stderr, "[ERROR]: Negative values detected - rapl_after().\n");
+        return -1;
+    }
+
+    /* Only log if all values are valid */
+    fprintf(fp, "%.18f, %.18f, %.18f, %.18f, ", pkg_diff, pp0_diff, pp1_diff, dram_diff);
+    return 1;
 }
