@@ -1,382 +1,247 @@
-# Green Measurer: a Non-Intrusive Framework to Measure the  Energy Consumption of Software Systems
+# GreenMeasurer: A Hardware-Agnostic Energy Telemetry & Benchmarking Framework
 
-GreenMeasurer is a powerful tool that leverages RAPL (Running Average Power Limit) technology to provide accurate energy consumption measurements for any program, helping developers write more sustainable and energy-efficient code.
+GreenMeasurer is a modular, low-overhead measurement framework designed to profile software energy consumption, power capping curves, and execution telemetry across diverse architectures.
 
-| Authors               | Contacts                            |
-|:---------------------:|:-----------------------------------:|
-| Simão Cunha           | simao.s.cunha@inesctec.pt           |
-| ???                   | ???                                 |
-| João Saraiva          | saraiva@di.uminho.pt                |
+The tool coordinates platform-specific telemetry drivers behind a generic **Hardware Abstraction Layer (HAL)** in C, capturing unified energy readouts (Joules), peak memory usage, and thermal states across CPU and GPU hardware domains.
 
-## Requirements
+| Authors      | Contacts                 |
+|:------------:|:------------------------:|
+| Simão Cunha  | simao.s.cunha@inesctec.pt |
+| João Saraiva | saraiva@di.uminho.pt     |
 
-- Debian-based Linux distributions
-- Intel processor (compatible with RAPL)
-- Non-containerized environment
+---
 
-## Required Libraries
-1. RAPL
-2. lm-sensors
-3. Powercap
-4. Raplcap
+## Architecture & Directory Layout
 
-Install all dependencies by running:
+The project isolates platform access from measurement orchestration. All platform implementations reside under a modular hierarchy:
 
-```bash
-sudo bash scripts/install.sh
-```
-
-## Prerequisites and Configuration
-
-Before running measurements, you need to configure the following:
-
-### 1. Wi-Fi Interface Configuration
-The measurement script will automatically disable Wi-Fi during measurements to reduce interference. You need to set your Wi-Fi interface name in the script:
-
-1. Find your Wi-Fi interface name:
-```bash
-ip link show | grep -E "wl|wifi"
-```
-
-2. Edit `scripts/measure.sh` and update line 4:
-```bash
-WIFI_INTERFACE="your_interface_name"  # e.g., "wlp2s0", "wlan0", "wlo1"
-```
-
-### 2. System Permissions
-The script requires sudo privileges for:
-- Wi-Fi interface control
-- RAPL energy measurements
-
-### 3. Environment Variables
-Ensure the following environment variable is set:
-```bash
-export LANG=C.UTF-8
-```
-
-### 4. Power Caps Configuration
-The script uses power caps values defined in `POWER_CAPS` array. By default, it's set to `(-1)` which means no power capping. You can modify this in the script to test different power caps:
-```bash
-POWER_CAPS=(7 11 15)  # Test with 7W, 11W, and 15W power caps
+```text
+src/
+├── include/
+│   ├── energy-backend.h                # HAL definition for CPU & GPU energy backends
+│   └── sensors.h                       # Abstraction drivers for thermal sensors
+├── platform/
+│   └── linux/
+│       ├── cpu/
+│       │   ├── amd/
+│       │   │   ├── amd.c               # AMD Zen MSR counter acquisition & 32-bit wrap delta
+│       │   │   ├── amd.h               # AMD Zen MSR definitions & constants
+│       │   │   └── sensors.c           # k10temp (Tctl/Tdie) sensor driver
+│       │   └── intel/
+│       │       ├── intel.c             # Intel RAPL MSR telemetry & raplcap powercapping
+│       │       ├── intel.h             # Intel MSR addresses & model declarations
+│       │       └── sensors.c           # coretemp sensor driver & package temperature
+│       └── gpu/
+│           └── nvidia/
+│               ├── nvidia.c            # NVIDIA NVML energy counter interface
+│               ├── nvidia.h            # NVIDIA backend interface
+│               └── sensors.c           # NVIDIA NVML thermal querying
+├── sensors/
+│   └── sensors.c                       # Shared runtime sensor dispatcher & calibration
+├── main.c                              # Main benchmark runner, CLI parser & overtime sampler
+└── Makefile                            # Architecture-aware dynamic build system
 ```
 
 ---
 
-## Running RAPL Measurements
+## Supported Hardware & Features
 
-**Important:** Ensure you have completed the Prerequisites and Configuration section above before running measurements.
+| Platform Target | Energy Telemetry | Power Capping | Thermal Sensors | Driver / Mechanism |
+|---|---|---|---|---|
+| **Intel CPU** | Package, Core, DRAM, GPU (iGPU) | Supported (`raplcap` / `powercap`) | Core average & Package | Model-Specific Registers (`/dev/cpu/%d/msr`) |
+| **AMD Zen CPU** | Package, Core | Baseline only | Tctl / Tdie | Zen MSRs with 32-bit overflow handling |
+| **NVIDIA GPU** | Dedicated GPU domain | Supported by NVML API | Core junction | NVML (`libnvidia-ml`) |
 
-To generate energy consumption measurements for all programs in all languages, run (the script requires an explicit mode):
-
-```bash
-sudo -E bash scripts/measure.sh --standard <language1> [language2] ... | all
-```
-- The script requires you to specify exactly one mode: `--standard`, `--perf`, or `--overtime`.
-- Replace `<language1> [language2] ...` with one or more of the supported languages listed below, or use `all` to run measurements for every supported language.
-- Supported languages: All supported languages correspond to the folders listed in the `Languages/` directory.
-
-When using `--standard` results are appended to the top-level `measurements.csv` file.
-
-**Example usages:**
-```bash
-# Measure all supported languages (standard mode)
-sudo -E bash scripts/measure.sh --standard all
-
-# Measure only Python, C# and Rust (standard mode)
-sudo -E bash scripts/measure.sh --standard Python "C#" Rust
-```
-If a specified language or directory is not found, or if no mode is provided, the script will exit with an error message.
-
-**NOTE 1**: To collect CPU performance metrics (using Linux perf) for selected languages, run the measurement script with the `--perf` mode:
-```bash
-sudo -E bash scripts/measure.sh --perf <language1> [language2] ... | all
-```
-This will aggregate all results in the top-level `perf_stats.csv` file.
-
-**NOTE 2**: To collect CPU performance metrics over time for selected languages, run the measurement script with the `--overtime` mode:
-```bash
-sudo -E bash scripts/measure.sh --overtime <language1> [language2] ... | all
-```
-This will aggregate all results in the top-level `measurements_ot.csv` file.
-
-### Automatic System Restoration
-The measurement script automatically handles system cleanup:
-- **Wi-Fi**: Automatically restored when the script completes or encounters an error
-- **Error handling**: System settings are restored even if the script is interrupted (Ctrl+C) or crashes
-
-This ensures your system won't be left in a dimmed state or with Wi-Fi disabled if something goes wrong during measurements.
+> **Note on CSV Semantics:** Any metric not exposed or unsupported on the running machine reports `NOT_SUPPORTED` (backed by negative sentinel values internally), preventing false zero-consumption (`0.0 J`) distortions.
 
 ---
 
-## Temperature Calibration
+## System Requirements & Prerequisites
 
-To calibrate the average CPU core temperature, execute the following:
+### 1. Operating System & Kernel
+* Linux Kernel 4.x or later.
+* Access to kernel MSRs:
+  ```bash
+  sudo modprobe msr
+  ```
 
+### 2. Dependencies
+* `build-essential` (`gcc`, `make`)
+* `lm-sensors`
+* `libpowercap-dev` and `libraplcap-dev` (Intel power clamping)
+* `libnvidia-ml-dev` or NVIDIA proprietary driver with CUDA/NVML headers (when NVIDIA GPUs are present)
+
+On Ubuntu/Debian:
 ```bash
-cd RAPL
-make
-sudo ./main --temperature-calibration -sleep-secs XX
+sudo apt-get update
+sudo apt-get install -y build-essential lm-sensors libpowercap-dev libraplcap-dev
 ```
-
-Replace `XX` with the number of seconds to idle (sleep) before measuring the temperature.
-The output will be saved to `/tmp/cores_temperature.txt`.  (Legacy positional form `--temperature-calibration XX` is still accepted but deprecated.)
 
 ---
 
-## Powercap Calibration
+## Building the Framework
 
-To determine the most energy-efficient power cap setting for your system, you must specify custom programs for calibration. The tool supports both compiled and interpreted languages.
-
-### How it works
-
-The calibration runs the program in two phases:
-1. **Baseline run** (`Powercap = -1`): executes the program without any power cap to collect reference energy and time measurements.
-2. **Capped runs**: iterates over every integer watt value in the specified `<min>`–`<max>` range, applying each power cap and collecting measurements.
-
-All results are written to `Utils/powercap_calibration.csv`. After calibration, `Utils/processPowercapCalibrationCSV.py` is automatically invoked to display a summary table that includes, for each power cap value:
-- **Avg Package (J)** — average energy consumed by the CPU package
-- **Avg Time (ms)** — average execution time
-- **Speedup** — ratio of baseline time to capped time (> 1 means faster; < 1 means slower), with percentage gain/loss relative to the baseline
-- **Greenup** — ratio of baseline energy to capped energy (> 1 means less energy used; < 1 means more energy used), with percentage gain/loss relative to the baseline
-
-### Usage
+The conditional `Makefile` inspects `/proc/cpuinfo` and `lspci` to build only the modules compatible with your host:
 
 ```bash
-cd RAPL
-make
-# For compiled languages (named flags)
-sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <hours> -secs_to_sleep <secs> -n_times <N> -compile_cmd "<compile_cmd>" -run_cmd "<run_cmd>" -language <language> -program <program>
-
-# For interpreted languages (named flags - no compile command)
-sudo -E ./main --powercap-calibration -range <min>-<max> -variance <V> -time_out_limit <hours> -secs_to_sleep <secs> -n_times <N> -run_cmd "<run_cmd>" -language <language> -program <program>
-
-(Legacy positional forms are still accepted but deprecated.)
-```
-
-### Parameters
-
-- Replace `min`-`max` with the desired power cap range in Watts (e.g., 2-25).
-- `variance` is the allowed temperature fluctuation (e.g., 5), and can be set to 0.
-- `time_out_limit` is the maximum time in hours allowed for each test iteration.
-- `secs_to_sleep` is the number of seconds where the CPU is idle before measuring the temperature.
-- `n_times` is the number of times to execute the test program.
-- `compile_cmd` (for compiled languages): Compilation command for your test program.
-- `run_cmd`: Execution command for your test program.
-- `language`: Programming language (e.g., C, Python).
-- `program`: Name identifier for the program being tested.
-
-### Examples
-
-**C program calibration (named flags example):**
-```bash
-sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 2 -secs_to_sleep 30 -n_times 10 -compile_cmd "gcc myprogram.c -o myprogram" -run_cmd "./myprogram" -language C -program myprogram
-```
-
-**Python script calibration (named flags example):**
-```bash
-sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 2 -secs_to_sleep 30 -n_times 5 -run_cmd "python3 myscript.py" -language Python -program myscript
-```
-
-**Compiled program with specific arguments (named flags):**
-```bash
-sudo -E ./main --powercap-calibration -range 2-25 -variance 5 -time_out_limit 2 -secs_to_sleep 30 -n_times 7 -compile_cmd "gcc fibonacci.c -o fib" -run_cmd "./fib 20" -language C -program fibonacci
-```
-
-This will calibrate power caps from 2W to 25W, running 7 executions per power cap value, allowing for a 5°C temperature variance and a 2-hour limit per execution. If the initial temperature is not calculated, it will calibrate the temperature while waiting for 30 seconds of idle time.
-
-The calibration first executes the program without any power cap (`Powercap = -1`) to establish a baseline, then iterates from 2W to 25W. The final summary report shows the **Speedup** and **Greenup** for each capped value relative to the uncapped baseline.
-
-## Parametrized Execution
-
-To perform energy measurements on a specific program, use the following syntax (recommended --standard named flags):
-
-```bash
-./main --standard -command "<command>" -language <language> -program <program> -n_times <N> -variance <V> -time_out_limit <hours> -sleep_time <secs> -powercap <W>
-```
-
-### Arguments
-
-| Argument          | Description                                                                 |
-|-------------------|-----------------------------------------------------------------------------|
-| `<command>`       | The command to execute (e.g., `./my_program`)                               |
-| `<language>`      | Programming language (e.g., `C`, `Python`)                                  |
-| `<program>`       | Name of the program being tested                                            |
-| `<n_times>`       | Number of times to execute the program (must be > 0)                        |
-| `<variance>`      | Acceptable temperature variance (in Celsius, must be ≥ 0)                   |
-| `<time_out_limit>`| Timeout limit per execution (in hours, must be > 0)                       |
-| `<sleep_time>`    | Idle time before execution (in seconds, must be ≥ 0)                        |
-| `<powercap>`      | Power cap in watts (-1 for no power cap, or > 0 for power cap)             |
-
-### Examples
-
-```bash
-cd RAPL
-make
-
-# Run with 15W power cap
-sudo -E ./main --standard -command "./my_program" -language C -program my_program -n_times 5 -variance 3 -time_out_limit 1 -sleep_time 10 -powercap 15
-
-# Run without power cap (set to -1)
-sudo -E ./main --standard -command "./my_program" -language C -program my_program -n_times 5 -variance 3 -time_out_limit 1 -sleep_time 10 -powercap -1
-
-# Python example with 20W power cap
-sudo -E ./main --standard -command "python3 script.py" -language Python -program script -n_times 3 -variance 5 -time_out_limit 1 -sleep_time 5 -powercap 20
-```
-
-The first example will:
-- Perform idle measurement for 10 seconds
-- Execute the program 5 times with a 15W power cap
-- Add 3°C to the temperature variance 
-- Terminate executions exceeding 1 hour
-
----
-
-## CSV Output Format
-
-The `measurements.csv` contains the following columns:
-
-|      Column       | Description                                                                 |
-|-------------------|-----------------------------------------------------------------------------|
-| **Language**      | Programming language                                                        |
-| **Program**       | Program name                                                                |
-| **Powercap**      | Power cap value applied (Watts)                                             |
-| **Package**       | Energy used by the full socket (cores + GPU + other components)            |
-| **Core**          | Energy used by CPU cores and caches                                         |
-| **GPU**           | Energy used by GPU                                                          |
-| **DRAM**          | Energy used by RAM                                                          |
-| **Time**          | Execution time (in milliseconds)                                            |
-| **Temperature**   | Average core temperature (in Celsius)                                       |
-| **Memory**        | Total physical memory used (in KBytes)                                      |
-
----
-
-# Makefile Target Explanation
-
-This document explains each target in the Makefiles used to build and evaluate several programs.
-
-## 1. `compile`
-
-**Command:**
-```sh
-make compile
-```
-
-Compiles the source code into an optimized executable binary (when possible).
-
-## 2. `run`
-
-**Command:**
-```sh
-make run
-```
-
-Runs the program - either runs a executable binary or runs a interpreted program.
-
-**Command executed:**
-```sh
-./my_program [input]
-```
-
-## 3. `standard`
-
-**Command:**
-```sh
-make standard
-```
-
-**Purpose:**  
-Measures energy consumption and executing time by running the program using the RAPL interface.
-
-**Command breakdown:**
-```sh
-sudo ./main --standard -command "./my_program [input]" -language [language] -program [program] -n_times $(n_times) -variance $(variance) -time_out_limit $(time_out_limit) -sleep_time $(sleep_secs)
-```
-
-## 4. `perf`
-
-**Command:**
-```sh
-sudo make perf
-```
-Uses Linux `perf` to gather the following CPU performance metrics expressed in `perf_events.json`:
-
-| Metric                              | Description                                                          |
-|-------------------------------------|----------------------------------------------------------------------|
-| `cycles`                            | The total number of CPU cycles consumed by the program.             |
-| `instructions`                      | The total number of instructions executed by the program.           |
-| `cache-misses`                      | The total number of cache misses (both data and instruction cache). |
-| `branch-misses`                     | The total number of branch prediction misses.                       |
-| `stalled-cycles-frontend`           | The number of cycles the instruction fetch unit was stalled.        |
-| `stalled-cycles-backend`            | The number of cycles the instruction execution unit was stalled.    |
-| `resource_stalls.any`               | Total number of cycles where execution was stalled due to resource limitations. |
-| `mem_trans_retired.load_latency_gt_128` | Number of memory transactions with load latency greater than 128 cycles. |
-| `cpu-cycles`                        | Total number of CPU cycles, a repeat of the `cycles` metric.        |
-| `uops_executed.stall_cycles`        | Number of cycles during which micro-operations (uops) were stalled. |
-
-## 5. `overtime`
-
-**Command:**
-```sh
-sudo make overtime
-```
-Collects the following metrics:
-
-|      Metric       | Description                                                                 |
-|-------------------|-----------------------------------------------------------------------------|
-| **Language**      | Programming language                                                        |
-| **Program**       | Program name                                                                |
-| **Powercap**      | Power cap value applied (Watts)                                             |
-| **Package**       | Energy used by the full socket (cores + GPU + other components)             |
-| **Core**          | Energy used by CPU cores and caches                                         |
-| **GPU**           | Energy used by GPU                                                          |
-| **DRAM**          | Energy used by RAM                                                          |
-| **Timestamp**     | Timestamp for each measurement interval (in milliseconds)                   |
-| **Temperature**   | Average core temperature at a certain timestamp (in Celsius)                |
-
-This command runs a program once and, over time, collects all the metrics listed above at each timestamp interval.
-
-**Command breakdown:**
-```sh
-sudo ./main --over-time -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
-```
-
-## 6. `clean`
-
-**Command:**
-```sh
+# Clean previous build artifacts
 make clean
-```
 
-Removes generated files and cleans up the project directory.
+# Compile the main executable
+make
+```
 
 ---
 
-## Over-time session mode
+## CLI Modes & Command Reference
 
-This feature allows running a program while a background thread records the energy consumption of the **Package**, **Core**, **DRAM**, and **GPU** components during its execution.  
-You can specify an **interval** (in milliseconds) that determines how often the measurements are recorded.
+The executable supports four core operating modes:
 
-Usage:
-
-```bash
-sudo -E ./main --over-time -command "<command>" -interval <interval-ms> -language <language> -program <program> [-powercap WATT] [-sleep-secs SECS] [-variance V]
-```
-
-Options:
-- `<command>`: Command to execute while logging (quote if it contains spaces).
-- `<interval-ms>`: Logging interval in milliseconds (positive integer).
-- `<language>`: Programming language label (e.g., `C`, `Python`).
-- `<program>`: Program identifier/name used in CSV output.
-- `-powercap WATTS`: Optional power cap in watts (use `-1` for no cap). Defaults to `-1`.
-- `-sleep-secs SECS`: Optional quick temperature calibration sleep (seconds) used before measuring. Defaults to `30`.
-
-Example:
+### 1. Temperature Calibration (`--temperature-calibration`)
+Establishes an idle thermal reference point used to enforce temperature variance checks prior to execution iterations.
 
 ```bash
-# Log every 100 ms while running a program once and do a temperature calibration of 60 seconds
-sudo -E ./main --over-time -command "./my_program" -interval 100 -language C -program my_program -powercap 15 -sleep-secs 60
+sudo ./main --temperature-calibration [-sleep-secs <sec>] [-calib-file <path>]
 ```
+
+* `-sleep-secs <sec>`: Idle duration in seconds before recording temperature (default: `20`).
+* `-calib-file <path>`: Output destination for the thermal reference profile (default: `/tmp/cores_temperatures.txt`).
+
 ---
-### NOTE
 
-1. The `config.env` file contains the paths to all interpreters and compilers installed on your machine - you may need to update these paths to match your system configuration.
+### 2. Standard Aggregated Measurement (`--standard`)
+Runs repeated benchmark iterations with timeout tracking, memory profiling, and thermal settling.
+
+```bash
+sudo ./main --standard \
+  -command "<command>" \
+  -language <lang> \
+  -program <prog> \
+  -n_times <N> \
+  -variance <V> \
+  -time_out_limit <hours> \
+  -sleep_time <sec> \
+  -powercap <W> \
+  [-output <path>]
+```
+
+#### Parameters:
+* `-command`: Execution string (e.g., `"./binary arg"` or `"python3 script.py"`).
+* `-language`: Tag identifying language / implementation.
+* `-program`: Identifier for the tested target.
+* `-n_times`: Repetitions to run.
+* `-variance`: Allowed °C threshold above baseline before triggering execution.
+* `-time_out_limit`: Maximum allowed duration per run in hours.
+* `-sleep_time`: Stabilization sleep duration.
+* `-powercap`: Package clamping limit in Watts (`-1` to disable).
+* `-output`: Output CSV file path (default: `measurements.csv`).
+
+---
+
+### 3. Over-Time Dynamic Sampling (`--overtime`)
+Spawns an asynchronous background logger that records cumulative energy and thermal changes using non-drifting absolute monotonic ticks (`clock_nanosleep`).
+
+```bash
+sudo ./main --overtime \
+  -command "<command>" \
+  -interval <ms> \
+  -language <lang> \
+  -program <prog> \
+  [-powercap <W>] \
+  [-variance <V>] \
+  [-sleep-secs <sec>] \
+  [-output <path>]
+```
+
+#### Parameters:
+* `-command`: Foreground benchmark workload.
+* `-interval`: Sampling step in milliseconds (e.g., `100` for 10 Hz).
+* `-language`: Programming language identifier.
+* `-program`: Program identifier.
+* `-powercap`: Clamping limit in Watts (optional, defaults to `-1`).
+* `-variance`: Maximum allowed temperature variance above baseline.
+* `-sleep-secs`: Stabilization sleep duration.
+* `-output`: Output CSV file path (default: `measurements_ot.csv`).
+
+---
+
+### 4. Powercap Curve Exploration (`--powercap-calibration`)
+Sweeps a power range ($W_{\min} \dots W_{\max}$) to evaluate powercap impacts against an uncapped baseline.
+
+```bash
+sudo ./main --powercap-calibration \
+  -range <min>-<max> \
+  -variance <V> \
+  -time_out_limit <hours> \
+  -secs_to_sleep <sec> \
+  -n_times <N> \
+  [-compile_cmd "<cmd>"] \
+  -command "<cmd>" \
+  -language <lang> \
+  -program <prog> \
+  [-output <path>]
+```
+
+Runs a baseline iteration at `Powercap = -1`, followed by tests at each Watt step in the defined range. Results are saved to `powercap_calibration.csv` and summarized automatically if post-processing scripts are present.
+
+---
+
+## Output CSV Schemas
+
+### Standard Mode (`measurements.csv`)
+```csv
+Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory
+```
+* **Language / Program**: Identifier tags.
+* **Powercap**: Power limit applied in Watts (`-1` = uncapped).
+* **Package**: Full socket energy in Joules.
+* **Core**: Processing cores energy in Joules.
+* **GPU**: GPU energy in Joules.
+* **DRAM**: Memory domain energy in Joules.
+* **Time**: Execution wall-clock duration in milliseconds ($ms$).
+* **CpuTemperature**: Core temperature in Celsius ($^\circ\text{C}$).
+* **GpuTemperature**: GPU temperature in Celsius ($^\circ\text{C}$).
+* **Memory**: Resident Set Size in kilobytes ($KB$).
+
+### Over-Time Mode (`measurements_ot.csv`)
+```csv
+Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,CpuTemperature,GpuTemperature
+```
+* **Package, Core, GPU, DRAM**: Total accumulated energy from $T = 0$ to current sample (in Joules).
+* **Timestamp**: Elapsed time since start in milliseconds ($ms$).
+* **CpuTemperature / GpuTemperature**: Instantaneous sensor reading at sampling tick.
+
+---
+
+## Adding a New Architecture / Driver
+
+The HAL enables hardware support extensions without modifying `main.c`:
+
+1. **Implement `EnergyBackend`**: Place your driver inside `platform/linux/<type>/<vendor>/`:
+   ```c
+   #include "energy-backend.h"
+
+   static int custom_detect(void) { /* return 1 if present */ return 1; }
+   static int custom_before(int core) { return 1; }
+   static int custom_after(int core, EnergyMetrics *out) {
+       out->package = 15.2; // Energy delta in Joules
+       out->core = -1.0;    // NOT_SUPPORTED
+       out->gpu = -1.0;
+       out->dram = -1.0;
+       return 1;
+   }
+
+   EnergyBackend custom_backend = {
+       .name = "Custom Architecture",
+       .detect = custom_detect,
+       .before = custom_before,
+       .after = custom_after
+   };
+   ```
+
+2. **Expose Symbol**: Add the weak reference to `include/energy-backend.h`:
+   ```c
+   WEAK_DRIVER extern EnergyBackend custom_backend;
+   ```
+
+3. **Register in `Makefile`**: Append your source file to `SRCS` under the corresponding hardware conditional branch.

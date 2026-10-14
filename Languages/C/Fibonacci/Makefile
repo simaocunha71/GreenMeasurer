@@ -18,65 +18,17 @@ endif
 
 compile:
 	$(GCC_PATH) -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge fibonacci.c -o fib -lm
-	
+
 standard:
-	sudo modprobe msr
-	sudo ../../../RAPL/main --standard -command "$(command)" -language $(language) -program $(program)_$(input) -n_times $(n_times) -variance $(variance) -time_out_limit $(time_out_limit) -sleep_time $(sleep_secs) -powercap $(powercap)
-
-perf:
-	@events_all=$$(grep -o '"[^"]\+"' ../../../perf_events.json | tr -d '"' | grep -v events | tr '\n' ',' | sed 's/,$$//'); \
-	echo "[INFO] Events listed in JSON: $$events_all"; \
-	\
-	events_supported=""; \
-	for ev in $$(echo $$events_all | tr ',' ' '); do \
-		if perf list 2>/dev/null | grep -w "$$ev" >/dev/null; then \
-			events_supported="$$events_supported,$$ev"; \
-		else \
-			echo "[WARN] Skipping unsupported event: $$ev"; \
-		fi; \
-	done; \
-	events_supported=$${events_supported#,}; \
-	echo "[INFO] Supported events that will be measured: $$events_supported"; \
-	\
-	echo "Language,Program,Powercap,$$(echo $$events_all | tr ',' ',')" > perf_stats.csv; \
-	\
-	for i in $$(seq 1 $(n_times)); do \
-		echo "Run $$i:"; \
-		results=$$(sudo perf stat --field-separator , -e $$events_supported $(command) 2>&1 | \
-			awk -v events_str="$$events_all" -F, '\
-				BEGIN { n = split(events_str, evs, ",") } \
-				/^[[:space:]]*[0-9]/ { \
-					val=$$1; gsub(/^[[:space:]]+|[[:space:]]+$$/, "", val); \
-					event=$$3; gsub(/^[[:space:]]+|[[:space:]]+$$/, "", event); \
-					gsub(/^cpu(_(core|atom))?\//, "", event); gsub(/\/$$/, "", event); \
-					data[event]=val; \
-				} \
-				/<not supported>/ { \
-					event=$$3; gsub(/^[[:space:]]+|[[:space:]]+$$/, "", event); \
-					gsub(/^cpu(_(core|atom))?\//, "", event); gsub(/\/$$/, "", event); \
-					data[event]="<not supported>"; \
-				} \
-				END { \
-					for (i=1; i<=n; i++) { \
-						v=data[evs[i]]; \
-						if (v == "" || v == 0) v="<not supported>"; \
-						printf "%s,", v; \
-					} \
-				}' | sed 's/,$$//'); \
-		echo "$(language),$(program),$(powercap),$$results" >> perf_stats.csv; \
-	done
-
-
-
-
+	sudo modprobe msr 2>/dev/null || true
+	sudo ../../../src/main --standard -command "$(command)" -language $(language) -program $(program)_$(input) -n_times $(n_times) -variance $(variance) -time_out_limit $(time_out_limit) -sleep_time $(sleep_secs) -powercap $(powercap)
 
 overtime:
-	sudo modprobe msr
-	sudo ../../../RAPL/main --over-time -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep-secs $(sleep_secs) -variance $(variance)
+	sudo modprobe msr 2>/dev/null || true
+	sudo ../../../src/main --overtime -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance)
 
 run:
 	$(command)
 
 clean:
-	rm -f fib
-	rm -f out
+	rm -f fib out

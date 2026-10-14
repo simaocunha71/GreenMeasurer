@@ -1,9 +1,8 @@
 #!/bin/bash
 export LANG=C.UTF-8
 
-WIFI_INTERFACE="wlp2s0"  # Change this if your Wi-Fi interface has a different name
+WIFI_INTERFACE="wlp2s0"
 
-# Function to restore system settings on exit
 cleanup() {
     echo "Cleaning up system settings..."
     if ip link show "$WIFI_INTERFACE" > /dev/null 2>&1; then
@@ -11,22 +10,18 @@ cleanup() {
         echo "Wi-Fi interface $WIFI_INTERFACE turned on."
     fi
 }
-
-# Set trap to call cleanup function on script exit (normal or error)
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 # Turn Wi-Fi interface off
 if ip link show "$WIFI_INTERFACE" > /dev/null 2>&1; then
     sudo ip link set "$WIFI_INTERFACE" down
     echo "Wi-Fi interface $WIFI_INTERFACE turned off."
 else
-    echo "[ERROR] Wi-Fi interface $WIFI_INTERFACE not found."
+    echo "[WARNING] Wi-Fi interface $WIFI_INTERFACE not found."
 fi
 
-# List of supported languages - dynamically get all folders in Languages directory
 VALID_LANGUAGES=($(find "$(dirname "$0")/../Languages" -maxdepth 1 -type d -exec basename {} \; | grep -v "^Languages$" | sort))
 
-# Function to check if a language is valid
 is_valid_language() {
     local lang=$1
     for valid in "${VALID_LANGUAGES[@]}"; do
@@ -37,42 +32,37 @@ is_valid_language() {
     return 1
 }
 
-# Function to show help
 show_help() {
-    echo "Usage: $0 [--standard] [--perf] [--overtime] <language1> [language2] ... or 'all'"
+    echo "Usage: $0 [--standard] [--overtime <interval_ms>] <language1> [language2] ... or 'all'"
     echo
     echo "Options:"
-    echo "  --standard   Run in standard measurement mode"
-    echo "  --perf       Run in perf measurement mode"
-    echo "  --overtime   Run in overtime measurement mode"
-    echo "  --help, -h   Show this help message"
+    echo "  --standard               Run in standard measurement mode"
+    echo "  --overtime <interval_ms> Run in overtime mode with sampling interval in ms (e.g. --overtime 100)"
+    echo "  --help, -h               Show this help message"
     echo
     echo "Supported languages: ${VALID_LANGUAGES[*]}"
     exit 0
 }
 
-# If no arguments are provided, proceed with defaults (standard mode and all languages)
-# (Previously the script showed help and exited; now it defaults to --standard and selects all languages.)
-
-# Initialize modes
 STANDARD_MODE=0
-PERF_MODE=0
 OVERTIME_MODE=0
+INTERVAL=100  
 
-# Process options
 while [[ "$1" == --* ]] || [[ "$1" == -h ]]; do
     case "$1" in
         --standard)
             STANDARD_MODE=1
             shift
             ;;
-        --perf)
-            PERF_MODE=1
-            shift
-            ;;
         --overtime)
             OVERTIME_MODE=1
-            shift
+            if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
+                INTERVAL="$2"
+                shift 2
+            else
+                echo "Error: --overtime requires a numeric interval in milliseconds (e.g. --overtime 100)"
+                exit 1
+            fi
             ;;
         --help|-h)
             show_help
@@ -84,20 +74,16 @@ while [[ "$1" == --* ]] || [[ "$1" == -h ]]; do
     esac
 done
 
-# Require an explicit mode. If none is provided, show an error and help.
-if [[ $STANDARD_MODE -eq 0 && $PERF_MODE -eq 0 && $OVERTIME_MODE -eq 0 ]]; then
-    echo "Error: missing mode. Please specify one of --standard, --perf or --overtime."
+if [[ $STANDARD_MODE -eq 0 && $OVERTIME_MODE -eq 0 ]]; then
+    echo "Error: missing mode. Please specify either --standard or --overtime."
     show_help
 fi
 
-# Ensure only one mode is active
-mode_count=$((STANDARD_MODE + PERF_MODE + OVERTIME_MODE))
-if [[ $mode_count -gt 1 ]]; then
-    echo "Error: only one of --standard, --perf or --overtime can be used at a time"
+if [[ $STANDARD_MODE -eq 1 && $OVERTIME_MODE -eq 1 ]]; then
+    echo "Error: only one of --standard or --overtime can be used at a time"
     exit 1
 fi
 
-# Select languages (if none specified, default to all)
 if [[ "$#" -eq 0 || "$1" == "all" ]]; then
     SELECTED_LANGUAGES=("${VALID_LANGUAGES[@]}")
 else
@@ -113,54 +99,28 @@ else
     done
 fi
 
-# Define number of times to execute each program
 NTIMES=3
-
-# Define time limit (here it's in hours) for the execution of each program
 TIME_OUT_LIMIT=4
-
-# Define the CPU temperature variance 
 VARIANCE=5
-
-# Define the number of seconds for the idle execution and for temperature calibration
 IDLE_SECONDS=6
+POWER_CAPS=(-1 5 10)
 
-# Define interval for overtime measurements (in milliseconds)
-INTERVAL=100
-
-# Define power cap values
-POWER_CAPS=(-1)
-
-# Move to project root
 cd "$(dirname "$0")/.." || exit 1
 
-# Build RAPL sensor library
-cd RAPL || exit 1
-gcc -fPIC -shared -o sensors.so sensors.c
-cd ..
-
-# Initialize output CSV
-if [[ $PERF_MODE -eq 1 ]]; then
-    OUT_CSV="perf_stats.csv"
-    echo "Language,Program,Powercap,cycles,instructions,cache-misses,branch-misses,stalled-cycles-frontend,stalled-cycles-backend,resource_stalls.any,mem_trans_retired.load_latency_gt_128,cpu-cycles,uops_executed.stall_cycles" > "$OUT_CSV"
-elif [[ $OVERTIME_MODE -eq 1 ]]; then
+if [[ $OVERTIME_MODE -eq 1 ]]; then
     OUT_CSV="measurements_ot.csv"
-    echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,Temperature" > "$OUT_CSV"
+    echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,CpuTemperature,GpuTemperature" > "$OUT_CSV"
 elif [[ $STANDARD_MODE -eq 1 ]]; then
     OUT_CSV="measurements.csv"
-    echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,Temperature,Memory" > "$OUT_CSV"
-else
-    echo "Error: unknown mode (this should not happen)"
-    exit 1
+    echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory" > "$OUT_CSV"
 fi
 
-# Run benchmarks for each power cap
-for cap in "${POWER_CAPS[@]}"; do
-    cd RAPL || exit 1
-    make clean
-    make
-    cd ..
+cd src || exit 1
+make clean
+make
+cd ..
 
+for cap in "${POWER_CAPS[@]}"; do
     for lang in "${SELECTED_LANGUAGES[@]}"; do
         lang_dir="Languages/$lang"
 
@@ -169,52 +129,34 @@ for cap in "${POWER_CAPS[@]}"; do
             continue
         fi
 
-        # Iterate over program directories safely (handles spaces)
-        find "$lang_dir" -mindepth 1 -maxdepth 1 -type d | while read -r program_dir; do
+        while read -r program_dir; do
             makefile_path="$program_dir/Makefile"
             if [ -f "$makefile_path" ]; then
-                echo "Processing $program_dir"
-                cd "$program_dir" || { echo "Failed to enter $program_dir"; continue; }
+                echo "Processing $program_dir (Powercap: $cap W, Interval: ${INTERVAL}ms)"
+                cd "$program_dir" || continue
 
                 make compile
 
-                if [[ $PERF_MODE -eq 1 ]]; then
-                    make perf n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
-                    if [ -f "perf_stats.csv" ]; then
-                        tail -n +2 perf_stats.csv >> "../../../$OUT_CSV"
-                    else
-                        echo "Warning: perf_stats.csv not found in $program_dir"
-                    fi
-                elif [[ $OVERTIME_MODE -eq 1 ]]; then
+                if [[ $OVERTIME_MODE -eq 1 ]]; then
                     make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE
                     if [ -f "measurements_ot.csv" ]; then
                         tail -n +2 measurements_ot.csv >> "../../../$OUT_CSV"
-                    else
-                        echo "Warning: measurements_ot.csv not found in $program_dir"
                     fi
                 elif [[ $STANDARD_MODE -eq 1 ]]; then
-                    # Standard mode uses the 'measure' target in individual Makefiles
                     make standard n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> "../../../$OUT_CSV"
-                    else
-                        echo "Warning: measurements.csv not found in $program_dir"
                     fi
-                else
-                    echo "Error: unknown mode (this should not happen)"
                 fi
 
                 make clean
                 cd - > /dev/null
-            else
-                echo "Makefile not found: $makefile_path"
             fi
-        done
+        done < <(find "$lang_dir" -mindepth 1 -maxdepth 1 -type d)
     done
 done
 
-# Clean RAPL
-cd RAPL || exit 1
+cd src || exit 1
 make clean
 cd ..
 
