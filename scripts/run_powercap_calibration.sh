@@ -35,14 +35,14 @@ sudo modprobe msr 2>/dev/null || true
 # Run powercap calibration
 echo "[INFO] Starting powercap calibration..."
 sudo -E ./src/main --powercap-calibration \
-  -range 2-3 \
+  -range 1-40 \
   -variance 5 \
   -time_out_limit 10 \
-  -secs_to_sleep 2 \
-  -n_times 4 \
-  -command "python3 ./Utils/fibonacci.py 40" \
+  -secs_to_sleep 60 \
+  -n_times 10 \
+  -command "python3 ./Utils/fibonacci.py 42" \
   -language Python \
-  -program fibonacci_40 \
+  -program fibonacci_42 \
   -calib-file /tmp/cores_temperatures.txt \
   -output ./powercap_calibration.csv
 

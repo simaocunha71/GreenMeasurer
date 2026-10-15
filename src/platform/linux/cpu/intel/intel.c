@@ -228,36 +228,54 @@ static int intel_after(int core, EnergyMetrics *out) {
 int intel_set_powercap(int watts) {
     if (watts <= 0) return 0;
 
-    if (raplcap_init(&global_rc) != 0) {
-        perror("[ERROR] raplcap_init");
+    printf("Running with CAP\n");
+    raplcap_limit rl_short, rl_long;
+    uint32_t q, j, n, d;
+
+    // 1. Inicializa o contexto RAPL tal como no main.c original
+    if (raplcap_init(&global_rc)) {
+        perror("raplcap_init");
         return -1;
     }
     raplcap_active = 1;
 
-    uint32_t n = raplcap_get_num_packages(NULL);
-    if (n == 0) return -1;
+    // 2. Obtém o número de packages
+    n = raplcap_get_num_packages(NULL);
+    if (n == 0) {
+        perror("raplcap_get_num_packages");
+        raplcap_destroy(&global_rc);
+        raplcap_active = 0;
+        return -1;
+    }
 
-    uint32_t d = raplcap_get_num_die(&global_rc, 0);
-    if (d == 0) d = 1;
+    // 3. Assume os dies a partir do package 0 (exatamente como no original)
+    d = raplcap_get_num_die(&global_rc, 0);
+    if (d == 0) {
+        perror("raplcap_get_num_die");
+        raplcap_destroy(&global_rc);
+        raplcap_active = 0;
+        return -1;
+    }
 
-    raplcap_limit rl_short, rl_long;
+    // 4. Aplica os limites para long e short window
     rl_long.watts = watts;
     rl_long.seconds = 0;
     rl_short.watts = watts;
     rl_short.seconds = 0;
 
-    for (uint32_t q = 0; q < n; q++) {
-        for (uint32_t j = 0; j < d; j++) {
-            if (raplcap_pd_set_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, &rl_long, &rl_short) != 0) {
-                perror("[WARNING] raplcap_pd_set_limits");
+    for (q = 0; q < n; q++) {
+        for (j = 0; j < d; j++) {
+            if (raplcap_pd_set_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, &rl_long, &rl_short)) {
+                perror("raplcap_pd_set_limits");
             }
         }
     }
 
-    for (uint32_t q = 0; q < n; q++) {
-        for (uint32_t j = 0; j < d; j++) {
-            if (raplcap_pd_set_zone_enabled(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, 1) != 0) {
-                perror("[WARNING] raplcap_pd_set_zone_enabled");
+    // 5. Ativa as zonas de power cap
+    for (q = 0; q < n; q++) {
+        for (j = 0; j < d; j++) {
+            if (raplcap_pd_set_zone_enabled(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, 1)) {
+                perror("raplcap_pd_set_zone_enabled");
             }
         }
     }
@@ -267,22 +285,18 @@ int intel_set_powercap(int watts) {
 
 int intel_destroy_powercap(void) {
     if (raplcap_active) {
-        uint32_t n = raplcap_get_num_packages(NULL);
-        uint32_t d = raplcap_get_num_die(&global_rc, 0);
-        if (d == 0) d = 1;
-
-        for (uint32_t q = 0; q < n; q++) {
-            for (uint32_t j = 0; j < d; j++) {
-                raplcap_pd_set_zone_enabled(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, 0);
-            }
+        // Exatamente como no main.c original: não desativa as zonas manualmente, apenas destrói o contexto
+        if (raplcap_destroy(&global_rc)) {
+            printf("[ERROR] Error destroying CAP\n");
+            perror("[ERROR] raplcap_destroy");
+            return -1;
+        } else {
+            printf("[INFO] Successfully destroyed CAP\n");
         }
-
-        raplcap_destroy(&global_rc);
         raplcap_active = 0;
     }
     return 0;
 }
-
 static void intel_cleanup(void) {
     intel_destroy_powercap();
 }
@@ -350,43 +364,54 @@ void intel_calibrate_powercap(int ntimes, int core, const char *command, const c
         calib_csv_file = "powercap_calibration.csv";
     }
 
-    printf("[INFO] Calibrating Intel power cap for %s (%s) -> %s\n", program, language, calib_csv_file);
+    printf("[INFO] Powercap calibration: Calibrating power cap by running %s with different power limits...\n", program);
 
     FILE *outputFile = fopen(calib_csv_file, "w");
-    if (!outputFile) {
-        perror("[ERROR] Failed to open powercap calibration CSV output");
+    if (outputFile == NULL) {
+        perror("[ERROR] Powercap calibration: Error opening calibration CSV file for writing");
         return;
     }
 
     fprintf(outputFile, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory\n");
 
-    int total_iterations = (max_powercap - min_powercap + 1) + 1;
+    for (int power_cap = min_powercap; power_cap <= max_powercap; power_cap++) {
+        printf("[INFO] Powercap calibration: Testing with WHATTSCAP = %d\n", power_cap);
 
-    for (int i = 0; i < total_iterations; i++) {
-        int power_cap = (i == 0) ? -1 : (min_powercap + (i - 1));
-        if (power_cap == -1 && i != 0) continue;
-
-        if (intel_set_powercap(power_cap) != 0) continue;
-
-        char temp_filename[512];
-        snprintf(temp_filename, sizeof(temp_filename), "/tmp/%s_%d_temp.csv", program, power_cap);
-
-        runTesting(ntimes, core, command, language, program, temp_filename,
-                   power_cap, time_out_limit, temp_threshold, variance, memory);
-
-        FILE *inputFile = fopen(temp_filename, "r");
-        if (inputFile) {
-            char buffer[1024];
-            while (fgets(buffer, sizeof(buffer), inputFile)) {
-                fputs(buffer, outputFile);
-            }
-            fclose(inputFile);
-            remove(temp_filename);
+        if (intel_set_powercap(power_cap) != 0) {
+            printf("[ERROR] Powercap calibration: Failed to initialize RAPL with power cap %d. Skipping...\n", power_cap);
+            continue;
         }
 
-        intel_destroy_powercap();
+        char filename[256];
+        snprintf(filename, sizeof(filename), "/tmp/%s_%d.csv", program, power_cap);
+
+        runTesting(ntimes, core, command, language, program, filename,
+                   power_cap, time_out_limit, temp_threshold, variance, memory);
+
+        FILE *inputFile = fopen(filename, "r");
+        if (inputFile == NULL) {
+            perror("[ERROR] Powercap calibration: Error opening individual CSV file for reading");
+            intel_destroy_powercap();
+            continue;
+        }
+
+        char buffer[1024];
+        while (fgets(buffer, sizeof(buffer), inputFile) != NULL) {
+            fputs(buffer, outputFile);
+        }
+        fclose(inputFile);
+
+        if (remove(filename) != 0) {
+            perror("[ERROR] Powercap calibration: Error removing individual CSV file");
+        }
+
+        if (intel_destroy_powercap() != 0) {
+            printf("[ERROR] Powercap calibration: Error destroying CAP after test with Power Cap = %d\n", power_cap);
+        }
+
         sleep(1);
     }
+
     fclose(outputFile);
 
     if (process_script && strlen(process_script) > 0 && access(process_script, F_OK) == 0) {
@@ -395,9 +420,11 @@ void intel_calibrate_powercap(int ntimes, int core, const char *command, const c
         printf("[INFO] Running calibration post-processor: %s\n", proc_cmd);
         if (system(proc_cmd) != 0) {
             fprintf(stderr, "[WARNING] Python post-processing script exited with error\n");
+        } else {
+            printf("[INFO] Power cap calibration CSV processed successfully\n");
         }
     } else {
-        printf("[INFO] Calibration CSV saved to %s (post-processing skipped)\n", calib_csv_file);
+        printf("[INFO] Power cap calibration CSV saved to %s\n", calib_csv_file);
     }
 }
 
