@@ -10,39 +10,51 @@ if [ "$OS" = "Linux" ]; then
     echo "#### Updating package lists..."
     sudo apt update
 
-    echo "#### Installing base build tools..."
-    sudo apt install -y git cmake pkg-config build-essential python3 python3-venv
+    echo "#### Installing base build tools and hardware discovery..."
+    sudo apt install -y git cmake pkg-config build-essential pciutils python3 python3-venv
 
-    echo "#### Installing lm-sensors..."
-    sudo apt install -y lm-sensors
+    echo "#### Installing lm-sensors and MSR tools..."
+    sudo apt install -y lm-sensors msr-tools
+    sudo modprobe msr 2>/dev/null || true
 
     echo "#### Installing Linux perf..."
-    sudo apt-get install -y linux-tools-common linux-tools-generic linux-tools-$(uname -r) || true
+    sudo apt-get install -y linux-tools-common linux-tools-generic "linux-tools-$(uname -r)" || true
+
+    # Detect NVIDIA GPU via PCI vendor ID (0x10de) or device files
+    HAS_NVIDIA=$( (grep -qi "10de" /sys/bus/pci/devices/*/vendor 2>/dev/null || [ -e /dev/nvidiactl ] || lspci 2>/dev/null | grep -qi nvidia) && echo yes || echo no )
+
+    if [ "$HAS_NVIDIA" = "yes" ]; then
+        echo "#### NVIDIA hardware detected. Installing NVML headers..."
+        if ! sudo apt install -y libnvidia-ml-dev 2>/dev/null; then
+            echo "[WARN] libnvidia-ml-dev not found in primary repos, attempting nvidia-cuda-dev..."
+            sudo apt install -y nvidia-cuda-dev || true
+        fi
+    fi
+
+    # Build and install powercap & raplcap in isolated temp directories
+    BUILD_TMP="$(mktemp -d)"
+    trap 'rm -rf "$BUILD_TMP"' EXIT
 
     echo "#### Installing Powercap library..."
-    if [ ! -d "powercap" ]; then
-        git clone https://github.com/powercap/powercap.git
-    fi
+    cd "$BUILD_TMP"
+    git clone --depth 1 https://github.com/powercap/powercap.git
     cd powercap
     mkdir -p _build && cd _build
     cmake ..
-    make
+    make -j"$(nproc)"
     sudo make install
-    cd ../..
-    rm -rf powercap
 
     echo "#### Installing Raplcap library..."
-    if [ ! -d "raplcap" ]; then
-        git clone https://github.com/powercap/raplcap.git
-    fi
+    cd "$BUILD_TMP"
+    git clone --depth 1 https://github.com/powercap/raplcap.git
     cd raplcap
     mkdir -p _build && cd _build
     cmake ..
-    make
+    make -j"$(nproc)"
     sudo make install
     sudo ldconfig
-    cd ../..
-    rm -rf raplcap
+
+    cd "$ROOT_DIR"
 
 elif [ "$OS" = "Darwin" ]; then
     echo "#### Checking Homebrew on macOS..."

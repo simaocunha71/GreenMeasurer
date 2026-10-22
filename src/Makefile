@@ -32,12 +32,13 @@ ifeq ($(UNAME_S), Linux)
     endif
 
     # GPU Detection: Dedicated NVIDIA vs Dedicated AMD Radeon vs Integrated
-    HAS_NVIDIA := $(shell (lspci 2>/dev/null | grep -i nvidia || which nvidia-smi 2>/dev/null) && echo yes)
+    HAS_NVIDIA := $(shell (grep -qi "10de" /sys/bus/pci/devices/*/vendor 2>/dev/null || [ -e /dev/nvidiactl ] || [ -x /usr/bin/nvidia-smi ] || /usr/bin/lspci 2>/dev/null | grep -qi nvidia) && echo yes)
     HAS_AMD_GPU := $(shell (lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i amd || which rocm-smi 2>/dev/null) && echo yes)
 
     ifeq ($(HAS_NVIDIA), yes)
         $(info [BUILD] Target GPU: Dedicated NVIDIA detected)
         SRCS += $(PLATFORM_DIR)/gpu/nvidia/nvidia.c $(PLATFORM_DIR)/gpu/nvidia/sensors.c
+        CFLAGS += -I/usr/include
         LDFLAGS += -lnvidia-ml
     else ifeq ($(HAS_AMD_GPU), yes)
         $(info [BUILD] Target GPU: Dedicated AMD Radeon is not supported)
