@@ -4,9 +4,6 @@
 #include "energy-backend.h"
 #include "sensors.h"
 
-/* Exported NVIDIA GPU Backend */
-extern EnergyBackend nvidia_backend;
-
 /* Exported NVIDIA GPU Sensor Driver */
 extern GpuSensorDriver nvidia_sensor_driver;
 

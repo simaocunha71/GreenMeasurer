@@ -11,6 +11,8 @@ The tool coordinates platform-specific telemetry drivers behind a generic **Hard
 
 ---
 
+> For a full description of the design, plugin API, correctness measures, testing and limitations, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Architecture & Directory Layout
 
 The project isolates platform access from measurement orchestration. All platform implementations reside under a modular hierarchy:
@@ -199,8 +201,8 @@ Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperatu
 * **GPU**: GPU energy in Joules.
 * **DRAM**: Memory domain energy in Joules.
 * **Time**: Execution wall-clock duration in milliseconds ($ms$).
-* **CpuTemperature**: Core temperature in Celsius ($^\circ\text{C}$).
-* **GpuTemperature**: GPU temperature in Celsius ($^\circ\text{C}$).
+* **CpuTemperature**: Average CPU core temperature in Celsius ($^\circ\text{C}$), when a CPU sensor is available.
+* **GpuTemperature**: Direct GPU sensor reading in Celsius ($^\circ\text{C}$); it is `NOT_SUPPORTED` when no GPU temperature sensor is available and is never substituted with CPU temperature.
 * **Memory**: Resident Set Size in kilobytes ($KB$).
 
 ### Over-Time Mode (`measurements_ot.csv`)
@@ -209,7 +211,7 @@ Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,CpuTemperature,GpuTemp
 ```
 * **Package, Core, GPU, DRAM**: Total accumulated energy from $T = 0$ to current sample (in Joules).
 * **Timestamp**: Elapsed time since start in milliseconds ($ms$).
-* **CpuTemperature / GpuTemperature**: Instantaneous sensor reading at sampling tick.
+* **CpuTemperature / GpuTemperature**: Instantaneous direct sensor readings at each sampling tick. Unsupported readings are recorded as `NOT_SUPPORTED`.
 
 ---
 
@@ -217,31 +219,50 @@ Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,CpuTemperature,GpuTemp
 
 The HAL enables hardware support extensions without modifying `main.c`:
 
-1. **Implement `EnergyBackend`**: Place your driver inside `platform/linux/<type>/<vendor>/`:
+1. **Implement the shared backend interface**: CPU drivers implement `CpuBackend`, and GPU drivers implement `GpuBackend` from `include/energy-backend.h`. Place each implementation in its own directory below `platform/linux/cpu/` or `platform/linux/gpu/`:
    ```c
    #include "energy-backend.h"
 
-   static int custom_detect(void) { /* return 1 if present */ return 1; }
-   static int custom_before(int core) { return 1; }
-   static int custom_after(int core, EnergyMetrics *out) {
-       out->package = 15.2; // Energy delta in Joules
-       out->core = -1.0;    // NOT_SUPPORTED
-       out->gpu = -1.0;
-       out->dram = -1.0;
-       return 1;
-   }
+   static int custom_detect(void) { return 1; }
+   static int custom_init(int core) { (void)core; return 0; }
+   static int custom_sample_start(int core) { (void)core; return 0; }
+   static int custom_sample_stop(int core) { (void)core; return 0; }
+   static double custom_energy(int core) { (void)core; return METRIC_NOT_SUPPORTED; }
 
-   EnergyBackend custom_backend = {
-       .name = "Custom Architecture",
+   CpuBackend custom_cpu_backend = {
+       .name = "Custom CPU",
        .detect = custom_detect,
-       .before = custom_before,
-       .after = custom_after
+       .init = custom_init,
+       .sample_start = custom_sample_start,
+       .sample_stop = custom_sample_stop,
+       .get_package_energy = custom_energy,
+       .get_core_energy = custom_energy,
+       .get_dram_energy = custom_energy
+   };
+
+   const EnergyBackendDescriptor energy_backend_descriptor = {
+       .type = ENERGY_BACKEND_CPU,
+       .priority = 0,
+       .backend.cpu = &custom_cpu_backend
    };
    ```
 
-2. **Expose Symbol**: Add the weak reference to `include/energy-backend.h`:
-   ```c
-   WEAK_DRIVER extern EnergyBackend custom_backend;
+   GPU implementations use the same lifecycle, implement `GpuBackend`, and set the descriptor type to `ENERGY_BACKEND_GPU`. A higher `priority` selects a preferred implementation when multiple implementations are detected.
+
+2. **Add build metadata**: Add a `backend.mk` file to the implementation directory. The source is discovered automatically when it is the only `.c` file other than `sensors.c`; metadata can also specify the source and any compiler or linker flags:
+   ```make
+   BACKEND_SOURCE_platform_linux_cpu_custom := custom.c
+   BACKEND_CFLAGS_platform_linux_cpu_custom := -I/path/to/headers
+   BACKEND_LDLIBS_platform_linux_cpu_custom := -lcustom
+   BACKEND_HOST_LDLIBS_platform_linux_cpu_custom := -lcustom-host-support
    ```
 
-3. **Register in `Makefile`**: Append your source file to `SRCS` under the corresponding hardware conditional branch.
+   `BACKEND_LDLIBS` links dependencies into the plugin. Use `BACKEND_HOST_LDLIBS` only when the plugin needs symbols provided by the executable.
+
+   The build creates `backend.so` in each implementation directory. At runtime, the executable scans these directories and loads valid plugins; adding an implementation does not require changes to `main.c` or a vendor registry.
+
+   **Backend lookup order:** `$GREENMEASURER_BACKEND_DIR` (a directory containing `cpu/` and `gpu/`), then `<executable dir>/platform/linux`, then `<executable dir>/../lib/greenmeasurer/platform/linux`.
+
+   **Diagnostics:** at startup the executable prints a table with one row per backend folder and a status: `selected`, `available` (detected but lower priority), `not detected` (with the hint returned by the optional `diagnose()` callback), `not built` (no `backend.so`), `load failed` or `invalid` (bad descriptor or missing callbacks). Missing CPU/GPU backends produce a warning and the corresponding metrics are reported as `NOT_SUPPORTED`.
+
+   **Tests:** `make test` (in `src/`) builds fake plugins in a temporary directory and checks priority selection, undetected/invalid/unbuilt plugins, missing backends and the directory override.

@@ -20,11 +20,4 @@
 #define AMD_MSR_CORE_ENERGY_STAT    0xC001029A
 #define AMD_MSR_PKG_ENERGY_STAT     0xC001029B
 
-/* 32-bit counter wrap-around delta macro */
-#define DELTA_WRAP32(new, old) \
-    ((((unsigned long long)(new) << 32) - ((unsigned long long)(old) << 32)) >> 32)
-
-/* Exported AMD Backend */
-extern EnergyBackend amd_backend;
-
 #endif /* AMD_H */

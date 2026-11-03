@@ -20,15 +20,15 @@ compile:
 	$(GCC_PATH) -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge fibonacci.c -o fib -lm
 
 standard:
-	sudo modprobe msr 2>/dev/null || true
-	sudo ../../../src/main --standard -command "$(command)" -language $(language) -program $(program)_$(input) -n_times $(n_times) -variance $(variance) -time_out_limit $(time_out_limit) -sleep_time $(sleep_secs) -powercap $(powercap)
+	-modprobe msr 2>/dev/null || true
+	../../../src/main --standard -command "$(command)" -language $(language) -program $(program)_$(input) -n_times $(n_times) -variance $(variance) -time_out_limit $(time_out_limit) -sleep_time $(sleep_secs) -powercap $(powercap)
 
 overtime:
-	sudo modprobe msr 2>/dev/null || true
-	sudo ../../../src/main --overtime -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance)
+	-modprobe msr 2>/dev/null || true
+	../../../src/main --overtime -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance)
 
 run:
 	$(command)
 
 clean:
-	rm -f fib out
+	rm -f fib out *.csv

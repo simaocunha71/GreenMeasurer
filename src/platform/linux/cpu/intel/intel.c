@@ -2,61 +2,60 @@
 #include <regex.h>
 
 static int intel_cpu_model = -1;
-static double package_before, package_after;
-static double pp0_before, pp0_after;
-static double pp1_before = 0.0, pp1_after;
-static double dram_before = 0.0, dram_after;
+static uint32_t package_before = 0, package_after = 0;
+static uint32_t core_before = 0, core_after = 0;
+static uint32_t dram_before = 0, dram_after = 0;
+static int package_before_valid = 0, package_after_valid = 0;
+static int core_before_valid = 0, core_after_valid = 0;
+static int dram_before_valid = 0, dram_after_valid = 0;
 
-static double power_units, energy_units, time_units;
-
+static double energy_units = 0.0;
+static int energy_units_valid = 0;
 static raplcap global_rc;
 static int raplcap_active = 0;
 
-/* External callback to run benchmark testing loop defined in main runner */
 extern void runTesting(int ntimes, int core, const char *command, const char *language, 
                        const char *program, const char *measurements_file, int powercap, 
                        int time_out_limit, float temp_threshold, int variance, int memory);
 
-                       
 static int open_msr(int core) {
     char msr_filename[BUFSIZ];
-    int fd;
-
     snprintf(msr_filename, sizeof(msr_filename), "/dev/cpu/%d/msr", core);
-    fd = open(msr_filename, O_RDONLY);
+    int fd = open(msr_filename, O_RDONLY);
     if (fd < 0) {
-        if (errno == ENXIO) {
+        if (errno == EACCES || errno == EPERM) {
+            static int warned = 0;
+            if (!warned) {
+                fprintf(stderr, "[WARNING] Permission denied accessing %s (run with sudo for Intel CPU MSR metrics).\n", msr_filename);
+                warned = 1;
+            }
+            return -1;
+        } else if (errno == ENXIO) {
             fprintf(stderr, "[WARNING] rdmsr: No CPU %d\n", core);
-            exit(2);
+            return -1;
         } else if (errno == EIO) {
             fprintf(stderr, "[WARNING] rdmsr: CPU %d doesn't support MSRs\n", core);
-            exit(3);
+            return -1;
         } else {
-            perror("rdmsr:open");
-            fprintf(stderr, "[ERROR] Trying to open %s\n", msr_filename);
-            exit(127);
+            return -1;
         }
     }
     return fd;
 }
 
 static uint64_t read_msr(int fd, int which) {
+    if (fd < 0) return (uint64_t)-1;
     uint64_t data = (uint64_t)-1;
-
     if (pread(fd, &data, sizeof(data), (off_t)which) != sizeof(data)) {
-        if (errno == EIO) {
-            fprintf(stderr, "[WARNING] MSR 0x%x not available on this CPU.\n", which);
-        } else {
-            fprintf(stderr, "[ERROR] reading MSR 0x%x: %s\n", which, strerror(errno));
-        }
         return (uint64_t)-1;
     }
     return data;
 }
 
+
 static int detect_intel_cpu(void) {
     FILE *fff = fopen("/proc/cpuinfo", "r");
-    if (fff == NULL) return -1;
+    if (!fff) return -1;
 
     int family = 0, model = -1;
     char buffer[BUFSIZ];
@@ -82,57 +81,7 @@ static int detect_intel_cpu(void) {
         }
     }
     fclose(fff);
-
-    switch (model) {
-        case CPU_SANDYBRIDGE:
-        case CPU_SANDYBRIDGE_EP:
-        case CPU_IVYBRIDGE:
-        case CPU_IVYBRIDGE_EP:
-        case CPU_HASWELL:
-        case CPU_HASWELL_ULT:
-        case CPU_HASWELL_GT3E:
-        case CPU_HASWELL_EP:
-        case CPU_BROADWELL:
-        case CPU_BROADWELL_GT3E:
-        case CPU_BROADWELL_EP:
-        case CPU_BROADWELL_DE:
-        case CPU_SKYLAKE:
-        case CPU_SKYLAKE_HS:
-        case CPU_SKYLAKE_X:
-        case CPU_KNIGHTS_LANDING:
-        case CPU_KNIGHTS_MILL:
-        case CPU_KABYLAKE_MOBILE:
-        case CPU_KABYLAKE:
-        case CPU_ATOM_SILVERMONT:
-        case CPU_ATOM_AIRMONT:
-        case CPU_ATOM_MERRIFIELD:
-        case CPU_ATOM_MOOREFIELD:
-        case CPU_ATOM_GOLDMONT:
-        case CPU_ATOM_GEMINI_LAKE:
-        case CPU_ATOM_DENVERTON:
-        case CANNONLAKE_L:
-        case ICELAKE_L:
-        case ICELAKE:
-        case ICELAKE_D:
-        case ICELAKE_X:
-        case COMETLAKE_L:
-        case COMETLAKE:
-        case TIGERLAKE_L:
-        case TIGERLAKE:
-        case ALDERLAKE:
-        case ALDERLAKE_L:
-        case ALDERLAKE_N:
-        case RAPTORLAKE:
-        case RAPTORLAKE_P:
-        case RAPTORLAKE_S:
-        case METEORLAKE:
-        case METEORLAKE_L:
-        case SAPPHIRERAPIDS_X:
-        case EMERALDRAPIDS_X:
-            return model;
-        default:
-            return -1;
-    }
+    return model;
 }
 
 static int intel_detect(void) {
@@ -140,220 +89,176 @@ static int intel_detect(void) {
     return (intel_cpu_model >= 0) ? 1 : 0;
 }
 
+static const char *intel_diagnose(void) {
+    return "CPU is not a supported Intel RAPL model";
+}
+
 static int intel_init(int core) {
+    energy_units_valid = 0;
     if (intel_cpu_model < 0) {
         intel_cpu_model = detect_intel_cpu();
         if (intel_cpu_model < 0) return -1;
     }
 
     int fd = open_msr(core);
+    if (fd < 0) return -1;
+
     uint64_t result = read_msr(fd, MSR_RAPL_POWER_UNIT);
     close(fd);
 
     if (result == (uint64_t)-1) return -1;
-
-    power_units  = pow(0.5, (double)(result & 0xf));
     energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
-    time_units   = pow(0.5, (double)((result >> 16) & 0xf));
-
+    energy_units_valid = 1;
     return 0;
 }
 
-static int intel_before(int core) {
+static int intel_sample_start(int core) {
+    package_before_valid = 0;
+    core_before_valid = 0;
+    dram_before_valid = 0;
     int fd = open_msr(core);
-    uint64_t result;
-    int flag = 1;
+    if (fd < 0) {
+        return -1;
+    }
 
-    result = read_msr(fd, MSR_PKG_ENERGY_STATUS);
-    package_before = (double)result * energy_units;
-    if (package_before < 0) flag = -1;
+    uint64_t res;
+    res = read_msr(fd, MSR_PKG_ENERGY_STATUS);
+    if (res != (uint64_t)-1) {
+        package_before = (uint32_t)res;
+        package_before_valid = 1;
+    }
 
-    result = read_msr(fd, MSR_PP0_ENERGY_STATUS);
-    pp0_before = (double)result * energy_units;
-    if (pp0_before < 0) flag = -1;
+    res = read_msr(fd, MSR_PP0_ENERGY_STATUS);
+    if (res != (uint64_t)-1) {
+        core_before = (uint32_t)res;
+        core_before_valid = 1;
+    }
 
-    result = read_msr(fd, MSR_PP1_ENERGY_STATUS);
-    pp1_before = (double)result * energy_units;
-    if (pp1_before < 0) flag = -1;
-
-    result = read_msr(fd, MSR_DRAM_ENERGY_STATUS);
-    dram_before = (double)result * energy_units;
-    if (dram_before < 0) flag = -1;
+    res = read_msr(fd, MSR_DRAM_ENERGY_STATUS);
+    if (res != (uint64_t)-1) {
+        dram_before = (uint32_t)res;
+        dram_before_valid = 1;
+    }
 
     close(fd);
-    return flag;
+    return (package_before_valid && core_before_valid) ? 0 : -1;
 }
 
-static int intel_after(int core, EnergyMetrics *out) {
+static int intel_sample_stop(int core) {
+    package_after_valid = 0;
+    core_after_valid = 0;
+    dram_after_valid = 0;
     int fd = open_msr(core);
-    uint64_t result;
-    int has_negative = 0;
+    if (fd < 0) {
+        return -1;
+    }
 
-    result = read_msr(fd, MSR_PKG_ENERGY_STATUS);
-    package_after = (double)result * energy_units;
-    double pkg_diff = package_after - package_before;
-    if (pkg_diff < 0) has_negative = 1;
+    uint64_t res;
+    res = read_msr(fd, MSR_PKG_ENERGY_STATUS);
+    if (res != (uint64_t)-1) {
+        package_after = (uint32_t)res;
+        package_after_valid = 1;
+    }
 
-    result = read_msr(fd, MSR_PP0_ENERGY_STATUS);
-    pp0_after = (double)result * energy_units;
-    double pp0_diff = pp0_after - pp0_before;
-    if (pp0_diff < 0) has_negative = 1;
+    res = read_msr(fd, MSR_PP0_ENERGY_STATUS);
+    if (res != (uint64_t)-1) {
+        core_after = (uint32_t)res;
+        core_after_valid = 1;
+    }
 
-    result = read_msr(fd, MSR_PP1_ENERGY_STATUS);
-    pp1_after = (double)result * energy_units;
-    double pp1_diff = pp1_after - pp1_before;
-    if (pp1_diff < 0) has_negative = 1;
-
-    result = read_msr(fd, MSR_DRAM_ENERGY_STATUS);
-    dram_after = (double)result * energy_units;
-    double dram_diff = dram_after - dram_before;
-    if (dram_diff < 0) has_negative = 1;
+    res = read_msr(fd, MSR_DRAM_ENERGY_STATUS);
+    if (res != (uint64_t)-1) {
+        dram_after = (uint32_t)res;
+        dram_after_valid = 1;
+    }
 
     close(fd);
-
-    if (has_negative) {
-        fprintf(stderr, "[ERROR] Negative delta detected in intel_after().\n");
-        return -1;
-    }
-
-    if (out) {
-        out->package = pkg_diff;
-        out->core = pp0_diff;
-        out->gpu = pp1_diff;
-        out->dram = dram_diff;
-    }
-    return 1;
+    return (package_after_valid && core_after_valid) ? 0 : -1;
 }
 
-int intel_set_powercap(int watts) {
-    if (watts <= 0) return 0;
-
-    printf("Running with CAP\n");
-    raplcap_limit rl_short, rl_long;
-    uint32_t q, j, n, d;
-
-    // 1. Inicializa o contexto RAPL tal como no main.c original
-    if (raplcap_init(&global_rc)) {
-        perror("raplcap_init");
-        return -1;
+static double intel_get_package_energy(int core) {
+    (void)core;
+    if (!energy_units_valid || !package_before_valid || !package_after_valid) {
+        return METRIC_NOT_SUPPORTED;
     }
-    raplcap_active = 1;
-
-    // 2. Obtém o número de packages
-    n = raplcap_get_num_packages(NULL);
-    if (n == 0) {
-        perror("raplcap_get_num_packages");
-        raplcap_destroy(&global_rc);
-        raplcap_active = 0;
-        return -1;
-    }
-
-    // 3. Assume os dies a partir do package 0 (exatamente como no original)
-    d = raplcap_get_num_die(&global_rc, 0);
-    if (d == 0) {
-        perror("raplcap_get_num_die");
-        raplcap_destroy(&global_rc);
-        raplcap_active = 0;
-        return -1;
-    }
-
-    // 4. Aplica os limites para long e short window
-    rl_long.watts = watts;
-    rl_long.seconds = 0;
-    rl_short.watts = watts;
-    rl_short.seconds = 0;
-
-    for (q = 0; q < n; q++) {
-        for (j = 0; j < d; j++) {
-            if (raplcap_pd_set_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, &rl_long, &rl_short)) {
-                perror("raplcap_pd_set_limits");
-            }
-        }
-    }
-
-    // 5. Ativa as zonas de power cap
-    for (q = 0; q < n; q++) {
-        for (j = 0; j < d; j++) {
-            if (raplcap_pd_set_zone_enabled(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, 1)) {
-                perror("raplcap_pd_set_zone_enabled");
-            }
-        }
-    }
-
-    return 0;
+    return (double)(uint32_t)(package_after - package_before) * energy_units;
 }
 
-int intel_destroy_powercap(void) {
-    if (raplcap_active) {
-        // Exatamente como no main.c original: não desativa as zonas manualmente, apenas destrói o contexto
-        if (raplcap_destroy(&global_rc)) {
-            printf("[ERROR] Error destroying CAP\n");
-            perror("[ERROR] raplcap_destroy");
-            return -1;
-        } else {
-            printf("[INFO] Successfully destroyed CAP\n");
-        }
-        raplcap_active = 0;
+static double intel_get_core_energy(int core) {
+    (void)core;
+    if (!energy_units_valid || !core_before_valid || !core_after_valid) {
+        return METRIC_NOT_SUPPORTED;
     }
-    return 0;
-}
-static void intel_cleanup(void) {
-    intel_destroy_powercap();
+    return (double)(uint32_t)(core_after - core_before) * energy_units;
 }
 
-/* Calibration routines moved from main.c */
-double intel_calibrate_temperature(int seconds, const char *calib_file) {
-    printf("[INFO] Calibrating temperature for %d seconds...\n", seconds);
-    sleep(seconds);
-
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "sensors > %s", calib_file);
-    if (system(cmd) != 0) return -1.0;
-
-    FILE *file = fopen(calib_file, "r");
-    FILE *output_file = fopen(calib_file, "a");
-    if (!file || !output_file) {
-        if (file) fclose(file);
-        if (output_file) fclose(output_file);
-        return -1.0;
+static double intel_get_dram_energy(int core) {
+    (void)core;
+    if (!energy_units_valid || !dram_before_valid || !dram_after_valid) {
+        return METRIC_NOT_SUPPORTED;
     }
+    return (double)(uint32_t)(dram_after - dram_before) * energy_units;
+}
+
+static float intel_get_temperature(int core) {
+    (void)core;
+    FILE *fp = popen("sensors 2>/dev/null", "r");
+    if (!fp) return -1.0f;
 
     char line[256];
-    double temperatures[256];
-    int temp_count = 0;
-    regex_t regex;
-    regmatch_t matches[2];
+    double sum = 0.0;
+    int count = 0;
 
-    if (regcomp(&regex, "Core [0-9]+: *\\+([0-9.]+)°C", REG_EXTENDED) != 0) {
-        fclose(file); fclose(output_file);
-        return -1.0;
-    }
-
-    while (fgets(line, sizeof(line), file)) {
-        if (regexec(&regex, line, 2, matches, 0) == 0) {
-            char temp_str[32];
-            int len = matches[1].rm_eo - matches[1].rm_so;
-            if (len >= (int)sizeof(temp_str)) len = sizeof(temp_str) - 1;
-            strncpy(temp_str, line + matches[1].rm_so, len);
-            temp_str[len] = '\0';
-            double temp_val = atof(temp_str);
-            if (temp_count < 256) temperatures[temp_count++] = temp_val;
-
-            char *core_name = strtok(line, ":");
-            if (core_name) fprintf(output_file, "%s: %.1f°C\n", core_name, temp_val);
+    while (fgets(line, sizeof(line), fp)) {
+        if (strncmp(line, "Core ", 5) == 0) {
+            char *plus = strchr(line, '+');
+            if (plus) {
+                float temp = 0.0f;
+                if (sscanf(plus + 1, "%f", &temp) == 1 && temp > 0.0f) {
+                    sum += temp;
+                    count++;
+                }
+            }
         }
     }
+    pclose(fp);
+    return (count > 0) ? (float)(sum / count) : -1.0f;
+}
 
-    double mean_temp = 0.0;
-    for (int i = 0; i < temp_count; i++) mean_temp += temperatures[i];
-    if (temp_count > 0) mean_temp /= temp_count;
+static int intel_set_powercap(int watts) {
+    if (watts <= 0) return 0;
+    if (raplcap_init(&global_rc)) return -1;
+    raplcap_active = 1;
 
-    fprintf(output_file, "Average temperature: %.1f°C\n\n", mean_temp);
-    regfree(&regex);
-    fclose(file);
-    fclose(output_file);
+    uint32_t n = raplcap_get_num_packages(NULL);
+    if (n == 0) {
+        raplcap_destroy(&global_rc);
+        raplcap_active = 0;
+        return -1;
+    }
 
-    return mean_temp;
+    uint32_t d = raplcap_get_num_die(&global_rc, 0);
+    raplcap_limit rl = { .watts = watts, .seconds = 0 };
+
+    for (uint32_t q = 0; q < n; q++) {
+        for (uint32_t j = 0; j < d; j++) {
+            raplcap_pd_set_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, &rl, &rl);
+            raplcap_pd_set_zone_enabled(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, 1);
+        }
+    }
+    return 0;
+}
+
+static int intel_destroy_powercap(void) {
+    if (raplcap_active) {
+        raplcap_destroy(&global_rc);
+        raplcap_active = 0;
+    }
+    return 0;
+}
+
+static void intel_cleanup(void) {
+    intel_destroy_powercap();
 }
 
 void intel_calibrate_powercap(int ntimes, int core, const char *command, const char *language, 
@@ -364,21 +269,42 @@ void intel_calibrate_powercap(int ntimes, int core, const char *command, const c
         calib_csv_file = "powercap_calibration.csv";
     }
 
-    printf("[INFO] Powercap calibration: Calibrating power cap by running %s with different power limits...\n", program);
+    printf("[INFO] Powercap calibration: Starting baseline and sweep for %s...\n", program);
 
     FILE *outputFile = fopen(calib_csv_file, "w");
-    if (outputFile == NULL) {
-        perror("[ERROR] Powercap calibration: Error opening calibration CSV file for writing");
+    if (!outputFile) {
+        perror("[ERROR] Failed to open calibration CSV for writing");
         return;
     }
 
     fprintf(outputFile, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory\n");
 
+    printf("[INFO] Powercap calibration: Measuring uncapped baseline (Powercap = -1)...\n");
+    char base_filename[256];
+    snprintf(base_filename, sizeof(base_filename), "/tmp/%s_baseline.csv", program);
+
+    runTesting(ntimes, core, command, language, program, base_filename,
+               -1, time_out_limit, temp_threshold, variance, memory);
+
+    FILE *baseFile = fopen(base_filename, "r");
+    if (baseFile) {
+        char buffer[1024];
+        while (fgets(buffer, sizeof(buffer), baseFile)) {
+            fputs(buffer, outputFile);
+        }
+        fclose(baseFile);
+        remove(base_filename);
+    } else {
+        fprintf(stderr, "[ERROR] Failed to read baseline calibration run\n");
+    }
+
+    sleep(1);
+
     for (int power_cap = min_powercap; power_cap <= max_powercap; power_cap++) {
         printf("[INFO] Powercap calibration: Testing with WHATTSCAP = %d\n", power_cap);
 
         if (intel_set_powercap(power_cap) != 0) {
-            printf("[ERROR] Powercap calibration: Failed to initialize RAPL with power cap %d. Skipping...\n", power_cap);
+            fprintf(stderr, "[ERROR] Failed to set powercap %d W. Skipping...\n", power_cap);
             continue;
         }
 
@@ -389,24 +315,17 @@ void intel_calibrate_powercap(int ntimes, int core, const char *command, const c
                    power_cap, time_out_limit, temp_threshold, variance, memory);
 
         FILE *inputFile = fopen(filename, "r");
-        if (inputFile == NULL) {
-            perror("[ERROR] Powercap calibration: Error opening individual CSV file for reading");
-            intel_destroy_powercap();
-            continue;
-        }
-
-        char buffer[1024];
-        while (fgets(buffer, sizeof(buffer), inputFile) != NULL) {
-            fputs(buffer, outputFile);
-        }
-        fclose(inputFile);
-
-        if (remove(filename) != 0) {
-            perror("[ERROR] Powercap calibration: Error removing individual CSV file");
+        if (inputFile) {
+            char buffer[1024];
+            while (fgets(buffer, sizeof(buffer), inputFile)) {
+                fputs(buffer, outputFile);
+            }
+            fclose(inputFile);
+            remove(filename);
         }
 
         if (intel_destroy_powercap() != 0) {
-            printf("[ERROR] Powercap calibration: Error destroying CAP after test with Power Cap = %d\n", power_cap);
+            fprintf(stderr, "[ERROR] Error destroying CAP after test with %d W\n", power_cap);
         }
 
         sleep(1);
@@ -414,61 +333,37 @@ void intel_calibrate_powercap(int ntimes, int core, const char *command, const c
 
     fclose(outputFile);
 
-    if (process_script && strlen(process_script) > 0 && access(process_script, F_OK) == 0) {
+    if (process_script && access(process_script, F_OK) == 0) {
         char proc_cmd[1024];
         snprintf(proc_cmd, sizeof(proc_cmd), "python3 \"%s\" \"%s\"", process_script, calib_csv_file);
         printf("[INFO] Running calibration post-processor: %s\n", proc_cmd);
         if (system(proc_cmd) != 0) {
             fprintf(stderr, "[WARNING] Python post-processing script exited with error\n");
-        } else {
-            printf("[INFO] Power cap calibration CSV processed successfully\n");
         }
     } else {
-        printf("[INFO] Power cap calibration CSV saved to %s\n", calib_csv_file);
+        printf("[INFO] Powercap calibration CSV saved to %s\n", calib_csv_file);
     }
 }
 
-static int intel_measure_memory(const char *command) {
-    printf("[INFO] Measuring memory consumption of \"%s\" (Intel/Linux)...\n", command);
-    char cmd[2048];
-
-    int n = snprintf(cmd, sizeof(cmd),
-            "/usr/bin/time -v %s 2>&1 1>/dev/null | grep 'Maximum resident set size' | "
-            "sed 's/[^0-9]*\\([0-9]*\\).*/\\1/'",
-            command);
-    if (n < 0 || n >= (int)sizeof(cmd)) {
-        fprintf(stderr, "[ERROR] Command buffer overflow in intel_measure_memory\n");
-        return -1;
-    }
-
-    FILE *fp = popen(cmd, "r");
-    if (!fp) {
-        perror("[ERROR] Failed to run /usr/bin/time for memory measurement");
-        return -1;
-    }
-
-    char buf[128] = "";
-    if (fgets(buf, sizeof(buf), fp) == NULL) {
-        pclose(fp);
-        fprintf(stderr, "[ERROR] Failed to read memory usage output\n");
-        return -1;
-    }
-    pclose(fp);
-
-    int result = atoi(buf);
-    printf("[INFO] Memory consumption: %d KB\n", result);
-    return result;
-}
-
-EnergyBackend intel_backend = {
-    .name = "Intel RAPL",
+CpuBackend intel_cpu_backend = {
+    .name = "Intel RAPL CPU",
     .detect = intel_detect,
     .init = intel_init,
-    .before = intel_before,
-    .after = intel_after,
     .cleanup = intel_cleanup,
-    .measure_memory = intel_measure_memory,
+    .sample_start = intel_sample_start,
+    .sample_stop = intel_sample_stop,
+    .get_package_energy = intel_get_package_energy,
+    .get_core_energy = intel_get_core_energy,
+    .get_dram_energy = intel_get_dram_energy,
+    .get_temperature = intel_get_temperature,
     .set_powercap = intel_set_powercap,
     .destroy_powercap = intel_destroy_powercap,
-    .calibrate_powercap = intel_calibrate_powercap
+    .calibrate_powercap = intel_calibrate_powercap,
+    .diagnose = intel_diagnose
+};
+
+const EnergyBackendDescriptor energy_backend_descriptor = {
+    .type = ENERGY_BACKEND_CPU,
+    .priority = 0,
+    .backend.cpu = &intel_cpu_backend
 };

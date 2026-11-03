@@ -2,80 +2,55 @@ CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -pthread -Iinclude
 LDFLAGS ?= -pthread -lm
 
+.DEFAULT_GOAL := all
+
 UNAME_S := $(shell uname -s)
-
-# Base source files common to all environments
-SRCS = main.c sensors/sensors.c
-
-# ========================================================
-# 1. LINUX PLATFORM
-# ========================================================
-ifeq ($(UNAME_S), Linux)
-    PLATFORM_DIR = platform/linux
-
-    # CPU Vendor Detection
-    CPU_VENDOR := $(shell grep -m1 'vendor_id' /proc/cpuinfo 2>/dev/null | awk '{print $$3}')
-
-    ifeq ($(CPU_VENDOR), GenuineIntel)
-        $(info [BUILD] Target CPU: Intel)
-        SRCS += $(PLATFORM_DIR)/cpu/intel/intel.c $(PLATFORM_DIR)/cpu/intel/sensors.c
-        CFLAGS += -I/usr/local/include/raplcap -I/usr/local/include/powercap
-        LDFLAGS += -L/usr/local/lib -lraplcap-powercap -lpowercap
-    else ifeq ($(CPU_VENDOR), AuthenticAMD)
-        $(info [BUILD] Target CPU: AMD Zen)
-        SRCS += $(PLATFORM_DIR)/cpu/amd/amd.c $(PLATFORM_DIR)/cpu/amd/sensors.c
-    else
-        $(warning [BUILD] Unknown CPU vendor '$(CPU_VENDOR)', compiling Intel backend as default fallback)
-        SRCS += $(PLATFORM_DIR)/cpu/intel/intel.c $(PLATFORM_DIR)/cpu/intel/sensors.c
-        CFLAGS += -I/usr/local/include/raplcap -I/usr/local/include/powercap
-        LDFLAGS += -L/usr/local/lib -lraplcap-powercap -lpowercap
-    endif
-
-    # GPU Detection: Dedicated NVIDIA vs Dedicated AMD Radeon vs Integrated
-    HAS_NVIDIA := $(shell (grep -qi "10de" /sys/bus/pci/devices/*/vendor 2>/dev/null || [ -e /dev/nvidiactl ] || [ -x /usr/bin/nvidia-smi ] || /usr/bin/lspci 2>/dev/null | grep -qi nvidia) && echo yes)
-    HAS_AMD_GPU := $(shell (lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i amd || which rocm-smi 2>/dev/null) && echo yes)
-
-    ifeq ($(HAS_NVIDIA), yes)
-        $(info [BUILD] Target GPU: Dedicated NVIDIA detected)
-        SRCS += $(PLATFORM_DIR)/gpu/nvidia/nvidia.c $(PLATFORM_DIR)/gpu/nvidia/sensors.c
-        CFLAGS += -I/usr/include
-        LDFLAGS += -lnvidia-ml
-    else ifeq ($(HAS_AMD_GPU), yes)
-        $(info [BUILD] Target GPU: Dedicated AMD Radeon is not supported)
-    else
-        $(info [BUILD] Target GPU: Integrated Graphics / CPU Fallback)
-    endif
-
-# ========================================================
-# 2. MACOS / APPLE SILICON PLATFORM
-# ========================================================
-else ifeq ($(UNAME_S), Darwin)
-    $(error [BUILD] Target OS: macOS / Apple Silicon is not supported)
-
-# ========================================================
-# 3. UNSUPPORTED OPERATING SYSTEM
-# ========================================================
-else
+ifneq ($(UNAME_S),Linux)
     $(error [BUILD] Unsupported operating system: $(UNAME_S))
 endif
 
+SRCS = main.c utils/memory.c
 OBJS = $(SRCS:.c=.o)
 TARGET = main
+BACKEND_DIRS := $(shell find platform/linux -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
+
+backend_key = $(subst /,_,$(1))
+
+-include $(wildcard $(addsuffix /backend.mk,$(BACKEND_DIRS)))
+
+define backend_source
+$(if $(BACKEND_SOURCE_$(call backend_key,$(1))),$(1)/$(BACKEND_SOURCE_$(call backend_key,$(1))),$(firstword $(filter-out %/sensors.c,$(wildcard $(1)/*.c))))
+endef
+
+define backend_available
+$(if $(BACKEND_AVAILABLE_$(call backend_key,$(1))),$(BACKEND_AVAILABLE_$(call backend_key,$(1))),yes)
+endef
+
+BACKEND_TARGETS := $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call backend_available,$(dir))),$(dir)/backend.so))
+BACKEND_HOST_LDLIBS := $(foreach dir,$(BACKEND_DIRS),$(BACKEND_HOST_LDLIBS_$(call backend_key,$(dir))))
+$(foreach dir,$(BACKEND_DIRS),$(if $(filter no,$(call backend_available,$(dir))),$(info [BUILD] Backend $(dir) skipped: optional dependencies are unavailable)))
+
+define backend_rule
+$(1)/backend.so: $(call backend_source,$(1)) $(wildcard $(1)/backend.mk)
+	$$(CC) $$(CFLAGS) $$(BACKEND_CFLAGS_$(call backend_key,$(1))) -fPIC -shared -o $$@ $$< $$(LDFLAGS) $$(BACKEND_LDLIBS_$(call backend_key,$(1)))
+endef
+
+$(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call backend_available,$(dir))),$(eval $(call backend_rule,$(dir)))))
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-	chmod 755 $@
+$(TARGET): $(OBJS) $(BACKEND_TARGETS)
+	$(CC) $(CFLAGS) -rdynamic -o $@ $(OBJS) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) -ldl
 
-# Pattern rule with automatic nested directory creation for .o files
 %.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET)
-	rm -f $(OBJS)
-	find platform/ -name "*.o" -delete 2>/dev/null || true
+	rm -f $(TARGET) $(OBJS) $(BACKEND_TARGETS)
+	find platform/ utils/ -name "*.o" -delete 2>/dev/null || true
 
-.PHONY: all clean
+test: all
+	@bash tests/run_tests.sh
+
+.PHONY: all clean test

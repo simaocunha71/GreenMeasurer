@@ -16,7 +16,7 @@
 #include <powercap/powercap.h>
 #include <raplcap/raplcap.h>
 
-#include "energy-backend.h"
+#include "../../../../include/energy-backend.h"
 
 #define MSR_RAPL_POWER_UNIT         0x606
 
@@ -29,10 +29,6 @@
 #define MSR_PP0_ENERGY_STATUS       0x639
 #define MSR_PP0_POLICY              0x63A
 #define MSR_PP0_PERF_STATUS         0x63B
-
-#define MSR_PP1_POWER_LIMIT         0x640
-#define MSR_PP1_ENERGY_STATUS       0x641
-#define MSR_PP1_POLICY              0x642
 
 #define MSR_DRAM_POWER_LIMIT        0x618
 #define MSR_DRAM_ENERGY_STATUS      0x619
@@ -92,9 +88,7 @@
 #define SAPPHIRERAPIDS_X            143
 #define EMERALDRAPIDS_X             207
 
-extern EnergyBackend intel_backend;
-
-double intel_calibrate_temperature(int seconds, const char *calib_file);
+extern CpuBackend intel_cpu_backend;
 
 void intel_calibrate_powercap(int ntimes, int core, const char *command, const char *language, 
                              const char *program, const char *calib_csv_file,

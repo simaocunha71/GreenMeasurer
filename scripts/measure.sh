@@ -1,23 +1,43 @@
 #!/bin/bash
 export LANG=C.UTF-8
 
-WIFI_INTERFACE="wlp2s0"
+# 1. Non-root detection: warn instead of aborting
+IS_ROOT=0
+if [[ $EUID -eq 0 ]]; then
+    IS_ROOT=1
+else
+    echo "[WARNING] Running without root privileges. Hardware energy counters and power capping may be unavailable."
+    echo "[INFO] Metrics whose backends do not require root will still be collected."
+fi
+
+# 2. Dynamic Wi-Fi interface discovery
+WIFI_INTERFACE=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^wl' | head -n 1)
 
 cleanup() {
     echo "Cleaning up system settings..."
-    if ip link show "$WIFI_INTERFACE" > /dev/null 2>&1; then
-        sudo ip link set "$WIFI_INTERFACE" up
-        echo "Wi-Fi interface $WIFI_INTERFACE turned on."
+    if [[ -n "$WIFI_INTERFACE" ]] && ip link show "$WIFI_INTERFACE" > /dev/null 2>&1; then
+        if [[ $IS_ROOT -eq 1 ]]; then
+            ip link set "$WIFI_INTERFACE" up 2>/dev/null
+            echo "Wi-Fi interface $WIFI_INTERFACE turned on."
+        elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo ip link set "$WIFI_INTERFACE" up 2>/dev/null
+            echo "Wi-Fi interface $WIFI_INTERFACE turned on."
+        fi
     fi
 }
 trap cleanup EXIT INT TERM
 
-# Turn Wi-Fi interface off
-if ip link show "$WIFI_INTERFACE" > /dev/null 2>&1; then
-    sudo ip link set "$WIFI_INTERFACE" down
-    echo "Wi-Fi interface $WIFI_INTERFACE turned off."
+# Attempt to turn Wi-Fi off only if permissions allow
+if [[ -n "$WIFI_INTERFACE" ]] && ip link show "$WIFI_INTERFACE" > /dev/null 2>&1; then
+    if [[ $IS_ROOT -eq 1 ]]; then
+        ip link set "$WIFI_INTERFACE" down 2>/dev/null && echo "Wi-Fi interface $WIFI_INTERFACE turned off."
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo ip link set "$WIFI_INTERFACE" down 2>/dev/null && echo "Wi-Fi interface $WIFI_INTERFACE turned off."
+    else
+        echo "[INFO] Skipping Wi-Fi disable (requires root/sudo privileges)."
+    fi
 else
-    echo "[WARNING] Wi-Fi interface $WIFI_INTERFACE not found."
+    echo "[WARNING] No Wi-Fi interface found. Skipping network disable."
 fi
 
 VALID_LANGUAGES=($(find "$(dirname "$0")/../Languages" -maxdepth 1 -type d -exec basename {} \; | grep -v "^Languages$" | sort))
@@ -99,11 +119,19 @@ else
     done
 fi
 
-NTIMES=3
+# Measurement parameters
+NTIMES=10
 TIME_OUT_LIMIT=4
-VARIANCE=5
+VARIANCE=8
 IDLE_SECONDS=6
-POWER_CAPS=(-1 5 10)
+
+# If not running as root, limit powercaps strictly to unconstrained (-1)
+if [[ $IS_ROOT -eq 1 ]]; then
+    POWER_CAPS=(-1 6 12 18 24 30)
+else
+    POWER_CAPS=(-1)
+    echo "[INFO] Running with unconstrained powercap (-1) only, as power capping requires root."
+fi
 
 cd "$(dirname "$0")/.." || exit 1
 
@@ -115,11 +143,13 @@ elif [[ $STANDARD_MODE -eq 1 ]]; then
     echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory" > "$OUT_CSV"
 fi
 
+# Compile the core framework
 cd src || exit 1
 make clean
 make
 cd ..
 
+# Main benchmarking loops
 for cap in "${POWER_CAPS[@]}"; do
     for lang in "${SELECTED_LANGUAGES[@]}"; do
         lang_dir="Languages/$lang"
@@ -135,17 +165,21 @@ for cap in "${POWER_CAPS[@]}"; do
                 echo "Processing $program_dir (Powercap: $cap W, Interval: ${INTERVAL}ms)"
                 cd "$program_dir" || continue
 
+                rm -f *.csv
+
                 make compile
 
                 if [[ $OVERTIME_MODE -eq 1 ]]; then
                     make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE
                     if [ -f "measurements_ot.csv" ]; then
                         tail -n +2 measurements_ot.csv >> "../../../$OUT_CSV"
+                        rm -f measurements_ot.csv
                     fi
                 elif [[ $STANDARD_MODE -eq 1 ]]; then
                     make standard n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> "../../../$OUT_CSV"
+                        rm -f measurements.csv
                     fi
                 fi
 
@@ -160,4 +194,4 @@ cd src || exit 1
 make clean
 cd ..
 
-echo "Measurement process completed."
+echo "Measurement process completed successfully."
