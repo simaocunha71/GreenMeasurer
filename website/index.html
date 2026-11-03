@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101714">
+    <meta
+      name="description"
+      content="GreenMeasurer documentation: Linux CPU and GPU energy measurement and telemetry with extensible hardware backends."
+    >
+    <title>GreenMeasurer — Documentation</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="GreenMeasurer — home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" fill="none">
+            <path d="M20 3.5 34.3 11.8v16.4L20 36.5 5.7 28.2V11.8L20 3.5Z" stroke="currentColor" stroke-width="2"/>
+            <path d="M11 22h5l2.4-7 4.1 12 2.2-6H29" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4"/>
+          </svg>
+        </span>
+        <span class="brand-name">Green<span>Measurer</span></span>
+      </a>
+      <div class="header-actions">
+        <span class="status-pill"><span></span> Linux · C · plugins</span>
+        <a class="header-link" href="https://github.com/simaocunha71/GreenMeasurer" target="_blank" rel="noreferrer">
+          Source code <span aria-hidden="true">↗</span>
+        </a>
+        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+          <span class="menu-toggle-label">Menu</span>
+          <span class="menu-icon" aria-hidden="true"><i></i><i></i></span>
+        </button>
+      </div>
+    </header>
+
+    <div class="layout" id="top">
+      <aside class="sidebar" id="site-nav" aria-label="Documentation navigation">
+        <p class="nav-caption">DOCUMENTATION</p>
+        <nav>
+          <a class="nav-link active" href="#overview"><span>01</span> Overview</a>
+          <a class="nav-link" href="#architecture"><span>02</span> Architecture</a>
+          <a class="nav-link" href="#modes"><span>03</span> Measurement modes</a>
+          <a class="nav-link" href="#metrics"><span>04</span> Metrics and backends</a>
+          <a class="nav-link" href="#csv"><span>05</span> Getting the data</a>
+          <a class="nav-link" href="#install"><span>06</span> Installation</a>
+          <a class="nav-link" href="#extend-metric"><span>07</span> Adding metrics</a>
+          <a class="nav-link" href="#extend-backend"><span>08</span> Adding backends</a>
+          <a class="nav-link" href="#limits"><span>09</span> Limitations</a>
+        </nav>
+        <div class="sidebar-note">
+          <span class="note-icon" aria-hidden="true">↗</span>
+          <p>CSV columns depend on the hardware and selected backends.</p>
+          <a href="#metrics">View supported metrics <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="sidebar-footer">
+          <span class="live-dot"></span>
+          <span>Repository documentation</span>
+        </div>
+      </aside>
+
+      <main id="main">
+        <section class="hero section-shell" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <div class="eyebrow"><span class="eyebrow-line"></span> ENERGY TELEMETRY · LINUX</div>
+            <h1 id="hero-title">Measure energy.<br><span>Understand the system.</span></h1>
+            <p class="hero-lede">
+              GreenMeasurer is an extensible tool for collecting energy, temperature,
+              utilization, and memory data while programs run — without instrumenting
+              application code.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#install">Get started <span aria-hidden="true">↓</span></a>
+              <a class="button button-secondary" href="#architecture">Explore the architecture</a>
+            </div>
+            <div class="hero-meta">
+              <span><b>01</b> observed command</span>
+              <span><b>02</b> hardware plugins</span>
+              <span><b>CSV</b> exportable data</span>
+            </div>
+          </div>
+          <div class="hero-visual" aria-label="Illustrative example of energy data over time">
+            <div class="visual-topline">
+              <span class="window-dots"><i></i><i></i><i></i></span>
+              <span>telemetry / live sample</span>
+              <span class="visual-live"><i></i> ILLUSTRATION</span>
+            </div>
+            <div class="visual-body">
+              <div class="visual-readout">
+                <div>
+                  <span class="readout-label">CPU PACKAGE</span>
+                  <strong>42.68 <small>J</small></strong>
+                </div>
+                <div class="readout-change">+ 8.4% <span>during execution</span></div>
+              </div>
+              <div class="chart-wrap">
+                <div class="chart-axis"><span>50 J</span><span>25 J</span><span>0 J</span></div>
+                <svg class="chart" viewBox="0 0 520 176" role="img" aria-label="Illustrative cumulative energy line">
+                  <defs>
+                    <linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0" stop-color="#a7ef77" stop-opacity=".24"/>
+                      <stop offset="1" stop-color="#a7ef77" stop-opacity="0"/>
+                    </linearGradient>
+                  </defs>
+                  <path class="chart-grid" d="M0 24H520M0 82H520M0 140H520"/>
+                  <path class="chart-area" d="M0 139 39 134 72 136 108 116 147 119 181 98 218 104 254 80 291 87 326 62 363 65 397 42 435 46 473 19 520 24V156H0Z"/>
+                  <path class="chart-line" d="M0 139 39 134 72 136 108 116 147 119 181 98 218 104 254 80 291 87 326 62 363 65 397 42 435 46 473 19 520 24"/>
+                  <circle cx="473" cy="19" r="5" class="chart-point"/>
+                </svg>
+              </div>
+              <div class="chart-time"><span>0 ms</span><span>500 ms</span><span>1 000 ms</span><span>1 500 ms</span><span>2 000 ms</span></div>
+              <div class="visual-stats">
+                <div><span>SAMPLING</span><b>100 <small>ms</small></b></div>
+                <div><span>STATUS</span><b class="good-state"><i></i> running</b></div>
+                <div><span>SOURCE</span><b>RAPL / MSR</b></div>
+              </div>
+            </div>
+            <p class="visual-caption">Conceptual visualization · actual data is exported as CSV.</p>
+          </div>
+          <div class="hero-scroll" aria-hidden="true"><span></span> SCROLL TO EXPLORE</div>
+        </section>
+
+        <section class="trust-strip" aria-label="Features">
+          <div><span class="trust-icon">⌘</span><p><b>No instrumentation</b><small>measures an external command</small></p></div>
+          <div><span class="trust-icon">◈</span><p><b>Pluggable backends</b><small>hardware-specific access</small></p></div>
+          <div><span class="trust-icon">↗</span><p><b>Explicit metrics</b><small>no fabricated missing values</small></p></div>
+          <div><span class="trust-icon">▤</span><p><b>Dynamic CSV</b><small>schema built from plugins</small></p></div>
+        </section>
+
+        <section class="content-section section-shell" id="overview">
+          <div class="section-heading">
+            <div class="section-index">01 <span>—</span> OVERVIEW</div>
+            <h2>A practical way to observe<br><em>software energy.</em></h2>
+          </div>
+          <div class="intro-grid">
+            <div class="intro-text">
+              <p>
+                GreenMeasurer runs a user-provided program and collects telemetry through
+                interfaces available on the system: RAPL counters, MSRs, NVML, and sensors
+                exposed by Linux. The measured program does not need to know about the tool.
+              </p>
+              <p>
+                The C core coordinates execution, manages sampling windows, and writes
+                results. Backends handle hardware detection, counter reads, and declare
+                which metrics they can provide.
+              </p>
+              <div class="callout callout-warm">
+                <span class="callout-mark">!</span>
+                <p><b>Hardware energy is not automatically process energy.</b>
+                  For example, RAPL package energy represents a CPU domain and may include
+                  activity from the operating system and other processes.</p>
+              </div>
+            </div>
+            <div class="facts-card">
+              <div class="facts-title"><span class="tiny-square"></span> AT A GLANCE</div>
+              <dl>
+                <div><dt>Current platform</dt><dd>Linux</dd></div>
+                <div><dt>Implementation</dt><dd>C · Make · .so plugins</dd></div>
+                <div><dt>Output</dt><dd>CSV per run</dd></div>
+                <div><dt>Selection</dt><dd>one CPU + one GPU</dd></div>
+                <div><dt>No valid reading</dt><dd><code>NOT_SUPPORTED</code></dd></div>
+              </dl>
+              <a href="#metrics" class="text-link">View the metric matrix <span aria-hidden="true">↗</span></a>
+            </div>
+          </div>
+        </section>
+
+        <section class="content-section section-shell section-tinted" id="architecture">
+          <div class="section-heading">
+            <div class="section-index">02 <span>—</span> ARCHITECTURE</div>
+            <h2>One shared core.<br><em>Specialized drivers.</em></h2>
+            <p class="section-intro">The core does not need to change when a compatible backend is added.</p>
+          </div>
+          <div class="architecture">
+            <div class="arch-core">
+              <div class="arch-icon">GM</div>
+              <div><span class="card-kicker">ORCHESTRATOR</span><h3><code>src/main.c</code></h3><p>CLI, workload execution, sampling, calibration, and CSV output.</p></div>
+              <span class="arch-badge">C core</span>
+            </div>
+            <div class="arch-connector"><span>Shared API · <code>energy-backend.h</code></span><i></i></div>
+            <div class="arch-plugins">
+              <article class="plugin-card">
+                <div class="plugin-top"><span class="plugin-type cpu-type">CPU</span><span class="plugin-symbol">▦</span></div>
+                <h3>CPU backend</h3>
+                <p>Detects the platform, initializes sensors, and reads its declared metrics.</p>
+                <div class="plugin-files"><code>platform/linux/cpu/&lt;name&gt;/</code><span>backend.so</span></div>
+              </article>
+              <article class="plugin-card">
+                <div class="plugin-top"><span class="plugin-type gpu-type">GPU</span><span class="plugin-symbol">◫</span></div>
+                <h3>GPU backend</h3>
+                <p>Provides accelerator telemetry when support and permissions are available.</p>
+                <div class="plugin-files"><code>platform/linux/gpu/&lt;name&gt;/</code><span>backend.so</span></div>
+              </article>
+            </div>
+            <div class="arch-foot">
+              <div><span class="arch-foot-icon">↳</span><span>Runtime discovery with <code>dlopen</code> and <code>dlsym</code></span></div>
+              <div><span class="arch-foot-icon">⇢</span><span>One plugin selected per category by detection and priority</span></div>
+              <div><span class="arch-foot-icon">▤</span><span>Declared metrics build the CSV header</span></div>
+            </div>
+          </div>
+          <div class="directory-card">
+            <div class="directory-label"><span class="tiny-square"></span> RELEVANT SOURCE TREE</div>
+            <pre><code>src/
+├── main.c                    <span># execution and CLI</span>
+├── include/energy-backend.h  <span># plugin and metric API</span>
+├── utils/memory.c            <span># workload RSS</span>
+├── platform/linux/
+│   ├── cpu/
+│   │   ├── amd/              <span># AMD Zen</span>
+│   │   └── intel/            <span># Intel RAPL</span>
+│   └── gpu/
+│       ├── intel/            <span># Intel iGPU</span>
+│       └── nvidia/           <span># NVIDIA NVML</span>
+└── tests/                    <span># fake backends and tests</span></code></pre>
+          </div>
+        </section>
+
+        <section class="content-section section-shell" id="modes">
+          <div class="section-heading">
+            <div class="section-index">03 <span>—</span> MEASUREMENT MODES</div>
+            <h2>Choose the window.<br><em>Ask the right question.</em></h2>
+            <p class="section-intro">Each mode has a different purpose and output format.</p>
+          </div>
+          <div class="mode-grid">
+            <article class="mode-card">
+              <div class="mode-number">01</div><div class="mode-icon">▤</div>
+              <span class="card-kicker">REPEATED RUNS + AGGREGATION</span>
+              <h3>Standard measurement</h3>
+              <p>Runs the command repeatedly. Produces one CSV row per run, with elapsed time, RSS, and backend metrics.</p>
+              <ul><li>Configure repetitions, timeout, and temperature variance.</li><li>Window metrics cover each run.</li><li>Peak metrics are sampled while the process runs.</li></ul>
+              <pre class="code-block"><code>sudo ./src/main --standard \
+  -command "./program arg" \
+  -language C -program demo \
+  -n_times 5 -variance 5 \
+  -time_out_limit 1 -sleep_time 5 \
+  -powercap -1 -output runs.csv</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
+            </article>
+            <article class="mode-card mode-card-featured">
+              <div class="mode-number">02</div><div class="mode-icon">⌁</div>
+              <span class="card-kicker">TIME SERIES</span>
+              <h3>Over-time measurement</h3>
+              <p>Records successive readings during a run. Window energy is reported as cumulative energy from the start.</p>
+              <ul><li>Configurable interval in milliseconds.</li><li>Elapsed timestamp on every row.</li><li>Gauge and process values are read at every tick.</li></ul>
+              <pre class="code-block"><code>sudo ./src/main --overtime \
+  -command "./program arg" \
+  -interval 100 \
+  -language C -program demo \
+  -variance 5 -sleep-secs 5 \
+  -output timeline.csv</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
+            </article>
+            <article class="mode-card">
+              <div class="mode-number">03</div><div class="mode-icon">◌</div>
+              <span class="card-kicker">THERMAL BASELINE</span>
+              <h3>Temperature calibration</h3>
+              <p>Waits through an idle period and saves a temperature baseline used to avoid starting measurements above the configured variance.</p>
+              <pre class="code-block"><code>sudo ./src/main \
+  --temperature-calibration \
+  -sleep-secs 20 \
+  -calib-file /tmp/cores_temperatures.txt</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
+            </article>
+            <article class="mode-card">
+              <div class="mode-number">04</div><div class="mode-icon">⌗</div>
+              <span class="card-kicker">POWER LIMITS</span>
+              <h3>Power-cap calibration</h3>
+              <p>A CPU backend with power-cap support sweeps a range of limits and records the results. Power capping is currently implemented by the Intel backend.</p>
+              <pre class="code-block"><code>sudo ./src/main \
+  --powercap-calibration \
+  -range 15-25 -n_times 3 \
+  -time_out_limit 1 -secs_to_sleep 10 \
+  -command "./program arg" \
+  -language C -program demo \
+  -output powercap.csv</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
+              <div class="mode-warning">Applied settings may persist after the run. Use only limits supported by your processor.</div>
+            </article>
+          </div>
+          <div class="mode-tip"><span>i</span><p>Commands are examples. Permissions, available counters, and power limits vary between machines.</p></div>
+        </section>
+
+        <section class="content-section section-shell section-tinted" id="metrics">
+          <div class="section-heading">
+            <div class="section-index">04 <span>—</span> METRICS AND BACKENDS</div>
+            <h2>Hardware defines<br><em>what can be measured.</em></h2>
+            <p class="section-intro">Each backend declares its own metrics. The CSV schema reflects the backend selected on this machine — there is no universal set of guaranteed columns.</p>
+          </div>
+          <div class="backend-grid">
+            <article class="backend-card">
+              <div class="backend-card-head">
+                <span class="backend-logo intel-logo">i</span>
+                <div><span class="plugin-type cpu-type">CPU</span><h3>Intel RAPL</h3></div>
+                <span class="priority-label">PRIORITY 0</span>
+              </div>
+              <p class="backend-summary">MSR RAPL energy counters and average core temperature.</p>
+              <div class="metric-table-wrap"><table class="metric-table">
+                <thead><tr><th>CSV metric</th><th>Kind</th><th>How it is obtained</th></tr></thead>
+                <tbody>
+                  <tr><td><code>cpu.Package_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between package energy MSR readings, converted to joules.</td></tr>
+                  <tr><td><code>cpu.Core_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between RAPL PP0 counter readings (core domain).</td></tr>
+                  <tr><td><code>cpu.DRAM_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between DRAM energy MSR readings, when supported and readable.</td></tr>
+                  <tr><td><code>cpu.Temperature_C</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>Average core temperature read using the <code>sensors</code> command.</td></tr>
+                </tbody>
+              </table></div>
+              <div class="backend-footnote">Package/core/DRAM energy describes hardware domains; it is not attributed exclusively to the process.</div>
+            </article>
+
+            <article class="backend-card">
+              <div class="backend-card-head">
+                <span class="backend-logo amd-logo">A</span>
+                <div><span class="plugin-type cpu-type">CPU</span><h3>AMD Zen</h3></div>
+                <span class="priority-label">PRIORITY 0</span>
+              </div>
+              <p class="backend-summary">Energy MSRs for compatible AMD Zen CPUs and the k10temp sensor.</p>
+              <div class="metric-table-wrap"><table class="metric-table">
+                <thead><tr><th>CSV metric</th><th>Kind</th><th>How it is obtained</th></tr></thead>
+                <tbody>
+                  <tr><td><code>cpu.Package_J</code></td><td><span class="kind kind-window">Window</span></td><td>Modular difference of the package counter × the MSR energy unit.</td></tr>
+                  <tr><td><code>cpu.Core_J</code></td><td><span class="kind kind-window">Window</span></td><td>Modular difference between core energy counter readings.</td></tr>
+                  <tr><td><code>cpu.DRAM_J</code></td><td><span class="kind kind-window">Window</span></td><td>Declared for a consistent schema, but returns <code>NOT_SUPPORTED</code>: this backend has no independent DRAM counter.</td></tr>
+                  <tr><td><code>cpu.Temperature_C</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>Read from hwmon <code>k10temp</code>; falls back to <code>Tdie</code>/<code>Tctl</code> from <code>sensors</code>.</td></tr>
+                </tbody>
+              </table></div>
+              <div class="backend-footnote">MSR counters require access to the device and the <code>msr</code> module.</div>
+            </article>
+
+            <article class="backend-card">
+              <div class="backend-card-head">
+                <span class="backend-logo intel-logo">i</span>
+                <div><span class="plugin-type gpu-type">GPU</span><h3>Intel integrada</h3></div>
+                <span class="priority-label">PRIORITY 0</span>
+              </div>
+              <p class="backend-summary">RAPL PP1 when available and direct GPU temperature via hwmon.</p>
+              <div class="metric-table-wrap"><table class="metric-table">
+                <thead><tr><th>CSV metric</th><th>Kind</th><th>How it is obtained</th></tr></thead>
+                <tbody>
+                  <tr><td><code>gpu.GPU_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between <code>PP1_ENERGY_STATUS</code> MSR readings × the energy unit.</td></tr>
+                  <tr><td><code>gpu.Temperature_C</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>hwmon sensor labelled <code>GPU</code>. CPU/package temperature is not used as a substitute.</td></tr>
+                </tbody>
+              </table></div>
+              <div class="backend-footnote">The backend may be detected by its temperature sensor alone; in that case, the energy column can still be <code>NOT_SUPPORTED</code>.</div>
+            </article>
+
+            <article class="backend-card">
+              <div class="backend-card-head">
+                <span class="backend-logo nvidia-logo">N</span>
+                <div><span class="plugin-type gpu-type">GPU</span><h3>NVIDIA NVML</h3></div>
+                <span class="priority-label priority-high">PRIORITY 100</span>
+              </div>
+              <p class="backend-summary">NVML telemetry from the first detected GPU device.</p>
+              <div class="metric-table-wrap"><table class="metric-table">
+                <thead><tr><th>CSV metric</th><th>Kind</th><th>How it is obtained</th></tr></thead>
+                <tbody>
+                  <tr><td><code>gpu.GPU_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between NVML total energy readings (mJ), converted to joules.</td></tr>
+                  <tr><td><code>gpu.Power_W</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>Instantaneous NVML power in mW, converted to W.</td></tr>
+                  <tr><td><code>gpu.Temperature_C</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>NVML GPU temperature in °C.</td></tr>
+                  <tr><td><code>gpu.Utilization_%</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>GPU utilization reported by NVML.</td></tr>
+                  <tr><td><code>gpu.VRAM_MiB</code></td><td><span class="kind kind-peak">Peak / process</span></td><td>Workload process memory queried through NVML; standard mode retains the highest sampled value.</td></tr>
+                </tbody>
+              </table></div>
+              <div class="backend-footnote">Each NVML call's availability depends on the GPU, driver, and permissions.</div>
+            </article>
+          </div>
+          <div class="selection-note">
+            <div class="selection-icon">⇄</div>
+            <div><b>One backend per category.</b><p>If multiple GPU plugins are detected, the one with the highest priority wins (NVIDIA declares 100; Intel integrated graphics declares 0). An unselected plugin does not add columns to the CSV.</p></div>
+          </div>
+        </section>
+
+        <section class="content-section section-shell" id="csv">
+          <div class="section-heading">
+            <div class="section-index">05 <span>—</span> GETTING THE DATA</div>
+            <h2>From sensor reading to CSV,<br><em>without made-up values.</em></h2>
+          </div>
+          <div class="metric-semantics">
+            <article><span class="semantics-number">A</span><div><h3>Window · interval delta</h3><p>The backend reads a counter at the start and end of the window. The difference represents consumption observed during that interval. In over-time mode, per-tick differences are accumulated.</p></div></article>
+            <article><span class="semantics-number">B</span><div><h3>Gauge · point-in-time reading</h3><p>An instantaneous reading such as temperature, power, or utilization. Standard mode reads it at the end of a run; over-time mode reads it at each tick.</p></div></article>
+            <article><span class="semantics-number">C</span><div><h3>Peak · highest observed value</h3><p>Tracked while the workload runs. In standard mode, the core polls peak metrics approximately every 50 ms and retains the highest value seen. Very brief allocations may be missed.</p></div></article>
+          </div>
+          <div class="scope-note"><span class="scope-icon">◎</span><p><b>Scope matters too.</b> <code>DEVICE</code> describes a hardware domain (for example, the CPU package or the whole GPU); <code>PROCESS</code> describes the workload process. In the current set, <code>gpu.VRAM_MiB</code> is process-scoped; energy, power, temperature, and utilization are device/domain readings.</p></div>
+          <div class="csv-grid">
+            <div class="csv-explainer">
+              <span class="card-kicker">DYNAMIC SCHEMA</span>
+              <h3>Check the header<br>on your machine.</h3>
+              <p>Common columns are followed by metrics declared by the selected plugins, CPU first and then GPU.</p>
+              <pre class="code-block"><code>./src/main --csv-header
+./src/main --overtime-csv-header</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
+              <div class="csv-unavailable"><span>!</span><p>When a counter or sensor cannot provide a valid reading, the value is <code>NOT_SUPPORTED</code>, not zero.</p></div>
+            </div>
+            <div class="csv-example">
+              <div class="terminal-bar"><span class="window-dots"><i></i><i></i><i></i></span><span>example · Intel + NVIDIA system</span><span>CSV</span></div>
+              <pre><code>              <span class="csv-muted"># Standard mode</span>
+Language,Program,Powercap,Time_ms,CPU_Memory_KB,
+cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,
+gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,
+gpu.Utilization_%,gpu.VRAM_MiB
+
+<span class="csv-muted"># Over-time mode (does not include CPU_Memory_KB)</span>
+Language,Program,Powercap,Timestamp_ms,
+cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,
+gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,
+gpu.Utilization_%,gpu.VRAM_MiB</code></pre>
+            </div>
+          </div>
+          <div class="rss-card">
+            <div class="rss-symbol">RAM</div>
+            <div><span class="card-kicker">FRAMEWORK METADATA · NOT A BACKEND METRIC</span><h3><code>CPU_Memory_KB</code> — peak resident memory</h3><p>The core runs the command separately to estimate <code>ru_maxrss</code> via <code>wait4()</code> (KiB on Linux). This is not an energy sample and may not represent memory from the same timed run. VRAM, when available, is a separate backend-provided metric.</p></div>
+          </div>
+        </section>
+
+        <section class="content-section section-shell section-tinted" id="install">
+          <div class="section-heading">
+            <div class="section-index">06 <span>—</span> INSTALLATION</div>
+            <h2>Build on Linux.<br><em>Enable accessible hardware.</em></h2>
+            <p class="section-intro">The core and plugins are compiled locally. Missing optional dependencies can cause individual plugins to be skipped without preventing the rest of the build.</p>
+          </div>
+          <div class="install-layout">
+            <div class="install-steps">
+              <article class="install-step"><span>01</span><div><h3>Install the base tools</h3><p>Example for Debian/Ubuntu; other distributions use different package names.</p><pre class="code-block"><code>sudo apt update
+sudo apt install build-essential make git cmake \
+  pkg-config lm-sensors msr-tools python3 \
+  python3-venv</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre></div></article>
+              <article class="install-step"><span>02</span><div><h3>Get the source and build</h3><pre class="code-block"><code>git clone https://github.com/simaocunha71/GreenMeasurer.git
+cd GreenMeasurer
+make -C src</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre><p>The build checks backend dependencies. Run <code>make VERBOSE=1 -C src</code> to see why any plugin was skipped.</p></div></article>
+              <article class="install-step"><span>03</span><div><h3>Enable MSR and run</h3><pre class="code-block"><code>sudo modprobe msr
+sudo ./src/main --csv-header</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre><p>MSR access requires the module and read permissions. Root is not required for all telemetry, but may be needed for counters and power capping.</p></div></article>
+            </div>
+            <aside class="requirements-card">
+              <div class="req-header"><span class="tiny-square"></span> DEPENDENCIES BY BACKEND</div>
+              <div class="req-row"><span class="req-status req-always">CORE</span><div><b>GCC/CC, GNU Make</b><small>C core and plugins.</small></div></div>
+              <div class="req-row"><span class="req-status req-optional">INTEL</span><div><b>powercap + raplcap</b><small>Headers and libraries, required to build the Intel CPU plugin and power-capping support.</small></div></div>
+              <div class="req-row"><span class="req-status req-optional">NVIDIA</span><div><b>NVML</b><small>Development header and an NVIDIA library accessible to the linker.</small></div></div>
+              <div class="req-row"><span class="req-status req-runtime">RUNTIME</span><div><b>Driver and permissions</b><small>Hardware, modules, and permissions compatible with the backend.</small></div></div>
+              <div class="req-note"><b>Installer included</b><p><code>bash scripts/install.sh</code> attempts to prepare Linux dependencies, may use <code>sudo</code>, builds powercap/raplcap from source, and installs pandas in a virtual environment. Review the script before running it.</p></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="content-section section-shell" id="extend-metric">
+          <div class="section-heading">
+            <div class="section-index">07 <span>—</span> EXTENDING METRICS</div>
+            <h2>A new metric.<br><em>A clear contract.</em></h2>
+            <p class="section-intro">If an existing backend is the right fit, a metric using the current sampling kinds usually only requires changes to that plugin.</p>
+          </div>
+          <div class="extension-grid">
+            <div class="extension-list">
+              <article><span>1</span><div><h3>Declare the name, unit, and semantics</h3><p>The name becomes the CSV key; the category comes from the backend. Choose <code>WINDOW</code>, <code>GAUGE</code>, or <code>PEAK</code>, and the <code>DEVICE</code> or <code>PROCESS</code> scope.</p></div></article>
+              <article><span>2</span><div><h3>Implement the read</h3><p>The getter returns a value in the declared unit. If the read fails or the device does not provide it, return <code>METRIC_NOT_SUPPORTED</code>.</p></div></article>
+              <article><span>3</span><div><h3>Build and verify the schema</h3><p>Rebuild the project and check <code>--csv-header</code> and <code>--overtime-csv-header</code> on the target hardware.</p></div></article>
+            </div>
+            <div class="code-panel">
+              <div class="code-panel-heading"><span class="code-file-dot"></span> backend.c <span>METRIC EXAMPLE</span></div>
+              <pre><code><span class="code-purple">static const</span> EnergyMetricDescriptor metrics[] = {
+    {
+        <span class="code-green">"BoardPower"</span>,
+        <span class="code-green">"W"</span>,
+        ENERGY_METRIC_GAUGE,
+        ENERGY_METRIC_DEVICE,
+        ENERGY_METRIC_FLAG_NONE
+    }
+};
+
+<span class="code-purple">static double</span> get_metric(
+    <span class="code-purple">size_t</span> index, <span class="code-purple">int</span> device,
+    pid_t process_id)
+{
+    (<span class="code-purple">void</span>)device;
+    (<span class="code-purple">void</span>)process_id;
+
+    <span class="code-purple">if</span> (index != 0)
+        <span class="code-purple">return</span> METRIC_NOT_SUPPORTED;
+
+    <span class="code-purple">return</span> read_board_power_watts();
+}</code></pre>
+              <div class="code-panel-foot"><span>Generated column:</span><code>cpu.BoardPower_W</code> <span>or</span> <code>gpu.BoardPower_W</code>, depending on the category.</div>
+            </div>
+          </div>
+          <div class="semantics-callout">
+            <span class="callout-mark">i</span><p><b>Semantics are part of the contract.</b> An energy metric should be a window metric; temperature is usually a gauge. Over-time mode accumulates window values, so do not incorrectly declare an instantaneous reading as window energy.</p>
+          </div>
+        </section>
+
+        <section class="content-section section-shell section-tinted" id="extend-backend">
+          <div class="section-heading">
+            <div class="section-index">08 <span>—</span> CREATING BACKENDS</div>
+            <h2>Add hardware support,<br><em>without core branches.</em></h2>
+            <p class="section-intro">A plugin implements its category interface and exports the expected descriptor. The core discovers backend directories and selects the detected plugin with the highest priority.</p>
+          </div>
+          <div class="backend-howto">
+            <div class="backend-howto-steps">
+              <article><span class="howto-num">01</span><div><h3>Create the backend directory</h3><pre><code>src/platform/linux/cpu/acme/
+  acme.c
+  backend.mk</code></pre><p>For a GPU, place it under <code>platform/linux/gpu/</code>.</p></div></article>
+              <article><span class="howto-num">02</span><div><h3>Implement the interface</h3><p>Use <code>CpuBackend</code> or <code>GpuBackend</code> from <code>include/energy-backend.h</code>. Implement detection, initialization, sampling start/stop, descriptors, and the getter. Export <code>energy_backend_descriptor</code>.</p></div></article>
+              <article><span class="howto-num">03</span><div><h3>Declare build dependencies if needed</h3><pre><code>BACKEND_SOURCE_platform_linux_cpu_acme := acme.c
+BACKEND_CFLAGS_platform_linux_cpu_acme := -I/opt/acme/include
+BACKEND_LDLIBS_platform_linux_cpu_acme := -lacme</code></pre><p>The Makefile creates <code>backend.so</code>. Dependencies linked only into the executable can use <code>BACKEND_HOST_LDLIBS_*</code>.</p></div></article>
+              <article><span class="howto-num">04</span><div><h3>Test detection and fallback</h3><p>Check plugin selection, unavailable hardware, diagnostic messages, and the CSV header. Fake-plugin tests run with <code>make -C src test</code>.</p></div></article>
+            </div>
+            <div class="descriptor-panel">
+              <div class="code-panel-heading"><span class="code-file-dot"></span> minimal export <span>CPU</span></div>
+              <pre><code><span class="code-purple">CpuBackend</span> acme_cpu_backend = {
+    .name = <span class="code-green">"Acme CPU"</span>,
+    .detect = acme_detect,
+    .init = acme_init,
+    .cleanup = acme_cleanup,
+    .sample_start = acme_sample_start,
+    .sample_stop = acme_sample_stop,
+    .metrics = metrics,
+    .metric_count = <span class="code-purple">sizeof</span>(metrics) /
+                    <span class="code-purple">sizeof</span>(metrics[0]),
+    .get_metric = get_metric
+};
+
+<span class="code-purple">const</span> EnergyBackendDescriptor
+energy_backend_descriptor = {
+    .type = ENERGY_BACKEND_CPU,
+    .priority = 10,
+    .backend.cpu = &amp;acme_cpu_backend
+};</code></pre>
+              <div class="priority-note"><span>↥</span><p>Higher priority only wins among detected plugins in the same category. Currently, at most one CPU and one GPU backend are selected.</p></div>
+            </div>
+          </div>
+          <div class="backend-override">
+            <div><span class="card-kicker">DISCOVERY PATH</span><h3>Test an external plugin set</h3><p>The path must point to a directory containing <code>cpu/</code> and <code>gpu/</code> subdirectories.</p></div>
+            <pre class="code-block"><code>GREENMEASURER_BACKEND_DIR=/path/to/platform/linux \
+  ./src/main --csv-header</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
+          </div>
+        </section>
+
+        <section class="content-section section-shell" id="limits">
+          <div class="section-heading">
+            <div class="section-index">09 <span>—</span> INTERPRETATION AND LIMITATIONS</div>
+            <h2>Useful data starts<br><em>with context.</em></h2>
+          </div>
+          <div class="limits-grid">
+            <article><span class="limit-icon">01</span><h3>Hardware domains</h3><p>Package, cores, and GPU are not synonymous with a process. Background activity may contribute to counters; do not sum overlapping domains without checking the hardware semantics.</p></article>
+            <article><span class="limit-icon">02</span><h3>Resolution and rollover</h3><p>MSR backends use modular differences for 32-bit energy counters and handle one wrap between readings. Multiple wraps within the same window cannot be distinguished.</p></article>
+            <article><span class="limit-icon">03</span><h3>Sampling is not continuous</h3><p>The over-time interval, system latency, and sensor resolution affect the data. Short peaks may be missed; timestamps reflect the requested interval, not guaranteed perfect timing.</p></article>
+            <article><span class="limit-icon">04</span><h3>Support depends on the machine</h3><p>A plugin may compile but not be detected. A selected backend may still be unable to read a specific metric. Missing values appear as <code>NOT_SUPPORTED</code>.</p></article>
+            <article><span class="limit-icon">05</span><h3>Power caps may persist</h3><p>Limits applied by the Intel backend are not necessarily restored after a measurement. Check system settings after calibration and capped runs.</p></article>
+            <article><span class="limit-icon">06</span><h3>Plugins are executable code</h3><p>Plugins are loaded with <code>dlopen</code>. Use trusted backend directories, especially when running the executable with elevated privileges.</p></article>
+          </div>
+          <div class="closing-banner">
+            <div class="closing-orbit" aria-hidden="true"><span></span><i></i><b></b></div>
+            <div><span class="card-kicker">READY TO MEASURE?</span><h2>Start with the header.<br><em>Then interpret the values.</em></h2><p>Discover which metrics are actually available before comparing experiments.</p></div>
+            <div class="closing-action"><a class="button button-primary" href="#install">Install and build <span aria-hidden="true">↑</span></a><a href="#csv" class="text-link">View CSV commands <span aria-hidden="true">→</span></a></div>
+          </div>
+        </section>
+
+        <footer class="site-footer">
+          <a class="brand brand-footer" href="#top">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 40 40" fill="none"><path d="M20 3.5 34.3 11.8v16.4L20 36.5 5.7 28.2V11.8L20 3.5Z" stroke="currentColor" stroke-width="2"/><path d="M11 22h5l2.4-7 4.1 12 2.2-6H29" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4"/></svg>
+            </span>
+            <span class="brand-name">Green<span>Measurer</span></span>
+          </a>
+          <p>Community documentation · always verify support on your target hardware.</p>
+          <a href="https://github.com/simaocunha71/GreenMeasurer" target="_blank" rel="noreferrer">View the project on GitHub <span aria-hidden="true">↗</span></a>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
