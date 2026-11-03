@@ -12,7 +12,12 @@ static int open_msr(int core) {
     snprintf(msr_filename, sizeof(msr_filename), "/dev/cpu/%d/msr", core);
     int fd = open(msr_filename, O_RDONLY);
     if (fd < 0) {
-        perror("rdmsr:open");
+        static int warned = 0;
+        if (!warned) {
+            fprintf(stderr, "[WARNING] Cannot open %s: %s (AMD MSR energy metrics require root and the msr module).\n",
+                    msr_filename, strerror(errno));
+            warned = 1;
+        }
     }
     return fd;
 }
@@ -123,8 +128,38 @@ static double amd_get_dram_energy(int core) {
     return METRIC_NOT_SUPPORTED; /* AMD Zen MSRs do not expose independent DRAM energy */
 }
 
+/* Reads the k10temp hwmon sensor directly; no root or lm-sensors required. */
+static float amd_read_hwmon_temperature(void) {
+    for (int hwmon_index = 0; hwmon_index < 64; hwmon_index++) {
+        char path[128], name[64] = "";
+        snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/name", hwmon_index);
+        FILE *name_file = fopen(path, "r");
+        if (!name_file) continue;
+        int has_name = fgets(name, sizeof(name), name_file) != NULL;
+        fclose(name_file);
+        if (!has_name || strncmp(name, "k10temp", 7) != 0) continue;
+
+        for (int sensor = 1; sensor <= 3; sensor++) {
+            snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/temp%d_input",
+                     hwmon_index, sensor);
+            FILE *input = fopen(path, "r");
+            if (!input) continue;
+            long millidegrees = 0;
+            int ok = fscanf(input, "%ld", &millidegrees) == 1;
+            fclose(input);
+            if (ok && millidegrees > 0 && millidegrees < 150000) {
+                return (float)millidegrees / 1000.0f;
+            }
+        }
+    }
+    return -1.0f;
+}
+
 static float amd_get_temperature(int core) {
     (void)core;
+    float hwmon_temperature = amd_read_hwmon_temperature();
+    if (hwmon_temperature > 0.0f) return hwmon_temperature;
+
     const char *cmd = "sensors 2>/dev/null | awk -F: '/^(Tdie|Tctl):/ { split($2, a, \"+\"); split(a[2], b, \"°\"); printf \"%%.2f\\n\", b[1]; exit }'";
     FILE *fp = popen(cmd, "r");
     if (!fp) return -1.0f;
@@ -135,7 +170,27 @@ static float amd_get_temperature(int core) {
         return -1.0f;
     }
     pclose(fp);
-    return (float)atof(buf);
+    float value = (float)atof(buf);
+    return value > 0.0f ? value : -1.0f;
+}
+
+static const EnergyMetricDescriptor amd_metrics[] = {
+    {"Package", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"Core", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"DRAM", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE,
+     ENERGY_METRIC_FLAG_CPU_TEMPERATURE}
+};
+
+static double amd_get_metric(size_t metric_index, int core, pid_t process_id) {
+    (void)process_id;
+    switch (metric_index) {
+        case 0: return amd_get_package_energy(core);
+        case 1: return amd_get_core_energy(core);
+        case 2: return amd_get_dram_energy(core);
+        case 3: return (double)amd_get_temperature(core);
+        default: return METRIC_NOT_SUPPORTED;
+    }
 }
 
 static void amd_cleanup(void) {}
@@ -147,10 +202,9 @@ CpuBackend amd_cpu_backend = {
     .cleanup = amd_cleanup,
     .sample_start = amd_sample_start,
     .sample_stop = amd_sample_stop,
-    .get_package_energy = amd_get_package_energy,
-    .get_core_energy = amd_get_core_energy,
-    .get_dram_energy = amd_get_dram_energy,
-    .get_temperature = amd_get_temperature,
+    .metrics = amd_metrics,
+    .metric_count = sizeof(amd_metrics) / sizeof(amd_metrics[0]),
+    .get_metric = amd_get_metric,
     .set_powercap = NULL,
     .destroy_powercap = NULL,
     .calibrate_powercap = NULL,

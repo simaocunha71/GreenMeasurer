@@ -90,9 +90,9 @@
 
 extern CpuBackend intel_cpu_backend;
 
-void intel_calibrate_powercap(int ntimes, int core, const char *command, const char *language, 
-                             const char *program, const char *calib_csv_file,
-                             const char *process_script, int min_powercap, int max_powercap, 
-                             int time_out_limit, float temp_threshold, int variance, int memory);
+int intel_calibrate_powercap(int ntimes, int core, const char *command, const char *language,
+                            const char *program, const char *calib_csv_file,
+                            const char *process_script, int min_powercap, int max_powercap,
+                            int time_out_limit, float temp_threshold, int variance, int memory);
 
 #endif /* INTEL_H */

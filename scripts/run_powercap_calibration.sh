@@ -39,7 +39,7 @@ sudo modprobe msr 2>/dev/null || true
 # Run powercap calibration
 echo "[INFO] Starting powercap calibration..."
 sudo -E ./src/main --powercap-calibration \
-  -range 10-30 \
+  -range 5-15 \
   -variance 5 \
   -time_out_limit 1 \
   -secs_to_sleep 3 \

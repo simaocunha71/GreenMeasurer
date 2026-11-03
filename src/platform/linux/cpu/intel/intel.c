@@ -225,35 +225,80 @@ static float intel_get_temperature(int core) {
     return (count > 0) ? (float)(sum / count) : -1.0f;
 }
 
+static const EnergyMetricDescriptor intel_metrics[] = {
+    {"Package", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"Core", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"DRAM", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE,
+     ENERGY_METRIC_FLAG_CPU_TEMPERATURE}
+};
+
+static double intel_get_metric(size_t metric_index, int core, pid_t process_id) {
+    (void)process_id;
+    switch (metric_index) {
+        case 0: return intel_get_package_energy(core);
+        case 1: return intel_get_core_energy(core);
+        case 2: return intel_get_dram_energy(core);
+        case 3: return (double)intel_get_temperature(core);
+        default: return METRIC_NOT_SUPPORTED;
+    }
+}
+
+static int intel_destroy_powercap(void);
+
 static int intel_set_powercap(int watts) {
     if (watts <= 0) return 0;
-    if (raplcap_init(&global_rc)) return -1;
+    if (raplcap_active) {
+        fprintf(stderr, "[ERROR] An earlier RAPL powercap context is still active.\n");
+        return -1;
+    }
+    if (raplcap_init(&global_rc) != 0) {
+        fprintf(stderr, "[ERROR] Failed to initialize the RAPL powercap context.\n");
+        return -1;
+    }
     raplcap_active = 1;
 
-    uint32_t n = raplcap_get_num_packages(NULL);
+    uint32_t n = raplcap_get_num_packages(&global_rc);
     if (n == 0) {
-        raplcap_destroy(&global_rc);
-        raplcap_active = 0;
+        fprintf(stderr, "[ERROR] No RAPL packages were found.\n");
+        intel_destroy_powercap();
         return -1;
     }
 
-    uint32_t d = raplcap_get_num_die(&global_rc, 0);
-    raplcap_limit rl = { .watts = watts, .seconds = 0 };
-
     for (uint32_t q = 0; q < n; q++) {
+        uint32_t d = raplcap_get_num_die(&global_rc, q);
+        if (d == 0) {
+            fprintf(stderr, "[ERROR] No RAPL dies found for package %u.\n", q);
+            intel_destroy_powercap();
+            return -1;
+        }
         for (uint32_t j = 0; j < d; j++) {
-            raplcap_pd_set_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, &rl, &rl);
-            raplcap_pd_set_zone_enabled(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE, 1);
+            raplcap_limit long_limit = { .watts = watts, .seconds = 0 };
+            raplcap_limit short_limit = { .watts = watts, .seconds = 0 };
+            if (raplcap_pd_set_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE,
+                                      &long_limit, &short_limit) != 0) {
+                perror("[ERROR] raplcap_pd_set_limits");
+                intel_destroy_powercap();
+                return -1;
+            }
+            if (raplcap_pd_set_zone_enabled(&global_rc, q, j,
+                                            RAPLCAP_ZONE_PACKAGE, 1) != 0) {
+                perror("[ERROR] raplcap_pd_set_zone_enabled");
+                intel_destroy_powercap();
+                return -1;
+            }
         }
     }
     return 0;
 }
 
 static int intel_destroy_powercap(void) {
-    if (raplcap_active) {
-        raplcap_destroy(&global_rc);
-        raplcap_active = 0;
+    if (!raplcap_active) return 0;
+    if (raplcap_destroy(&global_rc) != 0) {
+        fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
+        return -1;
     }
+    raplcap_active = 0;
     return 0;
 }
 
@@ -261,88 +306,116 @@ static void intel_cleanup(void) {
     intel_destroy_powercap();
 }
 
-void intel_calibrate_powercap(int ntimes, int core, const char *command, const char *language, 
-                             const char *program, const char *calib_csv_file,
-                             const char *process_script, int min_powercap, int max_powercap, 
-                             int time_out_limit, float temp_threshold, int variance, int memory) {
+static int initialize_calibration_csv(const char *filename) {
+    FILE *fp = fopen(filename, "w");
+    if (!fp) {
+        perror("[ERROR] Failed to create calibration measurement CSV");
+        return -1;
+    }
+    energy_backend_write_csv_header(fp, 0);
+    int result = ferror(fp) ? -1 : 0;
+    if (fclose(fp) != 0) result = -1;
+    return result;
+}
+
+static int append_calibration_rows(FILE *output, const char *filename) {
+    FILE *input = fopen(filename, "r");
+    if (!input) {
+        perror("[ERROR] Failed to read calibration measurement CSV");
+        return -1;
+    }
+
+    char buffer[1024];
+    if (!fgets(buffer, sizeof(buffer), input)) {
+        fprintf(stderr, "[ERROR] Calibration measurement CSV has no header: %s\n", filename);
+        fclose(input);
+        return -1;
+    }
+    int result = 0;
+    size_t rows_written = 0;
+    while (fgets(buffer, sizeof(buffer), input)) {
+        if (fputs(buffer, output) == EOF) {
+            result = -1;
+            break;
+        }
+        rows_written++;
+    }
+    if (ferror(input)) result = -1;
+    if (fclose(input) != 0) result = -1;
+    if (rows_written == 0) {
+        fprintf(stderr, "[ERROR] Calibration measurement CSV has no measurement rows: %s\n", filename);
+        result = -1;
+    }
+    return result;
+}
+
+int intel_calibrate_powercap(int ntimes, int core, const char *command, const char *language,
+                            const char *program, const char *calib_csv_file,
+                            const char *process_script, int min_powercap, int max_powercap,
+                            int time_out_limit, float temp_threshold, int variance, int memory) {
+    if (min_powercap < 1 || max_powercap < min_powercap || !command || !*command) {
+        fprintf(stderr, "[ERROR] Powercap calibration requires a command and a range of at least 1 W.\n");
+        return -1;
+    }
     if (!calib_csv_file || strlen(calib_csv_file) == 0) {
         calib_csv_file = "powercap_calibration.csv";
     }
 
-    printf("[INFO] Powercap calibration: Starting baseline and sweep for %s...\n", program);
+    printf("[INFO] Powercap calibration: Testing %s with different power limits...\n", program);
 
     FILE *outputFile = fopen(calib_csv_file, "w");
     if (!outputFile) {
         perror("[ERROR] Failed to open calibration CSV for writing");
-        return;
+        return -1;
     }
 
-    fprintf(outputFile, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory\n");
+    energy_backend_write_csv_header(outputFile, 0);
 
-    printf("[INFO] Powercap calibration: Measuring uncapped baseline (Powercap = -1)...\n");
-    char base_filename[256];
-    snprintf(base_filename, sizeof(base_filename), "/tmp/%s_baseline.csv", program);
-
-    runTesting(ntimes, core, command, language, program, base_filename,
-               -1, time_out_limit, temp_threshold, variance, memory);
-
-    FILE *baseFile = fopen(base_filename, "r");
-    if (baseFile) {
-        char buffer[1024];
-        while (fgets(buffer, sizeof(buffer), baseFile)) {
-            fputs(buffer, outputFile);
-        }
-        fclose(baseFile);
-        remove(base_filename);
-    } else {
-        fprintf(stderr, "[ERROR] Failed to read baseline calibration run\n");
-    }
-
-    sleep(1);
+    int result = 0;
 
     for (int power_cap = min_powercap; power_cap <= max_powercap; power_cap++) {
-        printf("[INFO] Powercap calibration: Testing with WHATTSCAP = %d\n", power_cap);
+        printf("[INFO] Powercap calibration: Testing with power cap = %d W\n", power_cap);
 
         if (intel_set_powercap(power_cap) != 0) {
             fprintf(stderr, "[ERROR] Failed to set powercap %d W. Skipping...\n", power_cap);
+            result = -1;
             continue;
         }
 
         char filename[256];
         snprintf(filename, sizeof(filename), "/tmp/%s_%d.csv", program, power_cap);
 
+        if (initialize_calibration_csv(filename) != 0) {
+            result = -1;
+            if (intel_destroy_powercap() != 0) result = -1;
+            continue;
+        }
+
         runTesting(ntimes, core, command, language, program, filename,
                    power_cap, time_out_limit, temp_threshold, variance, memory);
 
-        FILE *inputFile = fopen(filename, "r");
-        if (inputFile) {
-            char buffer[1024];
-            while (fgets(buffer, sizeof(buffer), inputFile)) {
-                fputs(buffer, outputFile);
-            }
-            fclose(inputFile);
-            remove(filename);
-        }
-
-        if (intel_destroy_powercap() != 0) {
-            fprintf(stderr, "[ERROR] Error destroying CAP after test with %d W\n", power_cap);
-        }
+        if (intel_destroy_powercap() != 0) result = -1;
+        if (append_calibration_rows(outputFile, filename) != 0) result = -1;
+        remove(filename);
 
         sleep(1);
     }
 
-    fclose(outputFile);
+    if (fclose(outputFile) != 0) result = -1;
+    if (result != 0) return -1;
 
     if (process_script && access(process_script, F_OK) == 0) {
         char proc_cmd[1024];
         snprintf(proc_cmd, sizeof(proc_cmd), "python3 \"%s\" \"%s\"", process_script, calib_csv_file);
         printf("[INFO] Running calibration post-processor: %s\n", proc_cmd);
         if (system(proc_cmd) != 0) {
-            fprintf(stderr, "[WARNING] Python post-processing script exited with error\n");
+            fprintf(stderr, "[ERROR] Python post-processing script exited with error.\n");
+            return -1;
         }
     } else {
         printf("[INFO] Powercap calibration CSV saved to %s\n", calib_csv_file);
     }
+    return 0;
 }
 
 CpuBackend intel_cpu_backend = {
@@ -352,10 +425,9 @@ CpuBackend intel_cpu_backend = {
     .cleanup = intel_cleanup,
     .sample_start = intel_sample_start,
     .sample_stop = intel_sample_stop,
-    .get_package_energy = intel_get_package_energy,
-    .get_core_energy = intel_get_core_energy,
-    .get_dram_energy = intel_get_dram_energy,
-    .get_temperature = intel_get_temperature,
+    .metrics = intel_metrics,
+    .metric_count = sizeof(intel_metrics) / sizeof(intel_metrics[0]),
+    .get_metric = intel_get_metric,
     .set_powercap = intel_set_powercap,
     .destroy_powercap = intel_destroy_powercap,
     .calibrate_powercap = intel_calibrate_powercap,

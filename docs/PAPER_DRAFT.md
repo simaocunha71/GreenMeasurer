@@ -1,0 +1,334 @@
+# GreenMeasurer: A Non-Intrusive Framework to Measure the Energy Consumption of Software Systems
+
+> **Draft status.** This document follows the section structure of `GreenMeasurer.pdf` while documenting only capabilities present in the current repository. It is an engineering and paper-writing draft, not a completed scientific evaluation. Quantitative accuracy, measurement overhead and broad hardware compatibility still require controlled experiments.
+
+## Abstract
+
+GreenMeasurer is a Linux framework for measuring the energy consumption and execution time of software without modifying the target program. It combines a C measurement executable, hardware-specific energy backends, shell scripts and workload Makefiles. The executable provides standard repeated measurements and time-series energy sampling, as well as temperature and power-cap calibration workflows. A shared CPU/GPU backend interface and runtime plugin discovery separate measurement orchestration from hardware-specific counter access. The framework records energy, execution time, temperatures and memory-use data in CSV files, while reporting unsupported metrics explicitly rather than substituting unrelated values. This document describes the current architecture, operating requirements, measurement procedures, implementation status and validation needs.
+
+**Index Terms—** software energy measurement, energy efficiency, RAPL, hardware telemetry, power capping, Linux.
+
+## I. Introduction
+
+Energy consumption is an increasingly important software quality attribute. It affects battery life, operating cost and the environmental footprint of computing systems. Measuring software energy is challenging because energy counters are exposed through platform-specific interfaces, may require elevated privileges, and frequently report energy for hardware domains rather than for an individual process.
+
+GreenMeasurer aims to make software-energy experiments repeatable without requiring instrumentation or source-code changes to the target workload. A user supplies a command and experiment parameters; the framework prepares the measurement environment, invokes the target and records available telemetry. Its current Linux implementation includes CPU and GPU energy backends, temperature readings, memory usage, execution timing and optional CPU power capping.
+
+An architectural requirement is that hardware support must not be encoded in the measurement orchestrator. Each implementation provides the common backend API and is loaded as a plugin. The core scans the backend directory tree, validates plugins and selects a detected implementation by priority. This design allows additional hardware implementations to be added without adding vendor-specific branches to `main.c`.
+
+The current work comprises:
+
+1. A shared C API for CPU and GPU energy backends, with runtime plugin discovery.
+2. Standard and over-time measurement modes, and separate temperature and power-cap calibration modes.
+3. Explicit handling of unavailable counters, failed samples and unsupported metrics.
+4. A fake-plugin test suite for discovery, validation, priority selection and graceful degradation.
+5. Documentation of the current system and the experimental evidence still needed for a scientific evaluation.
+
+The remainder follows the organization of the supplied paper: Section II discusses related approaches; Section III describes the framework; Section IV gives a reproducible demonstration protocol; and Section V concludes with limitations and future work.
+
+## II. Related Work
+
+Software-energy measurement tools differ in the level at which they operate, the hardware counters they use, and whether they require application instrumentation. Hardware interfaces such as Intel RAPL provide energy measurements for platform domains, while tools built around language-specific APIs can expose these measurements from within a program. The supplied paper discusses RAPL and power-capping interfaces [5]–[7], earlier energy-efficiency studies [8]–[10], and software tools including pyRAPL, jRAPL, CodeCarbon, Scaphandre and Kepler [13]–[17].
+
+GreenMeasurer focuses on an external, command-oriented workflow: it can measure an executable without requiring changes to its source. Its plugin architecture is intended to isolate the core from the vendor- and device-specific counter APIs. This differs from a claim that the framework provides process-level energy attribution: many available hardware counters represent a package, memory or accelerator domain and include activity outside the target process.
+
+The bibliography and claims in this section must be checked against the final paper's reference list. The bracketed reference numbers above are retained from the supplied PDF and should not be treated as a newly verified bibliography.
+
+## III. The GreenMeasurer Framework
+
+### A. Overview
+
+GreenMeasurer is composed of a measurement executable, shared backend API, loadable backend implementations, scripts and workload-specific build/run definitions.
+
+```text
+                         +------------------------------+
+                         |            main.c            |
+                         | CLI, orchestration, sampling,|
+                         | calibration and CSV output  |
+                         +---------------+--------------+
+                                         |
+                              energy-backend.h API
+                                         |
+                   dlopen + dlsym("energy_backend_descriptor")
+                     +-------------------+-------------------+
+                     |                   |                   |
+                 cpu/<name>          cpu/<name>          gpu/<name>
+                  backend.so          backend.so          backend.so
+```
+
+The current source layout is:
+
+```text
+src/
+  main.c
+  include/energy-backend.h
+  platform/linux/
+    cpu/<implementation>/
+    gpu/<implementation>/
+  tests/
+  utils/memory.c
+scripts/
+Languages/                 example workload directories and Makefiles
+Utils/                     calibration post-processing utilities
+docs/
+```
+
+#### Domain model
+
+The following conceptual model describes the framework's domain. It is a model of responsibilities and data, not a claim that each concept is represented by a corresponding C structure.
+
+```text
++-------------------+       configures       +-------------------+
+|     Experiment    |----------------------->|   MeasurementRun  |
+| command, labels,  |                        | one workload run  |
+| mode, thresholds  |                        +---------+---------+
++---------+---------+                                  |
+          | 1..*                                       | executes
+          |                                            v
+          |                                  +-------------------+
+          |                                  |     Workload      |
+          |                                  | command + inputs  |
+          |                                  +-------------------+
+          |
+          | uses
+          v
++-------------------+        selects         +-------------------+
+| MeasurementEngine |------------------------| BackendPlugin     |
+| orchestration,    |  0..1 CPU + 0..1 GPU   | detect, init,     |
+| sampling, output  |                        | sample, read       |
++---------+---------+                        +---------+---------+
+          |                                            |
+          | produces                                   | observes
+          v                                            v
++-------------------+                        +-------------------+
+| MeasurementRecord |                        | HardwareDomain   |
+| time, memory,      |                        | CPU package/core,|
+| temperatures,     |                        | DRAM, GPU, sensor|
+| energy metrics     |                        +-------------------+
++---------+---------+
+          |
+          | contains
+          v
++-------------------+       associated with +-------------------+
+|      Metric       |------------------------| MeasurementWindow |
+| value + unit OR   |                        | start, stop, or   |
+| NOT_SUPPORTED     |                        | timestamp         |
++-------------------+                        +-------------------+
+
++-------------------+       establishes      +-------------------+
+|   Calibration     |------------------------| RunConfiguration |
+| temperature base- |                        | thresholds and   |
+| line / power sweep|                        | optional cap     |
++-------------------+                        +-------------------+
+```
+
+An `Experiment` describes the workload and measurement policy; it may produce multiple `MeasurementRun` instances. The `MeasurementEngine` chooses at most one detected plugin per category (CPU and GPU), and each plugin exposes measurements for the hardware domains it supports. A `Metric` is either a value with a defined unit or explicitly unavailable; unavailable data is not represented as zero. A `MeasurementRecord` associates the observed metrics with a run and a time window or timestamp. RAM is represented as workload maximum RSS, while VRAM is process-tree GPU allocation when the backend supports it. Temperature calibration supplies a baseline and threshold configuration, while power-cap calibration evaluates a sequence of run configurations.
+
+The folder category determines whether a plugin must implement the CPU or GPU interface. The directory's name is not interpreted by the orchestrator as a hardware vendor name. At startup, the core scans candidate directories, loads `backend.so`, validates the exported descriptor and required callbacks, calls `detect()`, then selects the highest-priority detected plugin in each category. It can select one CPU backend and one GPU backend.
+
+The backend root is chosen in this order:
+
+1. The directory named by `GREENMEASURER_BACKEND_DIR`, which must contain `cpu/` and `gpu/`.
+2. `platform/linux` next to the executable.
+3. `../lib/greenmeasurer/platform/linux` relative to the executable directory.
+
+The backend API is declared in `src/include/energy-backend.h`. A plugin exports `energy_backend_descriptor`, containing its category, priority and a pointer to a `CpuBackend` or `GpuBackend` structure. Required operations cover detection, initialization, sampling-window start/stop and generic metric retrieval. Each backend declares its own metric descriptors, including a stable key, unit, sampling kind, scope and optional semantic flags. The core dynamically combines descriptors from the selected CPU and GPU plugins and generates the CSV schema; ordinary new metrics do not require changes to `main.c` or the shared API. Optional operations include cleanup, power capping and a diagnostic hint. An unavailable measurement is represented by `METRIC_NOT_SUPPORTED` and written to CSV as `NOT_SUPPORTED`.
+
+The current backend implementations are:
+
+| Category | Implementation | Energy source | Additional capabilities |
+|---|---|---|---|
+| CPU | Intel | RAPL MSRs | CPU energy domains, temperature integration and power capping |
+| CPU | AMD Zen | MSRs | CPU energy domains; independent DRAM energy is unsupported |
+| GPU | Intel integrated GPU | RAPL PP1 MSR when available | Direct GPU hwmon temperature when exposed |
+| GPU | NVIDIA | NVML total-energy counter | NVML telemetry; optional plugin depending on build-time dependencies |
+
+These are the implementations currently present in the repository, not a promise that every model exposes every counter. For example, MSR access requires the `msr` kernel module and sufficient privileges. GPU temperature is never inferred from CPU/package temperature.
+
+### B. System Requirements
+
+The current implementation targets Linux. The build requires a C compiler, GNU Make and the dynamic-loader library. Specific plugins may need additional libraries or headers. The Intel CPU power-capping backend uses the configured `raplcap` and `powercap` libraries; the NVIDIA plugin is built only when the NVML header and library are found. Missing optional dependencies skip that plugin rather than preventing the core from building.
+
+Energy-counter access through MSRs commonly requires root privileges and the `msr` kernel module:
+
+```sh
+sudo modprobe msr
+sudo ./src/main --standard ...
+```
+
+The scripts may perform privileged system setup, such as disabling Wi-Fi, and restore changed settings on completion. Without root, the framework can still run workloads and collect accessible telemetry, but energy counters and power capping may be unavailable. A missing metric is reported as `NOT_SUPPORTED`.
+
+Temperature availability depends on the sensors exposed by the kernel and the installed sensor utilities. The CPU and GPU temperatures in the output are direct sensor readings; the CPU temperature is not copied into the GPU field.
+
+### C. Makefile Integration
+
+The `src/Makefile` discovers backend directories below `platform/linux/{cpu,gpu}` and builds an available implementation as a shared object named `backend.so`. Each directory may provide a `backend.mk` with the source file, availability condition, include flags and link dependencies. The main executable is linked with dynamic loading support.
+
+This two-level build arrangement separates optional backend dependencies from the core. The Intel CPU plugin is built only when the powercap/raplcap headers and libraries are present; the NVIDIA plugin is built only when its NVML header and library are present. If a dependency is missing, the build reports the reason and continues with the core and other eligible plugins. Some dependencies may need to be linked into the host executable rather than into a plugin, which is the purpose of the `BACKEND_HOST_LDLIBS_*` variables.
+
+Workload directories provide the build and execution conventions used by the experiment scripts. A typical run is initiated with `scripts/measure.sh`, which builds the framework and target workload, then invokes `src/main`. For isolated smoke testing, `scripts/merda.sh` runs the main executable directly in its supported modes and places generated outputs in a temporary directory.
+
+To add a backend, a contributor creates a directory under the appropriate CPU or GPU category, implements the shared API, exports the descriptor, and adds build metadata as needed. The core should not be modified to add a vendor-specific branch or symbol.
+
+### D. Calibration Modes
+
+GreenMeasurer provides two calibration workflows.
+
+**Temperature calibration (`--temperature-calibration`).** The framework waits for an idle period, reads available CPU temperatures and writes a baseline file (default: `/tmp/cores_temperatures.txt`). Standard and over-time modes use this baseline and the configured variance threshold to avoid running under temperatures that are too far above the reference. This calibration controls one source of experimental variation; it does not eliminate all system noise.
+
+```sh
+sudo ./src/main --temperature-calibration \
+  -sleep-secs 20 \
+  -calib-file /tmp/cores_temperatures.txt
+```
+
+**Power-cap calibration (`--powercap-calibration`).** The CPU backend sweeps the requested power range and records the configured limits in a CSV. It invokes the repository's post-processing utility when available. Power capping is optional and currently implemented by the Intel CPU backend; a backend without power-cap callbacks cannot provide this operation. Destroying the RAPL context does not restore previously configured package limits.
+
+```sh
+sudo ./src/main --powercap-calibration \
+  -range 15-25 \
+  -variance 5 \
+  -time_out_limit 1 \
+  -secs_to_sleep 10 \
+  -n_times 3 \
+  -command "./program arg" \
+  -language C \
+  -program example \
+  -output powercap_calibration.csv
+```
+
+The timeout value is expressed in hours by the current command-line implementation. Use power-cap values supported by the host processor; the example range is illustrative, not universally valid.
+
+### E. Over-Time Measurements
+
+The `--overtime` mode runs the target command while periodically sampling the active backends. Its default interval is 100 ms. Each row represents cumulative energy since the beginning of the run, together with a timestamp and available temperatures. The measurement interval and the duration of the workload determine the number of rows and the temporal resolution.
+
+```sh
+sudo ./src/main --overtime \
+  -command "./program arg" \
+  -interval 100 \
+  -language C \
+  -program example \
+  -variance 5 \
+  -sleep-secs 5 \
+  -output measurements_ot.csv
+```
+
+The schema begins with framework metadata and then includes metrics declared by
+the selected backends. Metric columns use `<category>.<name>_<unit>`:
+
+```csv
+Language,Program,Powercap,Timestamp_ms,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+```
+
+The example shows one possible selection; exact columns vary by hardware and
+backend. Window energy fields are cumulative joules at each sample; `Timestamp_ms`
+is elapsed milliseconds. Process-scoped peak metrics are polled on standard
+runs, while process-scoped values in overtime mode are sampled at each tick.
+Unsupported counters or sensors are emitted as `NOT_SUPPORTED`. Short sampling
+windows also reduce the chance of multiple counter wraps occurring between
+observations, though this does not remove all hardware-counter limitations.
+
+### F. Measurement Pipeline
+
+The normal experiment pipeline is:
+
+1. Build the core and available backend plugins with `make -C src`.
+2. Build the target workload using its workload Makefile or supplied compile command.
+3. Optionally load the MSR module and configure system conditions with the wrapper script.
+4. Calibrate CPU temperature or reuse a previously generated baseline.
+5. Discover and select the available CPU and GPU plugins.
+6. Initialize the selected backends and apply power capping if requested and supported.
+7. Execute the workload in standard or over-time mode.
+8. Record available energy, timing, memory and temperature data in CSV.
+9. Release backend resources and restore system settings managed by the wrapper.
+
+The `main.c` implementation is responsible for command parsing, backend discovery, measurement orchestration and output. Plugins own hardware-specific detection and counter access. Sampling failures are checked; they must not be converted into plausible-looking zero values. 32-bit energy-counter deltas use modular unsigned subtraction, and backend validity flags prevent invalid before/after reads from being treated as valid measurements. A single wrap can be handled this way; multiple wraps within one interval cannot be distinguished.
+
+For regular measurements, `measurements.csv` begins with:
+
+```csv
+Language,Program,Powercap,Time_ms,CPU_Memory_KB
+```
+
+The selected backend metrics follow as `<category>.<name>_<unit>` columns.
+`Time_ms` is execution duration in milliseconds, `CPU_Memory_KB` is maximum RSS in KiB
+from a separate command run measured with `wait4()` (`ru_maxrss`), and each metric follows its
+backend-declared sampling semantics. Standard-mode peak metrics are polled every
+50 ms, so shorter-lived values may be missed. Package energy is a
+hardware-domain measurement and must not be interpreted as process-attributed
+energy. Package and subdomain values should not be blindly summed because
+domains may overlap. The NVIDIA implementation uses per-process NVML data; if
+that is unavailable, the CSV contains `NOT_SUPPORTED` rather than whole-device
+usage that could include other Slurm jobs.
+
+At startup the executable prints a backend table (by default only the selected backends, plus diagnostics for categories with no selected backend; `GREENMEASURER_VERBOSE_BACKENDS=1` lists all) with the selected implementation and diagnostic states such as `available`, `not detected`, `not built`, `load failed` and `invalid`. If a category has no selected backend, it warns that the corresponding energy metrics will be unsupported. If neither category is usable, it exits with an error.
+
+The fake-backend tests can be run with:
+
+```sh
+make -C src test
+```
+
+They exercise priority selection, detection failure diagnostics, invalid descriptors, absent plugin files, missing categories and the backend-directory override. These tests validate plugin orchestration, not the physical accuracy of hardware energy counters.
+
+## IV. Demonstration
+
+This section defines reproducible demonstrations of the current executable. Smoke tests establish that workflows run and produce output; they are not a substitute for controlled accuracy or performance evaluation. Experiments should report the CPU/GPU model, kernel and driver versions, privilege level, selected-backend table, workload/input, repetitions, power cap, sampling interval and raw CSV files.
+
+### A. Standard Measurements
+
+The standard mode executes a command repeatedly and writes one result row per run. A minimal smoke test is:
+
+```sh
+sudo ./src/main --standard \
+  -command "sleep 1" \
+  -language Shell \
+  -program smoke-test \
+  -n_times 2 \
+  -variance 100 \
+  -time_out_limit 1 \
+  -sleep_time 1 \
+  -powercap -1 \
+  -calib-file /tmp/cores_temperatures.txt \
+  -output measurements.csv
+```
+
+This test checks command execution, repeated rows, CSV shape and availability reporting. It does not characterize application energy, because `sleep` is an idle workload and the counters may include whole-system activity. For a paper-quality experiment, use a deterministic compute workload with documented input, perform warm-up runs where appropriate, repeat enough times to estimate variability, retain raw measurements, and report robust summary statistics. Compare the uncapped and capped configurations only when the selected CPU backend supports power capping and the cap was confirmed to have been applied.
+
+### B. Over-Time Measurements
+
+A corresponding time-series smoke test is:
+
+```sh
+sudo ./src/main --overtime \
+  -command "sleep 2" \
+  -interval 100 \
+  -language Shell \
+  -program smoke-test \
+  -variance 100 \
+  -sleep-secs 1 \
+  -calib-file /tmp/cores_temperatures.txt \
+  -output measurements_ot.csv
+```
+
+The CSV should contain monotonically increasing timestamps at approximately the requested interval and cumulative energy values when the selected backend exposes valid counters. Scheduler delays may cause jitter. Validate the output by checking the header, row count, timestamps, unsupported fields and monotonicity of cumulative counters before plotting it.
+
+The repository's `scripts/merda.sh` is a convenience smoke-test script that invokes the executable directly for temperature calibration, standard mode, over-time mode and (when run as root) power-cap calibration. Its simple workload and settings are for functionality checks only. The output should not be presented as a scientific benchmark result. Preserve the generated CSVs and full logs when conducting a formal evaluation.
+
+## V. Conclusions and Future Work
+
+GreenMeasurer provides a command-oriented workflow for collecting software execution telemetry without modifying the target program. The current implementation combines standard repeated measurements, over-time energy sampling, temperature calibration, optional CPU power-cap calibration and dynamically loaded hardware backends. Separating the core from backend implementations is intended to make hardware support extensible while keeping the measurement orchestrator vendor-neutral.
+
+Several limitations must be considered when interpreting measurements. Hardware energy counters often describe system domains rather than the target process; access to MSRs and power controls can require root; sensor exposure varies by machine; and a counter's resolution and wrap behavior constrain sampling. The NVIDIA plugin has not been built or validated in the development environment described in the repository history. The API also lacks an explicit ABI version, so core and plugins should be built from compatible source.
+
+Future work includes:
+
+1. Measuring framework overhead and counter-reading perturbation.
+2. Comparing measurements against an external power meter and reporting uncertainty.
+3. Evaluating repeatability across workloads, hardware models and operating-system versions.
+4. Validating optional backends on their target hardware, including the NVML plugin.
+5. Adding an API/ABI version to the plugin descriptor and a supported installation target.
+6. Extending backend coverage while documenting domain overlap and platform-specific semantics.
+
+Before submission, the authors should update the bibliography, replace the demonstration protocol with retained raw data and statistical results, and ensure every claim in the abstract and conclusion is supported by experiments on the stated hardware and software versions.

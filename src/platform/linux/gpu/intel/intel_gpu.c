@@ -131,16 +131,15 @@ static int intel_gpu_init(int device_idx) {
     (void)device_idx;
     energy_units_valid = 0;
     int fd = open_msr(0);
-    if (fd < 0) return -1;
-
-    uint64_t result = read_msr(fd, MSR_RAPL_POWER_UNIT);
-    close(fd);
-
-    if (result == (uint64_t)-1) return -1;
-
-    energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
-    energy_units_valid = 1;
-    return 0;
+    if (fd >= 0) {
+        uint64_t result = read_msr(fd, MSR_RAPL_POWER_UNIT);
+        close(fd);
+        if (result != (uint64_t)-1) {
+            energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
+            energy_units_valid = 1;
+        }
+    }
+    return energy_units_valid || intel_gpu_read_hwmon_temperature() > 0.0f ? 0 : -1;
 }
 
 static int intel_gpu_sample_start(int device_idx) {
@@ -188,6 +187,22 @@ static float intel_gpu_get_temperature(int device_idx) {
     return intel_gpu_read_hwmon_temperature();
 }
 
+static const EnergyMetricDescriptor intel_gpu_metrics[] = {
+    {"GPU", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE,
+     ENERGY_METRIC_FLAG_GPU_TEMPERATURE}
+};
+
+static double intel_gpu_get_metric(size_t metric_index, int device_idx,
+                                   pid_t process_id) {
+    (void)process_id;
+    switch (metric_index) {
+        case 0: return intel_gpu_get_energy(device_idx);
+        case 1: return (double)intel_gpu_get_temperature(device_idx);
+        default: return METRIC_NOT_SUPPORTED;
+    }
+}
+
 static void intel_gpu_cleanup(void) {}
 
 GpuBackend intel_gpu_backend = {
@@ -197,10 +212,9 @@ GpuBackend intel_gpu_backend = {
     .cleanup = intel_gpu_cleanup,
     .sample_start = intel_gpu_sample_start,
     .sample_stop = intel_gpu_sample_stop,
-    .get_energy = intel_gpu_get_energy,
-    .get_power_draw = NULL,
-    .get_temperature = intel_gpu_get_temperature,
-    .get_utilization = NULL,
+    .metrics = intel_gpu_metrics,
+    .metric_count = sizeof(intel_gpu_metrics) / sizeof(intel_gpu_metrics[0]),
+    .get_metric = intel_gpu_get_metric,
     .diagnose = intel_gpu_diagnose
 };
 

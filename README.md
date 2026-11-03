@@ -11,7 +11,7 @@ The tool coordinates platform-specific telemetry drivers behind a generic **Hard
 
 ---
 
-> For a full description of the design, plugin API, correctness measures, testing and limitations, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> The research-paper-style documentation follows the section structure of `GreenMeasurer.pdf`: [docs/PAPER_DRAFT.md](docs/PAPER_DRAFT.md). For a supplementary implementation overview, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Architecture & Directory Layout
 
@@ -70,8 +70,8 @@ src/
 ### 2. Dependencies
 * `build-essential` (`gcc`, `make`)
 * `lm-sensors`
-* `libpowercap-dev` and `libraplcap-dev` (Intel power clamping)
-* `libnvidia-ml-dev` or NVIDIA proprietary driver with CUDA/NVML headers (when NVIDIA GPUs are present)
+* `libpowercap` and `raplcap` headers and libraries (required to build the Intel CPU backend, including its power-capping support)
+* NVML headers and `libnvidia-ml` (required to build the NVIDIA GPU backend)
 
 On Ubuntu/Debian:
 ```bash
@@ -83,15 +83,17 @@ sudo apt-get install -y build-essential lm-sensors libpowercap-dev libraplcap-de
 
 ## Building the Framework
 
-The conditional `Makefile` inspects `/proc/cpuinfo` and `lspci` to build only the modules compatible with your host:
+The `Makefile` checks each optional backend's build dependencies and skips backends whose required headers or libraries are unavailable. The CPU/GPU plugins that do build perform hardware detection at runtime; a plugin that does not match the current hardware is not selected.
 
 ```bash
 # Clean previous build artifacts
 make clean
 
-# Compile the main executable
+# Compile the core and all backends whose dependencies are installed
 make
 ```
+
+For example, the Intel CPU backend is skipped when the powercap/raplcap development files are absent, while dependency-free backends can still be built. The NVIDIA backend requires both the NVML header and library. The build prints a reason for each skipped optional backend and continues with the remaining available plugins.
 
 ---
 
@@ -168,7 +170,7 @@ sudo ./main --overtime \
 ---
 
 ### 4. Powercap Curve Exploration (`--powercap-calibration`)
-Sweeps a power range ($W_{\min} \dots W_{\max}$) to evaluate powercap impacts against an uncapped baseline.
+Sweeps a power range ($W_{\min} \dots W_{\max}$) to evaluate powercap impacts.
 
 ```bash
 sudo ./main --powercap-calibration \
@@ -184,40 +186,63 @@ sudo ./main --powercap-calibration \
   [-output <path>]
 ```
 
-Runs a baseline iteration at `Powercap = -1`, followed by tests at each Watt step in the defined range. Results are saved to `powercap_calibration.csv` and summarized automatically if post-processing scripts are present.
+Runs tests at each Watt step in the defined range. Results are saved to `powercap_calibration.csv` and summarized automatically if post-processing scripts are present. Since no uncapped baseline is included, baseline-relative GPS-UP metrics cannot be calculated.
+
+On Intel, each requested Watt value is applied to every detected package and die. Destroying the RAPL context does not restore the previous package limits; the configured limits may remain in effect after a measurement or calibration run. The standard and overtime `-powercap` options accept only `-1` (do not set a GreenMeasurer cap) or a positive Watt value.
+
+For Intel, `cpu.Package_J` is total package energy over the run, not average power. A lower power cap can extend `Time_ms` enough that total energy stays similar or increases; compare both metrics, or derive average package power as `cpu.Package_J / (Time_ms / 1000)`. Do not assume package energy must decrease monotonically with the cap.
 
 ---
 
 ## Output CSV Schemas
 
-### Standard Mode (`measurements.csv`)
-```csv
-Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory
-```
-* **Language / Program**: Identifier tags.
-* **Powercap**: Power limit applied in Watts (`-1` = uncapped).
-* **Package**: Full socket energy in Joules.
-* **Core**: Processing cores energy in Joules.
-* **GPU**: GPU energy in Joules.
-* **DRAM**: Memory domain energy in Joules.
-* **Time**: Execution wall-clock duration in milliseconds ($ms$).
-* **CpuTemperature**: Average CPU core temperature in Celsius ($^\circ\text{C}$), when a CPU sensor is available.
-* **GpuTemperature**: Direct GPU sensor reading in Celsius ($^\circ\text{C}$); it is `NOT_SUPPORTED` when no GPU temperature sensor is available and is never substituted with CPU temperature.
-* **Memory**: Resident Set Size in kilobytes ($KB$).
+The CSV schema is generated at runtime from the selected CPU and GPU backends. The
+framework metadata columns are followed by one column for every metric declared
+by those backends. Metric columns use the form
+`<category>.<metric-name>_<unit>`; therefore the exact schema varies by machine.
+Only selected backends contribute columns.
 
-### Over-Time Mode (`measurements_ot.csv`)
+For example, standard mode on a system with Intel CPU and NVIDIA GPU backends may
+produce:
+
 ```csv
-Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,CpuTemperature,GpuTemperature
+Language,Program,Powercap,Time_ms,CPU_Memory_KB,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
-* **Package, Core, GPU, DRAM**: Total accumulated energy from $T = 0$ to current sample (in Joules).
-* **Timestamp**: Elapsed time since start in milliseconds ($ms$).
-* **CpuTemperature / GpuTemperature**: Instantaneous direct sensor readings at each sampling tick. Unsupported readings are recorded as `NOT_SUPPORTED`.
+
+`Language`, `Program`, and `Powercap` describe the run. `Time_ms` is elapsed
+wall-clock time in milliseconds, and `CPU_Memory_KB` is maximum RSS in KiB estimated by
+a separate execution measured with `wait4()`/`ru_maxrss`. Backend metric values use the unit in the
+column name. A metric without a supported reading is written as `NOT_SUPPORTED`.
+
+Metric behavior is declared by each backend:
+
+* **Window metrics** are measured between `sample_start` and `sample_stop`.
+* **Gauge metrics** are read at the end of a standard run.
+* **Peak metrics** are polled during standard runs; process-scoped metrics are
+  aggregated across the workload process tree. Polling is every 50 ms, so brief
+  allocations may be missed.
+
+In over-time mode, metadata uses `Timestamp_ms` instead of `Time_ms` and omits
+`CPU_Memory_KB`. For example:
+
+```csv
+Language,Program,Powercap,Timestamp_ms,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+```
+
+Window metrics are accumulated from the start of the workload through each
+timestamp; gauges and process-scoped values are sampled at each tick. Use
+`main --csv-header` or `main --overtime-csv-header` to print the schema selected
+on the current machine.
 
 ---
 
 ## Adding a New Architecture / Driver
 
-The HAL enables hardware support extensions without modifying `main.c`:
+Each backend owns its metric descriptors and the generic `get_metric` callback.
+Adding a metric that fits the existing sampling kinds and scopes requires a
+backend change only; the core discovers its name, unit, value and CSV column
+dynamically. The HAL enables hardware support extensions without modifying
+`main.c`:
 
 1. **Implement the shared backend interface**: CPU drivers implement `CpuBackend`, and GPU drivers implement `GpuBackend` from `include/energy-backend.h`. Place each implementation in its own directory below `platform/linux/cpu/` or `platform/linux/gpu/`:
    ```c
@@ -227,7 +252,16 @@ The HAL enables hardware support extensions without modifying `main.c`:
    static int custom_init(int core) { (void)core; return 0; }
    static int custom_sample_start(int core) { (void)core; return 0; }
    static int custom_sample_stop(int core) { (void)core; return 0; }
-   static double custom_energy(int core) { (void)core; return METRIC_NOT_SUPPORTED; }
+   static const EnergyMetricDescriptor custom_metrics[] = {
+       {"Package", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE,
+        ENERGY_METRIC_FLAG_NONE}
+   };
+   static double custom_get_metric(size_t index, int core, pid_t process_id) {
+       (void)core;
+       (void)process_id;
+       if (index != 0) return METRIC_NOT_SUPPORTED;
+       return METRIC_NOT_SUPPORTED; /* Replace with the hardware-specific read. */
+   }
 
    CpuBackend custom_cpu_backend = {
        .name = "Custom CPU",
@@ -235,9 +269,9 @@ The HAL enables hardware support extensions without modifying `main.c`:
        .init = custom_init,
        .sample_start = custom_sample_start,
        .sample_stop = custom_sample_stop,
-       .get_package_energy = custom_energy,
-       .get_core_energy = custom_energy,
-       .get_dram_energy = custom_energy
+       .metrics = custom_metrics,
+       .metric_count = sizeof(custom_metrics) / sizeof(custom_metrics[0]),
+       .get_metric = custom_get_metric
    };
 
    const EnergyBackendDescriptor energy_backend_descriptor = {
@@ -263,6 +297,6 @@ The HAL enables hardware support extensions without modifying `main.c`:
 
    **Backend lookup order:** `$GREENMEASURER_BACKEND_DIR` (a directory containing `cpu/` and `gpu/`), then `<executable dir>/platform/linux`, then `<executable dir>/../lib/greenmeasurer/platform/linux`.
 
-   **Diagnostics:** at startup the executable prints a table with one row per backend folder and a status: `selected`, `available` (detected but lower priority), `not detected` (with the hint returned by the optional `diagnose()` callback), `not built` (no `backend.so`), `load failed` or `invalid` (bad descriptor or missing callbacks). Missing CPU/GPU backends produce a warning and the corresponding metrics are reported as `NOT_SUPPORTED`.
+   **Diagnostics:** By default only selected backends are listed; backends that do not apply to the machine (`available` but lower priority, `not detected`, `not built`) are hidden unless their category has no selected backend. Set `GREENMEASURER_VERBOSE_BACKENDS=1` to list every backend, and `make VERBOSE=1` to see skipped-build reasons. At startup the executable prints a table with one row per backend folder and a status: `selected`, `available` (detected but lower priority), `not detected` (with the hint returned by the optional `diagnose()` callback), `not built` (no `backend.so`), `load failed` or `invalid` (bad descriptor or missing callbacks). Missing CPU/GPU backends produce a warning and the corresponding metrics are reported as `NOT_SUPPORTED`.
 
    **Tests:** `make test` (in `src/`) builds fake plugins in a temporary directory and checks priority selection, undetected/invalid/unbuilt plugins, missing backends and the directory override.

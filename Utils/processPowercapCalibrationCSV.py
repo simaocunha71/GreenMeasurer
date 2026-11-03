@@ -2,12 +2,12 @@ import pandas as pd
 import sys
 from typing import Any, Literal
 
-def remove_package_outliers_iqr(group):
+def remove_package_outliers_iqr(group, package_column):
     if len(group) < 4:
         return group
 
-    q1 = group['Package'].quantile(0.25)
-    q3 = group['Package'].quantile(0.75)
+    q1 = group[package_column].quantile(0.25)
+    q3 = group[package_column].quantile(0.75)
     iqr = q3 - q1
 
     if iqr == 0:
@@ -15,7 +15,7 @@ def remove_package_outliers_iqr(group):
 
     lower_bound = q1 - 1.5 * iqr
     upper_bound = q3 + 1.5 * iqr
-    filtered_group = group[group['Package'].between(lower_bound, upper_bound)]
+    filtered_group = group[group[package_column].between(lower_bound, upper_bound)]
 
     return filtered_group if not filtered_group.empty else group
 
@@ -72,6 +72,14 @@ def classify_gps_category(
 
 def process_csv(filename):
     data = pd.read_csv(filename)
+    package_columns = [
+        column for column in data.columns
+        if column == 'Package' or column.startswith('cpu.Package_')
+    ]
+    if not package_columns:
+        print("Error: CSV does not contain a CPU Package energy metric.")
+        return
+    package_column = package_columns[0]
     results = {}
     grouped = data.groupby('Powercap')
 
@@ -83,9 +91,9 @@ def process_csv(filename):
         if len(group) <= 2:
             continue
 
-        filtered_group = remove_package_outliers_iqr(group)
-        average_package = filtered_group['Package'].mean()
-        average_time = filtered_group['Time'].mean()
+        filtered_group = remove_package_outliers_iqr(group, package_column)
+        average_package = filtered_group[package_column].mean()
+        average_time = filtered_group['Time_ms'].mean()
         results[powercap] = {'Package': average_package, 'Time': average_time}
 
     baseline = results.get(-1)

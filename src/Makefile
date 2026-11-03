@@ -27,8 +27,9 @@ $(if $(BACKEND_AVAILABLE_$(call backend_key,$(1))),$(BACKEND_AVAILABLE_$(call ba
 endef
 
 BACKEND_TARGETS := $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call backend_available,$(dir))),$(dir)/backend.so))
-BACKEND_HOST_LDLIBS := $(foreach dir,$(BACKEND_DIRS),$(BACKEND_HOST_LDLIBS_$(call backend_key,$(dir))))
-$(foreach dir,$(BACKEND_DIRS),$(if $(filter no,$(call backend_available,$(dir))),$(info [BUILD] Backend $(dir) skipped: optional dependencies are unavailable)))
+ALL_BACKEND_TARGETS := $(foreach dir,$(BACKEND_DIRS),$(dir)/backend.so)
+BACKEND_HOST_LDLIBS := $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call backend_available,$(dir))),$(BACKEND_HOST_LDLIBS_$(call backend_key,$(dir)))))
+$(if $(VERBOSE),$(foreach dir,$(BACKEND_DIRS),$(if $(filter no,$(call backend_available,$(dir))),$(info [BUILD] Backend $(dir) skipped: $(or $(BACKEND_SKIP_REASON_$(call backend_key,$(dir))),optional dependencies are unavailable)))))
 
 define backend_rule
 $(1)/backend.so: $(call backend_source,$(1)) $(wildcard $(1)/backend.mk)
@@ -47,7 +48,7 @@ $(TARGET): $(OBJS) $(BACKEND_TARGETS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET) $(OBJS) $(BACKEND_TARGETS)
+	rm -f $(TARGET) $(OBJS) $(ALL_BACKEND_TARGETS)
 	find platform/ utils/ -name "*.o" -delete 2>/dev/null || true
 
 test: all

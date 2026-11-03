@@ -14,6 +14,7 @@
 #include <dlfcn.h>
 #include <limits.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
 #include "include/energy-backend.h"
 
@@ -23,11 +24,20 @@ typedef struct {
     int report_index;
 } LoadedBackend;
 
+typedef struct {
+    const EnergyMetricDescriptor *descriptor;
+    EnergyBackendType backend_type;
+    size_t backend_metric_index;
+} ActiveMetric;
+
 static CpuBackend *active_cpu_backend = NULL;
 static GpuBackend *active_gpu_backend = NULL;
+static ActiveMetric *active_metrics = NULL;
+static size_t active_metric_count = 0;
 static LoadedBackend *loaded_backends = NULL;
 static size_t loaded_backend_count = 0;
 static char backend_root[PATH_MAX];
+static int header_only_mode = 0;
 
 /* Configurable calibration and measurement files */
 static char calib_file[512] = "/tmp/cores_temperatures.txt";
@@ -50,36 +60,130 @@ static void write_energy_metric(FILE *fp, double val) {
     }
 }
 
-static void write_temperature_metric(FILE *fp, float val) {
-    if (val < -0.5f) {
-        fprintf(fp, "NOT_SUPPORTED");
-    } else {
-        fprintf(fp, "%.1f", val);
+static double backend_get_metric(EnergyBackendType type, size_t metric_index,
+                                pid_t process_id) {
+    if (type == ENERGY_BACKEND_CPU && active_cpu_backend &&
+        active_cpu_backend->get_metric) {
+        return active_cpu_backend->get_metric(metric_index, 0, process_id);
     }
+    if (type == ENERGY_BACKEND_GPU && active_gpu_backend &&
+        active_gpu_backend->get_metric) {
+        return active_gpu_backend->get_metric(metric_index, 0, process_id);
+    }
+    return METRIC_NOT_SUPPORTED;
+}
+
+static double read_active_metric(size_t metric_index, pid_t process_id) {
+    if (metric_index >= active_metric_count) return METRIC_NOT_SUPPORTED;
+    const ActiveMetric *metric = &active_metrics[metric_index];
+    if (metric->descriptor->scope == ENERGY_METRIC_DEVICE) {
+        return backend_get_metric(metric->backend_type,
+                                  metric->backend_metric_index, 0);
+    }
+    if (process_id <= 0) return METRIC_NOT_SUPPORTED;
+    return backend_get_metric(metric->backend_type,
+                              metric->backend_metric_index, process_id);
+}
+
+static double read_process_tree_metric(size_t metric_index, pid_t root_pid) {
+    if (metric_index >= active_metric_count || root_pid <= 0) {
+        return METRIC_NOT_SUPPORTED;
+    }
+    const ActiveMetric *metric = &active_metrics[metric_index];
+    if (metric->descriptor->scope != ENERGY_METRIC_PROCESS) {
+        return read_active_metric(metric_index, 0);
+    }
+
+    enum { MAX_PROCESS_TREE_SIZE = 1024 };
+    pid_t process_ids[MAX_PROCESS_TREE_SIZE];
+    pid_t pending_ids[MAX_PROCESS_TREE_SIZE];
+    size_t process_count = 0;
+    size_t pending_count = 0;
+    pending_ids[pending_count++] = root_pid;
+
+    while (pending_count > 0 && process_count < MAX_PROCESS_TREE_SIZE) {
+        pid_t process_id = pending_ids[--pending_count];
+        int already_seen = 0;
+        for (size_t i = 0; i < process_count; i++) {
+            if (process_ids[i] == process_id) {
+                already_seen = 1;
+                break;
+            }
+        }
+        if (already_seen) continue;
+
+        process_ids[process_count++] = process_id;
+        char children_path[128];
+        int written = snprintf(children_path, sizeof(children_path),
+                               "/proc/%d/task/%d/children", process_id, process_id);
+        if (written < 0 || (size_t)written >= sizeof(children_path)) continue;
+
+        FILE *children_file = fopen(children_path, "r");
+        if (!children_file) continue;
+
+        int child_id;
+        while (pending_count < MAX_PROCESS_TREE_SIZE &&
+               fscanf(children_file, "%d", &child_id) == 1) {
+            if (child_id > 0) pending_ids[pending_count++] = (pid_t)child_id;
+        }
+        fclose(children_file);
+    }
+
+    double total_memory_mib = 0.0;
+    int found_memory = 0;
+    for (size_t i = 0; i < process_count; i++) {
+        double process_memory = read_active_metric(metric_index, process_ids[i]);
+        if (process_memory >= 0.0) {
+            total_memory_mib += process_memory;
+            found_memory = 1;
+        }
+    }
+    return found_memory ? total_memory_mib : METRIC_NOT_SUPPORTED;
+}
+
+static double get_temperature_metric(EnergyBackendType type, unsigned int flag) {
+    for (size_t i = 0; i < active_metric_count; i++) {
+        if (active_metrics[i].backend_type == type &&
+            (active_metrics[i].descriptor->flags & flag) != 0) {
+            return read_active_metric(i, 0);
+        }
+    }
+    return METRIC_NOT_SUPPORTED;
+}
+
+void energy_backend_write_csv_header(FILE *fp, int overtime) {
+    fprintf(fp, "Language,Program,Powercap,%s", overtime ? "Timestamp_ms" : "Time_ms");
+    if (!overtime) fprintf(fp, ",CPU_Memory_KB");
+    for (size_t i = 0; i < active_metric_count; i++) {
+        const ActiveMetric *metric = &active_metrics[i];
+        const char *category = metric->backend_type == ENERGY_BACKEND_CPU ? "cpu" : "gpu";
+        fprintf(fp, ",%s.%s_%s", category, metric->descriptor->name,
+                metric->descriptor->unit);
+    }
+    fputc('\n', fp);
+}
+
+static void write_active_metric_value(FILE *fp, double value) {
+    write_energy_metric(fp, value);
 }
 
 static void writeErrorMessage(const char *language, const char *program, const char *errorMsg, 
                               const char *out_file, int powercap) {
     FILE *fp = fopen(out_file, "a");
     if (!fp) return;
-    fprintf(fp, "%s, %s, %d, %s, %s, %s, %s, %s, %s, %s, %s\n",
-            language, program, powercap,
-            errorMsg, errorMsg, errorMsg, errorMsg, errorMsg, errorMsg, errorMsg, errorMsg);
+    fprintf(fp, "%s, %s, %d, %s, %s", language, program, powercap,
+            errorMsg, errorMsg);
+    for (size_t i = 0; i < active_metric_count; i++) {
+        fprintf(fp, ", %s", errorMsg);
+    }
+    fputc('\n', fp);
     fclose(fp);
 }
 
 static float get_current_cpu_temp(int core) {
-    if (active_cpu_backend && active_cpu_backend->get_temperature) {
-        return active_cpu_backend->get_temperature(core);
-    }
-    return -1.0f;
-}
-
-static float get_current_gpu_temp(int device_idx) {
-    if (active_gpu_backend && active_gpu_backend->get_temperature) {
-        return active_gpu_backend->get_temperature(device_idx);
-    }
-    return -1.0f;
+    (void)core;
+    return (float)get_temperature_metric(ENERGY_BACKEND_CPU,
+                                        ENERGY_METRIC_FLAG_CPU_TEMPERATURE);
 }
 
 static float getInitialTemperature(const char *calibration_file) {
@@ -219,17 +323,97 @@ static int backend_is_valid(const EnergyBackendDescriptor *descriptor,
                             EnergyBackendType expected_type) {
     if (!descriptor || descriptor->type != expected_type) return 0;
 
+    const char *name = NULL;
+    const EnergyMetricDescriptor *metrics = NULL;
+    size_t metric_count = 0;
+    int callbacks_valid = 0;
     if (expected_type == ENERGY_BACKEND_CPU) {
         CpuBackend *backend = descriptor->backend.cpu;
-        return backend && backend->name && backend->detect && backend->init &&
-               backend->sample_start && backend->sample_stop &&
-               backend->get_package_energy && backend->get_core_energy &&
-               backend->get_dram_energy;
+        if (!backend) return 0;
+        name = backend->name;
+        metrics = backend->metrics;
+        metric_count = backend->metric_count;
+        callbacks_valid = backend->detect && backend->init &&
+                          backend->sample_start && backend->sample_stop &&
+                          backend->get_metric;
+    } else {
+        GpuBackend *backend = descriptor->backend.gpu;
+        if (!backend) return 0;
+        name = backend->name;
+        metrics = backend->metrics;
+        metric_count = backend->metric_count;
+        callbacks_valid = backend->detect && backend->init &&
+                          backend->sample_start && backend->sample_stop &&
+                          backend->get_metric;
     }
 
-    GpuBackend *backend = descriptor->backend.gpu;
-    return backend && backend->name && backend->detect && backend->init &&
-           backend->sample_start && backend->sample_stop && backend->get_energy;
+    if (!name || !callbacks_valid || !metrics || metric_count == 0) return 0;
+    for (size_t i = 0; i < metric_count; i++) {
+        const EnergyMetricDescriptor *metric = &metrics[i];
+        if (!metric->name || !metric->unit || !metric->name[0] ||
+            !metric->unit[0] ||
+            (metric->kind != ENERGY_METRIC_WINDOW &&
+             metric->kind != ENERGY_METRIC_GAUGE &&
+             metric->kind != ENERGY_METRIC_PEAK) ||
+            (metric->scope != ENERGY_METRIC_DEVICE &&
+             metric->scope != ENERGY_METRIC_PROCESS) ||
+            (metric->flags & ~(ENERGY_METRIC_FLAG_CPU_TEMPERATURE |
+                               ENERGY_METRIC_FLAG_GPU_TEMPERATURE)) != 0 ||
+            (expected_type == ENERGY_BACKEND_CPU &&
+             (metric->flags & ENERGY_METRIC_FLAG_GPU_TEMPERATURE)) ||
+            (expected_type == ENERGY_BACKEND_GPU &&
+             (metric->flags & ENERGY_METRIC_FLAG_CPU_TEMPERATURE))) {
+            return 0;
+        }
+        for (const char *character = metric->name; *character; character++) {
+            if (!( (*character >= 'a' && *character <= 'z') ||
+                   (*character >= 'A' && *character <= 'Z') ||
+                   (*character >= '0' && *character <= '9') ||
+                   *character == '_' || *character == '-')) {
+                return 0;
+            }
+        }
+        for (const char *character = metric->unit; *character; character++) {
+            if (*character == ',' || *character == '"' ||
+                *character == '\n' || *character == '\r') {
+                return 0;
+            }
+        }
+        for (size_t previous = 0; previous < i; previous++) {
+            if (strcmp(metric->name, metrics[previous].name) == 0) return 0;
+        }
+    }
+    return 1;
+}
+
+static int register_selected_metrics(void) {
+    size_t cpu_count = active_cpu_backend ? active_cpu_backend->metric_count : 0;
+    size_t gpu_count = active_gpu_backend ? active_gpu_backend->metric_count : 0;
+    active_metric_count = cpu_count + gpu_count;
+    if (active_metric_count == 0) return 0;
+
+    active_metrics = calloc(active_metric_count, sizeof(*active_metrics));
+    if (!active_metrics) {
+        fprintf(stderr, "[ERROR] Unable to allocate active metric registry.\n");
+        return -1;
+    }
+
+    size_t output_index = 0;
+    for (size_t i = 0; i < cpu_count; i++) {
+        active_metrics[output_index++] = (ActiveMetric) {
+            .descriptor = &active_cpu_backend->metrics[i],
+            .backend_type = ENERGY_BACKEND_CPU,
+            .backend_metric_index = i
+        };
+    }
+    for (size_t i = 0; i < gpu_count; i++) {
+        active_metrics[output_index++] = (ActiveMetric) {
+            .descriptor = &active_gpu_backend->metrics[i],
+            .backend_type = ENERGY_BACKEND_GPU,
+            .backend_metric_index = i
+        };
+    }
+    return 0;
 }
 
 static int load_backend_plugin(const char *plugin_path, const char *category,
@@ -327,16 +511,38 @@ static void cleanup_backends(void) {
     free(loaded_backends);
     loaded_backends = NULL;
     loaded_backend_count = 0;
+    free(active_metrics);
+    active_metrics = NULL;
+    active_metric_count = 0;
 }
 
+/* Backends that do not apply to this machine are hidden unless the category
+   has no selected backend (to explain why) or verbose output is requested. */
 static void print_backend_summary(void) {
+    const char *verbose_env = getenv("GREENMEASURER_VERBOSE_BACKENDS");
+    int verbose = verbose_env && verbose_env[0] && strcmp(verbose_env, "0") != 0;
+
     printf("[INFO] Energy backends (%s)\n", backend_root);
     printf("  %-4s  %-28s  %-13s  %s\n", "TYPE", "BACKEND", "STATUS", "DETAILS");
     printf("  %-4s  %-28s  %-13s  %s\n", "----", "----------------------------", "-------------", "-------");
     for (size_t i = 0; i < backend_report_count; i++) {
         const BackendReport *report = &backend_reports[i];
-        printf("  %-4s  %-28s  %-13s  %s\n",
-               report->category, report->label, report->status, report->detail);
+        int show = verbose || strcmp(report->status, "selected") == 0;
+        if (!show) {
+            int category_has_selected = 0;
+            for (size_t j = 0; j < backend_report_count; j++) {
+                if (strcmp(backend_reports[j].category, report->category) == 0 &&
+                    strcmp(backend_reports[j].status, "selected") == 0) {
+                    category_has_selected = 1;
+                    break;
+                }
+            }
+            show = !category_has_selected || strcmp(report->status, "invalid") == 0;
+        }
+        if (show) {
+            printf("  %-4s  %-28s  %-13s  %s\n",
+                   report->category, report->label, report->status, report->detail);
+        }
     }
 }
 
@@ -383,7 +589,18 @@ static void init_backends(void) {
     if (cpu_report >= 0) backend_reports[cpu_report].status = "selected";
     if (gpu_report >= 0) backend_reports[gpu_report].status = "selected";
 
-    print_backend_summary();
+    if (register_selected_metrics() != 0) exit(EXIT_FAILURE);
+    if (!header_only_mode) {
+        print_backend_summary();
+        printf("[INFO] Active backend metrics:");
+        for (size_t i = 0; i < active_metric_count; i++) {
+            const char *category =
+                active_metrics[i].backend_type == ENERGY_BACKEND_CPU ? "cpu" : "gpu";
+            printf(" %s.%s (%s)", category, active_metrics[i].descriptor->name,
+                   active_metrics[i].descriptor->unit);
+        }
+        printf("\n");
+    }
 
     if (!active_cpu_backend && !active_gpu_backend) {
         fprintf(stderr, "[ERROR] No usable CPU or GPU energy backend. See the table above for the reason of each backend.\n");
@@ -395,11 +612,141 @@ static void init_backends(void) {
     if (!active_gpu_backend) {
         fprintf(stderr, "[WARNING] No GPU energy backend active. GPU metrics will be reported as NOT_SUPPORTED.\n");
     }
-    printf("\n");
+    if (!header_only_mode) printf("\n");
 }
 
-static void runCommand(const char *cmd) {
-    if (system(cmd) == -1) exit(EXIT_FAILURE);
+static pid_t startCommand(const char *command) {
+    pid_t child_pid = fork();
+    if (child_pid != 0) return child_pid;
+
+    execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+    perror("[ERROR] Unable to start workload command");
+    _exit(127);
+}
+
+typedef struct {
+    pid_t root_pid;
+    pthread_mutex_t stop_mutex;
+    pthread_cond_t stop_condition;
+    int stop;
+    double *peak_values;
+} VramMonitorContext;
+
+static void* monitor_vram_usage(void *arg) {
+    VramMonitorContext *context = (VramMonitorContext *)arg;
+    const struct timespec poll_delay = {.tv_sec = 0, .tv_nsec = 50000000L};
+
+    for (;;) {
+        for (size_t i = 0; i < active_metric_count; i++) {
+            if (active_metrics[i].descriptor->kind != ENERGY_METRIC_PEAK) continue;
+            double current_value =
+                read_process_tree_metric(i, context->root_pid);
+            if (current_value >= 0.0 &&
+                (context->peak_values[i] < 0.0 ||
+                 current_value > context->peak_values[i])) {
+                context->peak_values[i] = current_value;
+            }
+        }
+
+        struct timespec wake_time;
+        clock_gettime(CLOCK_REALTIME, &wake_time);
+        wake_time.tv_nsec += poll_delay.tv_nsec;
+        if (wake_time.tv_nsec >= 1000000000L) {
+            wake_time.tv_nsec -= 1000000000L;
+            wake_time.tv_sec++;
+        }
+
+        pthread_mutex_lock(&context->stop_mutex);
+        while (!context->stop) {
+            int wait_status = pthread_cond_timedwait(
+                &context->stop_condition, &context->stop_mutex, &wake_time);
+            if (wait_status == ETIMEDOUT) break;
+        }
+        int should_stop = context->stop;
+        pthread_mutex_unlock(&context->stop_mutex);
+        if (should_stop) break;
+    }
+    return NULL;
+}
+
+static int waitForCommand(pid_t child_pid, double *peak_metric_values,
+                          struct timeval *completion_time) {
+    int status = 0;
+    VramMonitorContext monitor = {
+        .root_pid = child_pid,
+        .peak_values = peak_metric_values
+    };
+    pthread_t monitor_thread;
+    int monitor_started = 0;
+    int monitor_sync_ready = 0;
+    int has_peak_metric = 0;
+    for (size_t i = 0; i < active_metric_count; i++) {
+        if (active_metrics[i].descriptor->kind == ENERGY_METRIC_PEAK) {
+            has_peak_metric = 1;
+            break;
+        }
+    }
+
+    if (peak_metric_values && has_peak_metric) {
+        for (size_t i = 0; i < active_metric_count; i++) {
+            if (active_metrics[i].descriptor->kind == ENERGY_METRIC_PEAK) {
+                peak_metric_values[i] =
+                    read_process_tree_metric(i, child_pid);
+            }
+        }
+        int mutex_status = pthread_mutex_init(&monitor.stop_mutex, NULL);
+        int condition_status = mutex_status == 0
+            ? pthread_cond_init(&monitor.stop_condition, NULL) : -1;
+        monitor_sync_ready = mutex_status == 0 && condition_status == 0;
+        if (monitor_sync_ready &&
+            pthread_create(&monitor_thread, NULL, monitor_vram_usage, &monitor) == 0) {
+            monitor_started = 1;
+        } else {
+            for (size_t i = 0; i < active_metric_count; i++) {
+                if (active_metrics[i].descriptor->kind == ENERGY_METRIC_PEAK) {
+                    peak_metric_values[i] = METRIC_NOT_SUPPORTED;
+                }
+            }
+            fprintf(stderr, "[WARNING] Unable to start peak-metric sampling; peak metrics will be unavailable.\n");
+        }
+    }
+
+    pid_t wait_result;
+    do {
+        wait_result = waitpid(child_pid, &status, 0);
+    } while (wait_result < 0 && errno == EINTR);
+    if (wait_result < 0) {
+        perror("[ERROR] Failed while waiting for workload");
+        if (monitor_started) {
+            pthread_mutex_lock(&monitor.stop_mutex);
+            monitor.stop = 1;
+            pthread_cond_signal(&monitor.stop_condition);
+            pthread_mutex_unlock(&monitor.stop_mutex);
+            pthread_join(monitor_thread, NULL);
+        }
+        if (completion_time) gettimeofday(completion_time, NULL);
+        if (monitor_sync_ready) {
+            pthread_cond_destroy(&monitor.stop_condition);
+            pthread_mutex_destroy(&monitor.stop_mutex);
+        }
+        return -1;
+    }
+    if (completion_time) gettimeofday(completion_time, NULL);
+
+    if (monitor_started) {
+        pthread_mutex_lock(&monitor.stop_mutex);
+        monitor.stop = 1;
+        pthread_cond_signal(&monitor.stop_condition);
+        pthread_mutex_unlock(&monitor.stop_mutex);
+        pthread_join(monitor_thread, NULL);
+    }
+    if (monitor_sync_ready) {
+        pthread_cond_destroy(&monitor.stop_condition);
+        pthread_mutex_destroy(&monitor.stop_mutex);
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return -1;
 }
 
 static void* programWorks(void *arg) {
@@ -420,23 +767,30 @@ struct MeasureArgs {
     int core; 
     const char *command; 
     int memory; 
-    float temp;
+    double *metric_values;
 };
 
 static void* measureWorker(void *arg) {
     struct MeasureArgs *args = (struct MeasureArgs *)arg;
     struct timeval tvb, tva;
 
-    int cpu_sample_ready = active_cpu_backend &&
-                           active_cpu_backend->init(args->core) == 0 &&
+    int cpu_initialized = active_cpu_backend &&
+                          active_cpu_backend->init(args->core) == 0;
+    int gpu_initialized = active_gpu_backend &&
+                          active_gpu_backend->init(0) == 0;
+    int cpu_sample_ready = cpu_initialized &&
                            active_cpu_backend->sample_start(args->core) == 0;
-    int gpu_sample_ready = active_gpu_backend &&
-                           active_gpu_backend->init(0) == 0 &&
+    int gpu_sample_ready = gpu_initialized &&
                            active_gpu_backend->sample_start(0) == 0;
 
     gettimeofday(&tvb, NULL);
-    runCommand(args->command);
-    gettimeofday(&tva, NULL);
+    pid_t command_pid = startCommand(args->command);
+    if (command_pid < 0) {
+        perror("[ERROR] Failed to create workload process");
+        gettimeofday(&tva, NULL);
+    } else {
+        waitForCommand(command_pid, args->metric_values, &tva);
+    }
 
     if (cpu_sample_ready && active_cpu_backend->sample_stop(args->core) != 0) {
         cpu_sample_ready = 0;
@@ -447,34 +801,37 @@ static void* measureWorker(void *arg) {
 
     double elapsed_ms = ((tva.tv_sec - tvb.tv_sec) * 1000000.0 + (tva.tv_usec - tvb.tv_usec)) / 1000.0;
 
-    double pkg_e  = cpu_sample_ready ? active_cpu_backend->get_package_energy(args->core) : METRIC_NOT_SUPPORTED;
-    double core_e = cpu_sample_ready ? active_cpu_backend->get_core_energy(args->core) : METRIC_NOT_SUPPORTED;
-    double dram_e = cpu_sample_ready ? active_cpu_backend->get_dram_energy(args->core) : METRIC_NOT_SUPPORTED;
-
-    double gpu_e  = gpu_sample_ready ? active_gpu_backend->get_energy(0) : METRIC_NOT_SUPPORTED;
-    float  gpu_t  = get_current_gpu_temp(0);
-
-    write_energy_metric(args->fp, pkg_e);
-    fprintf(args->fp, ", ");
-    write_energy_metric(args->fp, core_e);
-    fprintf(args->fp, ", ");
-    write_energy_metric(args->fp, gpu_e);
-    fprintf(args->fp, ", ");
-    write_energy_metric(args->fp, dram_e);
-    fprintf(args->fp, ", ");
     fprintf(args->fp, "%G, ", elapsed_ms);
-    write_temperature_metric(args->fp, args->temp);
-    fprintf(args->fp, ", ");
-    write_temperature_metric(args->fp, gpu_t);
-    fprintf(args->fp, ", ");
+    if (args->memory < 0) fprintf(args->fp, "NOT_SUPPORTED");
+    else fprintf(args->fp, "%d", args->memory);
 
-    if (args->memory < 0) {
-        fprintf(args->fp, "NOT_SUPPORTED\n");
-    } else {
-        fprintf(args->fp, "%d\n", args->memory);
+    for (size_t i = 0; i < active_metric_count; i++) {
+        const ActiveMetric *metric = &active_metrics[i];
+        int initialized = metric->backend_type == ENERGY_BACKEND_CPU
+            ? cpu_initialized : gpu_initialized;
+        int sample_ready = metric->backend_type == ENERGY_BACKEND_CPU
+            ? cpu_sample_ready : gpu_sample_ready;
+
+        if (metric->descriptor->kind == ENERGY_METRIC_PEAK) {
+            args->metric_values[i] =
+                command_pid > 0 ? args->metric_values[i] : METRIC_NOT_SUPPORTED;
+        } else if (metric->descriptor->kind == ENERGY_METRIC_WINDOW &&
+                   (!initialized || !sample_ready)) {
+            args->metric_values[i] = METRIC_NOT_SUPPORTED;
+        } else if (metric->descriptor->scope == ENERGY_METRIC_PROCESS) {
+            args->metric_values[i] = command_pid > 0
+                ? read_process_tree_metric(i, command_pid)
+                : METRIC_NOT_SUPPORTED;
+        } else {
+            args->metric_values[i] = read_active_metric(i, 0);
+        }
+        fprintf(args->fp, ", ");
+        write_active_metric_value(args->fp, args->metric_values[i]);
     }
+    fputc('\n', args->fp);
 
     fflush(args->fp);
+    free(args->metric_values);
     free(args);
     return NULL;
 }
@@ -537,13 +894,28 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
         ts.tv_sec += time_out_limit;
 
         struct MeasureArgs *m = malloc(sizeof(struct MeasureArgs));
+        if (!m) {
+            fprintf(stderr, "[ERROR] Unable to allocate measurement state.\n");
+            fclose(fp);
+            return;
+        }
+        m->metric_values = malloc(active_metric_count * sizeof(*m->metric_values));
+        if (active_metric_count > 0 && !m->metric_values) {
+            fprintf(stderr, "[ERROR] Unable to allocate metric results.\n");
+            free(m);
+            fclose(fp);
+            return;
+        }
+        for (size_t metric_index = 0; metric_index < active_metric_count; metric_index++) {
+            m->metric_values[metric_index] = METRIC_NOT_SUPPORTED;
+        }
         m->fp = fp; 
         m->core = core; 
         m->command = command; 
         m->memory = memory; 
-        m->temp = temp;
 
         if (pthread_create(&th, NULL, measureWorker, m) != 0) {
+            free(m->metric_values);
             free(m);
             writeErrorMessage(language, program, "ThreadCreateError", output_file, powercap);
             fclose(fp);
@@ -569,6 +941,7 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
 struct OvertimeThreadCtx {
     volatile int run_flag;
     int interval_ms;
+    pid_t workload_pid;
     const char *language;
     const char *program;
     int powercap;
@@ -583,15 +956,21 @@ static void* overtimeLogger(void *arg) {
         pthread_exit(NULL);
     }
 
-    fprintf(fp, "Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,CpuTemperature,GpuTemperature\n");
-    fflush(fp);
-
     int cpu_sample_ready = active_cpu_backend &&
                            active_cpu_backend->init(0) == 0 &&
                            active_cpu_backend->sample_start(0) == 0;
     int gpu_sample_ready = active_gpu_backend &&
                            active_gpu_backend->init(0) == 0 &&
                            active_gpu_backend->sample_start(0) == 0;
+    double *cumulative_values = calloc(active_metric_count,
+                                        sizeof(*cumulative_values));
+    if (active_metric_count > 0 && !cumulative_values) {
+        fprintf(stderr, "[ERROR] Unable to allocate overtime metric state.\n");
+        fclose(fp);
+        pthread_exit(NULL);
+    }
+    energy_backend_write_csv_header(fp, 1);
+    fflush(fp);
 
     struct timespec next_tick;
     clock_gettime(CLOCK_MONOTONIC, &next_tick);
@@ -619,30 +998,43 @@ static void* overtimeLogger(void *arg) {
             gpu_sample_ready = 0;
         }
 
-        double pkg_e  = cpu_sample_ready ? active_cpu_backend->get_package_energy(0) : METRIC_NOT_SUPPORTED;
-        double core_e = cpu_sample_ready ? active_cpu_backend->get_core_energy(0) : METRIC_NOT_SUPPORTED;
-        double dram_e = cpu_sample_ready ? active_cpu_backend->get_dram_energy(0) : METRIC_NOT_SUPPORTED;
-        double gpu_e  = gpu_sample_ready ? active_gpu_backend->get_energy(0) : METRIC_NOT_SUPPORTED;
-
-        float current_cpu_temp = get_current_cpu_temp(0);
-        float current_gpu_temp = get_current_gpu_temp(0);
-
         fprintf(fp, "%s, %s, %d, ", ctx->language, ctx->program, ctx->powercap);
-        write_energy_metric(fp, pkg_e);
-        fprintf(fp, ", ");
-        write_energy_metric(fp, core_e);
-        fprintf(fp, ", ");
-        write_energy_metric(fp, gpu_e);
-        fprintf(fp, ", ");
-        write_energy_metric(fp, dram_e);
-        fprintf(fp, ", %lu, ", current_timestamp);
-        write_temperature_metric(fp, current_cpu_temp);
-        fprintf(fp, ", ");
-        write_temperature_metric(fp, current_gpu_temp);
-        fprintf(fp, "\n");
+        fprintf(fp, "%lu", current_timestamp);
+        for (size_t metric_index = 0; metric_index < active_metric_count; metric_index++) {
+            const ActiveMetric *metric = &active_metrics[metric_index];
+            int sample_ready = metric->backend_type == ENERGY_BACKEND_CPU
+                ? cpu_sample_ready : gpu_sample_ready;
+            double value;
+            if (metric->descriptor->kind == ENERGY_METRIC_WINDOW && !sample_ready) {
+                value = METRIC_NOT_SUPPORTED;
+            } else {
+                value = metric->descriptor->scope == ENERGY_METRIC_PROCESS
+                    ? read_process_tree_metric(metric_index, ctx->workload_pid)
+                    : read_active_metric(metric_index, 0);
+            }
+            if (metric->descriptor->kind == ENERGY_METRIC_WINDOW) {
+                if (value < 0.0) {
+                    cumulative_values[metric_index] = METRIC_NOT_SUPPORTED;
+                } else if (cumulative_values[metric_index] >= 0.0) {
+                    cumulative_values[metric_index] += value;
+                }
+                value = cumulative_values[metric_index];
+            }
+            fprintf(fp, ", ");
+            write_active_metric_value(fp, value);
+        }
+        fputc('\n', fp);
         fflush(fp);
+
+        if (active_cpu_backend) {
+            cpu_sample_ready = active_cpu_backend->sample_start(0) == 0;
+        }
+        if (active_gpu_backend) {
+            gpu_sample_ready = active_gpu_backend->sample_start(0) == 0;
+        }
     }
 
+    free(cumulative_values);
     fclose(fp);
     pthread_exit(NULL);
     return NULL;
@@ -661,6 +1053,8 @@ static void show_help(const char *bin_name) {
 
     printf("  %s --overtime -command \"<cmd>\" -interval <ms> -language <lang> -program <prog> [-powercap <W>] [-variance <V>] [-sleep-secs <sec>] [-calib-file <path>] [-output <path>]\n", bin_name);
     printf("      Continuously measures energy over time at fixed sampling intervals.\n\n");
+    printf("  %s --csv-header | --overtime-csv-header\n", bin_name);
+    printf("      Prints the selected backends' CSV header for the requested measurement mode.\n\n");
 }
 
 static const char* resolve_python_venv(void) {
@@ -680,7 +1074,16 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    header_only_mode = argc >= 2 &&
+        (!strcmp(argv[1], "--csv-header") ||
+         !strcmp(argv[1], "--overtime-csv-header"));
     init_backends();
+    if (argc >= 2 && (!strcmp(argv[1], "--csv-header") ||
+                      !strcmp(argv[1], "--overtime-csv-header"))) {
+        energy_backend_write_csv_header(stdout,
+            strcmp(argv[1], "--overtime-csv-header") == 0);
+        return 0;
+    }
 
     /* ========================================================
        1. MODE: TEMPERATURE CALIBRATION STANDALONE
@@ -715,7 +1118,14 @@ int main(int argc, char **argv) {
 
         for (int i = 2; i < argc; ++i) {
             if (!strcmp(argv[i], "-range") && i + 1 < argc) {
-                sscanf(argv[++i], "%d-%d", &min_powercap, &max_powercap);
+                int parsed_min, parsed_max;
+                char trailing;
+                if (sscanf(argv[++i], "%d-%d%c", &parsed_min, &parsed_max, &trailing) != 2) {
+                    fprintf(stderr, "[ERROR] Invalid -range; expected <min>-<max> in watts.\n");
+                    return 1;
+                }
+                min_powercap = parsed_min;
+                max_powercap = parsed_max;
             }
             else if ((!strcmp(argv[i], "-command") || !strcmp(argv[i], "-run_cmd")) && i + 1 < argc) {
                 strncpy(command, argv[++i], sizeof(command) - 1);
@@ -739,8 +1149,9 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (min_powercap < 0 || max_powercap < 0 || strlen(command) == 0) {
-            fprintf(stderr, "[ERROR] --powercap-calibration: missing -range or -command\n");
+        if (min_powercap < 1 || max_powercap < min_powercap ||
+            ntimes < 1 || strlen(command) == 0) {
+            fprintf(stderr, "[ERROR] --powercap-calibration requires -command and a valid -range with minimum >= 1 W.\n");
             return 1;
         }
 
@@ -762,11 +1173,14 @@ int main(int argc, char **argv) {
 
         int timeout_seconds = timeout_hours * 3600;
 
-        active_cpu_backend->calibrate_powercap(
+        if (active_cpu_backend->calibrate_powercap(
             ntimes, 0, command, language, program, calib_csv,
             NULL, min_powercap, max_powercap, timeout_seconds,
             ref_temp, variance, memory
-        );
+        ) != 0) {
+            fprintf(stderr, "[ERROR] Powercap calibration failed; see preceding diagnostics.\n");
+            return 1;
+        }
 
         const char *py_bin = resolve_python_venv();
         char proc_cmd[1024];
@@ -811,6 +1225,11 @@ int main(int argc, char **argv) {
             }
         }
 
+        if (powercap != -1 && powercap < 1) {
+            fprintf(stderr, "[ERROR] -powercap must be -1 (no GreenMeasurer cap) or at least 1 W.\n");
+            return 1;
+        }
+
         if (access(calib_file, F_OK) != 0) {
             calibrateTemperature(calib_file, sleep_time);
         }
@@ -824,35 +1243,67 @@ int main(int argc, char **argv) {
             temp = get_current_cpu_temp(0);
         }
 
-        if (powercap > 0 && active_cpu_backend && active_cpu_backend->set_powercap) {
-            active_cpu_backend->set_powercap(powercap);
+        if (powercap > 0) {
+            if (!active_cpu_backend || !active_cpu_backend->set_powercap) {
+                fprintf(stderr, "[ERROR] Active CPU backend does not support powercapping; overtime measurement aborted.\n");
+                return 1;
+            }
+            if (active_cpu_backend->set_powercap(powercap) != 0) {
+                fprintf(stderr, "[ERROR] Failed to set powercap to %d W; overtime measurement aborted.\n",
+                        powercap);
+                if (active_cpu_backend->destroy_powercap) {
+                    active_cpu_backend->destroy_powercap();
+                }
+                return 1;
+            }
         }
 
         struct OvertimeThreadCtx ctx = {
             .run_flag = 1,
             .interval_ms = interval_ms,
+            .workload_pid = -1,
             .language = language,
             .program = program,
             .powercap = powercap,
             .output_file = ot_csv
         };
 
+        pid_t command_pid = startCommand(command);
+        if (command_pid < 0) {
+            perror("[ERROR] Failed to create workload process");
+            if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap &&
+                active_cpu_backend->destroy_powercap() != 0) {
+                fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
+            }
+            return 1;
+        }
+        ctx.workload_pid = command_pid;
+
         pthread_t logger_th;
         if (pthread_create(&logger_th, NULL, overtimeLogger, &ctx) != 0) {
             perror("[ERROR] Failed to start overtime sampling thread");
+            kill(command_pid, SIGTERM);
+            waitpid(command_pid, NULL, 0);
+            if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap &&
+                active_cpu_backend->destroy_powercap() != 0) {
+                fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
+            }
             return 1;
         }
 
-        runCommand(command);
+        int command_status = waitForCommand(command_pid, NULL, NULL);
 
         ctx.run_flag = 0;
         pthread_join(logger_th, NULL);
 
         if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
-            active_cpu_backend->destroy_powercap();
+            if (active_cpu_backend->destroy_powercap() != 0) {
+                fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
+                command_status = -1;
+            }
         }
         printf("[INFO] Overtime session finished -> %s\n", ot_csv);
-        return 0;
+        return command_status == 0 ? 0 : 1;
     }
 
     /* ========================================================
@@ -884,6 +1335,11 @@ int main(int argc, char **argv) {
         else if ((!strcmp(argv[i], "-output") || !strcmp(argv[i], "-measurements-file")) && i + 1 < argc) {
             strncpy(measurements_file, argv[++i], sizeof(measurements_file) - 1);
         }
+    }
+
+    if (powercap != -1 && powercap < 1) {
+        fprintf(stderr, "[ERROR] -powercap must be -1 (no GreenMeasurer cap) or at least 1 W.\n");
+        return 1;
     }
 
     int memory = 0;
@@ -918,20 +1374,45 @@ int main(int argc, char **argv) {
     printf(" Output CSV            : %s\n", measurements_file);
     printf("====================================\n\n");
 
-    if (powercap > 0 && active_cpu_backend && active_cpu_backend->set_powercap) {
-        active_cpu_backend->set_powercap(powercap);
+    if (powercap > 0) {
+        if (!active_cpu_backend || !active_cpu_backend->set_powercap) {
+            fprintf(stderr, "[ERROR] Active CPU backend does not support powercapping; measurement aborted.\n");
+            return 1;
+        }
+        if (active_cpu_backend->set_powercap(powercap) != 0) {
+            fprintf(stderr, "[ERROR] Failed to set powercap to %d W; measurement aborted.\n",
+                    powercap);
+            if (active_cpu_backend->destroy_powercap) {
+                active_cpu_backend->destroy_powercap();
+            }
+            return 1;
+        }
     }
 
     FILE *fp = fopen(measurements_file, "w");
-    if (fp) {
-        fprintf(fp, "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory\n");
-        fclose(fp);
+    if (!fp) {
+        perror("[ERROR] Failed to open measurement CSV");
+        if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
+            active_cpu_backend->destroy_powercap();
+        }
+        return 1;
+    }
+    energy_backend_write_csv_header(fp, 0);
+    if (fclose(fp) != 0) {
+        perror("[ERROR] Failed to write measurement CSV header");
+        if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
+            active_cpu_backend->destroy_powercap();
+        }
+        return 1;
     }
 
     runTesting(ntimes, 0, command, language, program, measurements_file, powercap, timeout, ref_temp, variance, memory);
 
     if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
-        active_cpu_backend->destroy_powercap();
+        if (active_cpu_backend->destroy_powercap() != 0) {
+            fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
+            return 1;
+        }
     }
 
     return 0;

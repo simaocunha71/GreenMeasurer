@@ -127,7 +127,7 @@ IDLE_SECONDS=6
 
 # If not running as root, limit powercaps strictly to unconstrained (-1)
 if [[ $IS_ROOT -eq 1 ]]; then
-    POWER_CAPS=(-1 6 12 18 24 30)
+    POWER_CAPS=(-1 1 2 3 4 5 6 7 8 9 10 11 12)
 else
     POWER_CAPS=(-1)
     echo "[INFO] Running with unconstrained powercap (-1) only, as power capping requires root."
@@ -137,16 +137,40 @@ cd "$(dirname "$0")/.." || exit 1
 
 if [[ $OVERTIME_MODE -eq 1 ]]; then
     OUT_CSV="measurements_ot.csv"
-    echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Timestamp,CpuTemperature,GpuTemperature" > "$OUT_CSV"
 elif [[ $STANDARD_MODE -eq 1 ]]; then
     OUT_CSV="measurements.csv"
-    echo "Language,Program,Powercap,Package,Core,GPU,DRAM,Time,CpuTemperature,GpuTemperature,Memory" > "$OUT_CSV"
 fi
 
 # Compile the core framework
 cd src || exit 1
-make clean
-make
+if ! make clean; then
+    echo "[ERROR] Failed to clean the framework build."
+    exit 1
+fi
+if ! make; then
+    echo "[ERROR] Framework build failed; no measurements were started."
+    exit 1
+fi
+if [[ ! -x main ]]; then
+    echo "[ERROR] Framework build completed without producing src/main."
+    exit 1
+fi
+if [[ $OVERTIME_MODE -eq 1 ]]; then
+    HEADER_MODE="--overtime-csv-header"
+else
+    HEADER_MODE="--csv-header"
+fi
+HEADER_OUTPUT=$(./main "$HEADER_MODE")
+if [[ $? -ne 0 ]]; then
+    echo "[ERROR] Unable to determine the selected backends' CSV schema."
+    exit 1
+fi
+CSV_HEADER=$(printf '%s\n' "$HEADER_OUTPUT" | tail -n 1)
+if [[ -z "$CSV_HEADER" ]]; then
+    echo "[ERROR] The selected backends returned an empty CSV schema."
+    exit 1
+fi
+printf '%s\n' "$CSV_HEADER" > "../$OUT_CSV"
 cd ..
 
 # Main benchmarking loops
@@ -167,16 +191,28 @@ for cap in "${POWER_CAPS[@]}"; do
 
                 rm -f *.csv
 
-                make compile
+                if ! make compile; then
+                    echo "[ERROR] Workload compilation failed in $program_dir."
+                    make clean
+                    exit 1
+                fi
 
                 if [[ $OVERTIME_MODE -eq 1 ]]; then
-                    make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE
+                    if ! make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE; then
+                        echo "[ERROR] Overtime measurement failed in $program_dir."
+                        make clean
+                        exit 1
+                    fi
                     if [ -f "measurements_ot.csv" ]; then
                         tail -n +2 measurements_ot.csv >> "../../../$OUT_CSV"
                         rm -f measurements_ot.csv
                     fi
                 elif [[ $STANDARD_MODE -eq 1 ]]; then
-                    make standard n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS
+                    if ! make standard n_times=$NTIMES powercap="$cap" time_out_limit=$TIME_OUT_LIMIT variance=$VARIANCE sleep_secs=$IDLE_SECONDS; then
+                        echo "[ERROR] Standard measurement failed in $program_dir."
+                        make clean
+                        exit 1
+                    fi
                     if [ -f "measurements.csv" ]; then
                         tail -n +2 measurements.csv >> "../../../$OUT_CSV"
                         rm -f measurements.csv

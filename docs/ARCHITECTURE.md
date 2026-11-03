@@ -32,7 +32,7 @@ Tools that hard-code these interfaces in their core are difficult to extend, and
 | R3 | Vendors are read from the `src` folder layout | `scandir` over `platform/linux/{cpu,gpu}/<vendor>/backend.so` |
 | R4 | Code, comments and messages in English | Applied to all sources, scripts and messages |
 | R5 | Graceful degradation | Explicit validity flags, `METRIC_NOT_SUPPORTED`, readiness checks |
-| R6 | Reproducible validation | Fake-plugin test suite (`make test`) |
+| R6 | Reproducible validation | Fake-plugin test suite (`make -C src test`) |
 
 ---
 
@@ -79,8 +79,8 @@ Defined in `src/include/energy-backend.h`. Two vtable-style structs, `CpuBackend
 | `detect()` | yes | Returns 1 if the backend can operate on this machine |
 | `init(core)` / `cleanup()` | init: yes | Acquire / release resources |
 | `sample_start(core)` / `sample_stop(core)` | yes | Counter snapshots delimiting a measurement window |
-| `get_package_energy`, `get_core_energy`, `get_dram_energy` | yes | Energy in Joules, or `METRIC_NOT_SUPPORTED` (-1.0) |
-| `get_temperature(core)` | optional | Direct sensor reading in °C |
+| `metrics`, `metric_count` | yes | Backend-owned metric descriptors and their count |
+| `get_metric(index, core, process_id)` | yes | Returns the indexed metric value or `METRIC_NOT_SUPPORTED` (-1.0) |
 | `set_powercap(W)`, `destroy_powercap()` | optional | Power limiting |
 | `calibrate_powercap(...)` | optional | Powercap curve exploration |
 | `diagnose()` | optional | Short hint on why `detect()` failed |
@@ -89,8 +89,16 @@ Defined in `src/include/energy-backend.h`. Two vtable-style structs, `CpuBackend
 
 | Callback | Required |
 |---|---|
-| `name`, `detect`, `init`, `sample_start`, `sample_stop`, `get_energy` | yes |
-| `cleanup`, `get_power_draw`, `get_temperature`, `get_utilization`, `diagnose` | optional |
+| `name`, `detect`, `init`, `sample_start`, `sample_stop`, `metrics`, `metric_count`, `get_metric` | yes |
+| `cleanup`, power-capping callbacks for CPU, `diagnose` | optional |
+
+Each `EnergyMetricDescriptor` defines a stable name, unit, sampling kind
+(`WINDOW`, `GAUGE`, or `PEAK`), scope (`DEVICE` or `PROCESS`) and optional
+semantic flags such as CPU or GPU temperature. The selected backends provide
+the metric list; `main.c` validates it and constructs the output schema as
+`<category>.<name>_<unit>`. Adding ordinary telemetry therefore does not require
+changing the core API or `main.c`; new sampling semantics would require extending
+the shared API deliberately.
 
 ### 3.3 Plugin descriptor
 
@@ -108,7 +116,12 @@ The descriptor replaces the earlier approach of weak-symbol `extern` declaration
 
 ### 3.4 Capability model
 
-Optional callbacks are expressed as `NULL` function pointers. The core checks them before use (e.g. powercap calls are skipped, with a clear error, when no CPU backend or no `set_powercap` exists). Optional telemetry that is unavailable returns `METRIC_NOT_SUPPORTED`, which is serialized as `NOT_SUPPORTED` in the CSV output. This avoids silently mixing "zero energy" with "not measurable".
+Optional callbacks are expressed as `NULL` function pointers. The core checks
+them before use (e.g. powercap calls are skipped, with a clear error, when no
+CPU backend or no `set_powercap` exists). A backend declares its own metrics;
+unavailable telemetry returns `METRIC_NOT_SUPPORTED`, serialized as
+`NOT_SUPPORTED` in the corresponding dynamic CSV column. This avoids silently
+mixing "zero energy" with "not measurable".
 
 ---
 
@@ -123,11 +136,14 @@ Implemented in `main.c` (`get_backend_root`, `load_backend_category`, `load_back
    The executable path is obtained from `/proc/self/exe`, so symlinked invocations resolve correctly.
 2. **Scan** `cpu/` and `gpu/` with `scandir`; every sub-directory is a candidate implementation.
 3. **Load** `<implementation>/backend.so` with `dlopen(RTLD_NOW | RTLD_LOCAL)` and look up the descriptor with `dlsym`.
-4. **Validate** the descriptor: type matches the category, and all required callbacks are non-NULL. Invalid plugins are rejected and reported, never executed.
+4. **Validate** the descriptor: type matches the category, required callbacks and metric descriptors are valid, and metric keys are unique within the backend. Invalid plugins are rejected and reported, never executed.
 5. **Select**: for each category, among plugins whose `detect()` returns 1, choose the one with the highest `priority`. (Dedicated hardware, such as a discrete GPU with a direct energy counter, can thus override a generic implementation by declaring a higher priority.)
 6. **Clean up** at exit: active backends' `cleanup()`, then `dlclose` of all handles.
 
-Adding hardware support therefore consists of creating a new folder with a source file, a `backend.mk` and the descriptor export. No change to `main.c`, the Makefile logic or any registry is required.
+Adding hardware support therefore consists of creating a new folder with a
+source file, backend-owned metric descriptors, a generic getter and the
+descriptor export. No change to `main.c`, the Makefile logic or any registry is
+required.
 
 ---
 
@@ -147,7 +163,7 @@ Each implementation provides an optional `backend.mk` using the naming conventio
 
 `BACKEND_HOST_LDLIBS` exists for a practical reason: some dependencies (e.g. the Intel RAPL powercap libraries on the test machine) are installed only as non-PIC static archives, which cannot be linked into a shared object. They are linked into the executable with `--whole-archive`, and exposed to plugins through `-rdynamic`.
 
-Optional dependencies (e.g. NVML header and library for the NVIDIA plugin) are detected at build time; if absent the plugin is skipped with a vendor-neutral message and the rest of the framework still builds.
+Optional dependencies are checked per backend at build time. For example, the Intel CPU plugin is skipped unless both powercap/raplcap headers and libraries are present, and the NVIDIA plugin is skipped unless both the NVML header and library are present. A missing optional dependency therefore does not prevent the core or other eligible plugins from building. Plugins that build still perform hardware detection at runtime, so only compatible hardware is selected.
 
 ---
 
@@ -176,14 +192,50 @@ Each backend tracks whether the "before" and "after" samples were read successfu
 ### 6.4 Temperature semantics
 Previously, when no GPU sensor existed, the CPU temperature was copied into the GPU temperature column. This produced misleading data (a "GPU temperature" that was not measured). The fallback was removed:
 
-- `GpuTemperature` is a direct sensor reading or `NOT_SUPPORTED`.
+- `Temperature` is a direct sensor reading or `NOT_SUPPORTED`.
 - The Intel integrated GPU backend reads hwmon sensors (`/sys/class/hwmon/*/temp*_label` whose label starts with `GPU`). The CPU package temperature is deliberately **not** used even though the iGPU shares the package, because it is a package-level value and not a GPU sensor.
 - `detect()` for the integrated GPU backend returns 1 if either the PP1 energy counter or a GPU temperature sensor is accessible.
 
-### 6.5 Over-time sampling
-`--overtime` mode records accumulated energy per sampling tick, which provides time-resolved profiles and mitigates the multiple-wrap limitation of a single start/stop window.
+### 6.5 Memory semantics
+The standard CSV reports `CPU_Memory_KB`, the maximum resident set size in KiB measured with `wait4()` (`ru_maxrss`). This is a separate command execution used to estimate workload memory, rather than a measurement made during each energy-sampling run.
 
-### 6.6 NVIDIA detection
+The framework metadata column `CPU_Memory_KB` reports maximum resident set size in KiB
+measured with `wait4()` (`ru_maxrss`). This is a separate command execution used to
+estimate workload memory, rather than a measurement made during each
+energy-sampling run.
+
+A backend may declare a process-scoped metric such as `VRAM` with unit `MiB`.
+The NVIDIA backend queries NVML process lists for the workload process and its
+descendants and sums their allocated memory. The standard mode polls peak
+metrics every 50 ms during execution; over-time mode records the observed
+process-scoped value at each sample. Very short-lived allocations may be
+missed. If the driver, permissions or GPU backend cannot provide per-process
+data, the value is `NOT_SUPPORTED`. This process-level approach avoids
+attributing allocations belonging to unrelated jobs on a shared accelerator
+to the measured workload. Integrated GPUs that share system RAM do not report
+separate VRAM through the current backend.
+
+### 6.6 Dynamic CSV schema
+
+The standard CSV starts with `Language,Program,Powercap,Time_ms,CPU_Memory_KB`; the
+over-time CSV starts with `Language,Program,Powercap,Timestamp_ms`. These common
+metadata fields are followed by columns declared by the selected plugins, in
+CPU-then-GPU order. A metric column is named
+`<category>.<metric-name>_<unit>`, for example `cpu.Package_J` or
+`gpu.VRAM_MiB`. Thus, machines with different selected backends can have
+different headers. The `--csv-header` and `--overtime-csv-header` modes print
+the current runtime schema, and the measurement wrapper uses that header when
+aggregating output from multiple workloads.
+
+### 6.7 Over-time sampling
+`--overtime` mode records accumulated window metrics per sampling tick, which
+provides time-resolved profiles and mitigates the multiple-wrap limitation of a
+single start/stop window. Gauge and process-scoped metrics are recorded at each
+tick. Standard-mode metric behavior is declared by each backend: window metrics
+use start/stop samples, gauges are read after the workload, and peak metrics are
+polled during execution.
+
+### 6.8 NVIDIA detection
 Detection is based on NVML initialisation and device count (`nvmlInit`, `nvmlDeviceGetCount`), consistent between the build step (header and library presence) and runtime.
 
 ---
@@ -251,7 +303,7 @@ Result: 13 assertions passed, 0 failed.
 On a Lenovo ThinkPad T14 Gen 4 (Intel CPU with integrated GPU, no NVIDIA GPU):
 - With root: the Intel CPU and Intel integrated GPU backends were loaded and selected.
 - Without root: MSR access is denied; the table explains why (`no read access to /dev/cpu/0/msr (run with sudo)`) and energy metrics degrade to `NOT_SUPPORTED`.
-- The hwmon "GPU" label was not populated on this laptop, so `GpuTemperature` is `NOT_SUPPORTED`, as intended.
+- The hwmon "GPU" label was not populated on this laptop, so `Temperature` is `NOT_SUPPORTED`, as intended.
 
 ### 9.3 Static invariants
 - `main.c` contains no vendor identifiers.
@@ -276,7 +328,7 @@ On a Lenovo ThinkPad T14 Gen 4 (Intel CPU with integrated GPU, no NVIDIA GPU):
 ## 11. Future Work
 
 - Add an ABI/API version field to the descriptor and reject incompatible plugins.
-- Per-process attribution (e.g. cgroup or perf-based accounting) to complement package-level counters.
+- Per-process attribution (e.g. cgroup-based accounting) to complement package-level counters.
 - Additional backends (e.g. AMD GPU via ROCm SMI, other operating systems) via the existing plugin mechanism.
 - Install target (`make install`) using the `../lib/greenmeasurer/` lookup path.
 - Integration tests with recorded counter traces to validate rollover and unit conversion on real register values.
@@ -292,7 +344,7 @@ On a Lenovo ThinkPad T14 Gen 4 (Intel CPU with integrated GPU, no NVIDIA GPU):
 4. **Implementation**: discovery (Section 4), build integration (Section 5), correctness measures (Section 6).
 5. **Evaluation**: functional tests (9.1), hardware case study (9.2); to add: overhead, accuracy versus an external power meter, extensibility effort (lines of code to add a new backend).
 6. **Discussion**: limitations (Section 10).
-7. **Related work**: tools such as PowerAPI, Scaphandre, perf/RAPL, CodeCarbon, pyJoules.
+7. **Related work**: tools such as PowerAPI, Scaphandre, RAPL-based tools, CodeCarbon and pyJoules.
 8. **Conclusion and future work**.
 
 ### Reproducibility checklist
