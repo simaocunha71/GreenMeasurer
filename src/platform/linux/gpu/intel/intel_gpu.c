@@ -134,7 +134,7 @@ static int intel_gpu_init(int device_idx) {
     if (fd >= 0) {
         uint64_t result = read_msr(fd, MSR_RAPL_POWER_UNIT);
         close(fd);
-        if (result != (uint64_t)-1) {
+        if (result != (uint64_t)-1 && result != 0) {
             energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
             energy_units_valid = 1;
         }
@@ -169,6 +169,8 @@ static int intel_gpu_sample_stop(int device_idx) {
     if (result == (uint64_t)-1) return -1;
     pp1_after = (uint32_t)result;
     pp1_after_valid = 1;
+    // A counter that stays at 0 means the domain is absent or stubbed (e.g. in a VM).
+    if (pp1_before == 0 && pp1_after == 0) pp1_before_valid = pp1_after_valid = 0;
     return 0;
 }
 

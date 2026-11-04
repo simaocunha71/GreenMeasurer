@@ -106,7 +106,8 @@ static int intel_init(int core) {
     uint64_t result = read_msr(fd, MSR_RAPL_POWER_UNIT);
     close(fd);
 
-    if (result == (uint64_t)-1) return -1;
+    // A VM can expose the MSR device but return zeros for every register.
+    if (result == (uint64_t)-1 || result == 0) return -1;
     energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
     energy_units_valid = 1;
     return 0;
@@ -173,6 +174,10 @@ static int intel_sample_stop(int core) {
     }
 
     close(fd);
+    // A real RAPL counter never stays at 0; a stub or unsupported domain does.
+    if (package_before == 0 && package_after == 0) { package_before_valid = package_after_valid = 0; }
+    if (core_before == 0 && core_after == 0) { core_before_valid = core_after_valid = 0; }
+    if (dram_before == 0 && dram_after == 0) { dram_before_valid = dram_after_valid = 0; }
     return (package_after_valid && core_after_valid) ? 0 : -1;
 }
 

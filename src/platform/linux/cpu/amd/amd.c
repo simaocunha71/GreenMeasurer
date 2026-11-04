@@ -57,7 +57,7 @@ static int amd_init(int core) {
     uint64_t result = read_msr(fd, AMD_MSR_RAPL_PWR_UNIT);
     close(fd);
 
-    if (result == (uint64_t)-1) return -1;
+    if (result == (uint64_t)-1 || result == 0) return -1;
     energy_units = pow(0.5, (double)((result >> 8) & 0x1f));
     energy_units_valid = 1;
     return 0;
@@ -102,6 +102,8 @@ static int amd_sample_stop(int core) {
         amd_core_raw_after = (uint32_t)core_energy;
         amd_core_after_valid = 1;
     }
+    if (amd_pkg_raw_before == 0 && amd_pkg_raw_after == 0) amd_pkg_before_valid = amd_pkg_after_valid = 0;
+    if (amd_core_raw_before == 0 && amd_core_raw_after == 0) amd_core_before_valid = amd_core_after_valid = 0;
     return (amd_pkg_after_valid && amd_core_after_valid) ? 0 : -1;
 }
 
