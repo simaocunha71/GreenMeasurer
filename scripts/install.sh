@@ -11,20 +11,36 @@ if [ "$OS" = "Linux" ]; then
     sudo apt update
 
     echo "#### Installing base build tools and hardware discovery..."
-    sudo apt install -y git cmake pkg-config build-essential pciutils python3 python3-venv
+    sudo apt install -y git cmake pkg-config build-essential pciutils python3 python3-pip python3-venv
 
     echo "#### Installing lm-sensors and MSR tools..."
     sudo apt install -y lm-sensors msr-tools
+    
+    # Load MSR and RAPL kernel modules (required for bare-metal CPU energy reads)
     sudo modprobe msr 2>/dev/null || true
+    sudo modprobe intel_rapl_common 2>/dev/null || true
+    sudo modprobe intel_rapl_msr 2>/dev/null || true
 
     echo "#### Installing Linux perf..."
     sudo apt-get install -y linux-tools-common linux-tools-generic "linux-tools-$(uname -r)" || true
 
-    # Detect NVIDIA GPU via PCI vendor ID (0x10de) or device files
-    HAS_NVIDIA=$( (grep -qi "10de" /sys/bus/pci/devices/*/vendor 2>/dev/null || [ -e /dev/nvidiactl ] || lspci 2>/dev/null | grep -qi nvidia) && echo yes || echo no )
+    # If running in WSL, ensure dynamic linker finds Windows host NVIDIA libraries
+    if [ -d "/usr/lib/wsl/lib" ]; then
+        if [ ! -f "/etc/ld.so.conf.d/wsl.conf" ]; then
+            echo "/usr/lib/wsl/lib" | sudo tee /etc/ld.so.conf.d/wsl.conf > /dev/null
+            sudo ldconfig
+        fi
+    fi
+
+    # Robust NVIDIA hardware detection (covers Bare-metal, standard PCI, and WSL2)
+    HAS_NVIDIA=$( (command -v nvidia-smi &>/dev/null || \
+                   [ -f /usr/lib/wsl/lib/libnvidia-ml.so.1 ] || \
+                   [ -e /dev/nvidiactl ] || \
+                   grep -qi "10de" /sys/bus/pci/devices/*/vendor 2>/dev/null || \
+                   lspci 2>/dev/null | grep -qi nvidia) && echo yes || echo no )
 
     if [ "$HAS_NVIDIA" = "yes" ]; then
-        echo "#### NVIDIA hardware detected. Installing NVML headers..."
+        echo "#### NVIDIA hardware detected. Installing NVML development files..."
         if ! sudo apt install -y libnvidia-ml-dev 2>/dev/null; then
             echo "[WARN] libnvidia-ml-dev not found in primary repos, attempting nvidia-cuda-dev..."
             sudo apt install -y nvidia-cuda-dev || true
