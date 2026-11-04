@@ -52,22 +52,23 @@ a:hover { text-decoration: underline; }
   color: #fff; padding: 3.5rem 0 3rem;
 }
 .hero-logo { width: 72px; height: 72px; margin-bottom: 1rem; filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.35)); }
-.hero h1 { font-size: 2.4rem; line-height: 1.2; margin: 0 0 1rem; letter-spacing: -0.02em; max-width: 52rem; }
-.lead { font-size: 1.15rem; color: #cfe8d6; max-width: 48rem; margin: 0 0 1.5rem; }
-.hero-cmd { max-width: 52rem; border-color: rgba(167, 239, 119, 0.4); }
+.hero h1 { font-size: 2.4rem; line-height: 1.2; margin: 0 0 1rem; letter-spacing: -0.02em; max-width: none; }
+.lead { font-size: 1.15rem; color: #cfe8d6; max-width: none; margin: 0 0 1.5rem; }
+.hero-cmd { max-width: none; border-color: rgba(167, 239, 119, 0.4); }
 
-.actions { display: flex; gap: 0.7rem; margin: 1.5rem 0 2.5rem; }
+.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.5rem 0 1.5rem; }
 .btn {
-  display: inline-block; padding: 0.55rem 1.2rem; border-radius: 6px; font-weight: 600;
+  display: block; text-align: center; padding: 0.7rem 1.2rem; border-radius: 6px; font-weight: 600;
   border: 1px solid var(--border); background: #fff; color: var(--text);
 }
 .btn:hover { text-decoration: none; background: var(--alt); }
+.hero .cards { margin-top: 1rem; }
 .hero .btn { background: transparent; color: #fff; border-color: rgba(255, 255, 255, 0.45); }
 .hero .btn:hover { background: rgba(255, 255, 255, 0.12); }
 .btn.primary, .hero .btn.primary { background: var(--lime); border-color: var(--lime); color: var(--deep); }
 .btn.primary:hover, .hero .btn.primary:hover { background: #bff59a; }
 
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
 .card { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(167, 239, 119, 0.35); border-radius: 8px; padding: 1rem 1.1rem; }
 .card h3 { margin: 0 0 0.3rem; font-size: 1.02rem; color: var(--lime); }
 .card p { margin: 0; color: #dcefe1; font-size: 0.94rem; }
@@ -100,6 +101,9 @@ li { margin: 0.35rem 0; }
 
 footer { border-top: 2px solid var(--accent); background: var(--deep); text-align: center; color: #b9d6c1; font-size: 0.9rem; padding: 1rem 0; }
 
+@media (max-width: 800px) {
+  .cards, .actions { grid-template-columns: 1fr; }
+}
 @media (max-width: 600px) {
   .hero h1 { font-size: 1.8rem; }
   .topbar nav { gap: 0.7rem; }
