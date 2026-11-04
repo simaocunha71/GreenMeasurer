@@ -21,7 +21,7 @@ body {
   background: var(--bg);
 }
 
-.wrap { max-width: 56rem; margin: 0 auto; padding: 0 1.25rem; }
+.wrap { max-width: 78rem; margin: 0 auto; padding: 0 1.25rem; }
 
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -33,7 +33,7 @@ a:hover { text-decoration: underline; }
   border-bottom: 2px solid var(--accent);
 }
 .topbar-inner {
-  max-width: 64rem; margin: 0 auto; padding: 0.7rem 1.25rem;
+  max-width: 78rem; margin: 0 auto; padding: 0.7rem 1.25rem;
   display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
 }
 .brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 700; font-size: 1.1rem; color: #fff; }
@@ -52,9 +52,9 @@ a:hover { text-decoration: underline; }
   color: #fff; padding: 3.5rem 0 3rem;
 }
 .hero-logo { width: 72px; height: 72px; margin-bottom: 1rem; filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.35)); }
-.hero h1 { font-size: 2.4rem; line-height: 1.2; margin: 0 0 1rem; letter-spacing: -0.02em; max-width: 40rem; }
-.lead { font-size: 1.15rem; color: #cfe8d6; max-width: 38rem; margin: 0 0 1.5rem; }
-.hero-cmd { max-width: 40rem; border-color: rgba(167, 239, 119, 0.4); }
+.hero h1 { font-size: 2.4rem; line-height: 1.2; margin: 0 0 1rem; letter-spacing: -0.02em; max-width: 52rem; }
+.lead { font-size: 1.15rem; color: #cfe8d6; max-width: 48rem; margin: 0 0 1.5rem; }
+.hero-cmd { max-width: 52rem; border-color: rgba(167, 239, 119, 0.4); }
 
 .actions { display: flex; gap: 0.7rem; margin: 1.5rem 0 2.5rem; }
 .btn {
@@ -94,6 +94,7 @@ tr:last-child td { border-bottom: 0; }
 
 .note { background: #f1fadf; border: 1px solid #b6d86f; border-left: 4px solid var(--accent); border-radius: 6px; padding: 0.7rem 0.9rem; }
 
+p, li { max-width: 68rem; }
 ul { padding-left: 1.3rem; }
 li { margin: 0.35rem 0; }
 
