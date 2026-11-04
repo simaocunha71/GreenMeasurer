@@ -711,6 +711,7 @@ make -C src</pre>
     <li><b>Counter wrap-around.</b> 32-bit counters are handled for one wrap between readings. More than one cannot be detected.</li>
     <li><b>Sampling.</b> Over-time mode samples at the requested interval. Short peaks can be missed, and timestamps are approximate.</li>
     <li><b>Hardware support varies.</b> A backend can build but not be detected, or be selected and still miss some metrics. Those show as <code>NOT_SUPPORTED</code>.</li>
+    <li><b>VMs and WSL.</b> Hypervisors often expose the MSR device but return zeros. GreenMeasurer detects this and reports <code>NOT_SUPPORTED</code> instead of 0.</li>
     <li><b>AMD.</b> Implemented but not validated on real hardware yet.</li>
     <li><b>Power caps can persist</b> after a run. Check your system settings afterwards.</li>
     <li><b>Plugins are loaded with <code>dlopen</code>.</b> Only use backend directories you trust, especially as root.</li>
