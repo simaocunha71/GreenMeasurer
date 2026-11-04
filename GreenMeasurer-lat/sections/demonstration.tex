@@ -1,7 +1,7 @@
 \section{Demonstration}
 \label{demo_section}
 
-In this section, we demonstrate the use of GreenMeasurer in both calibration modes and for the three types of measurements it can perform while executing the recursive Fibonacci(55) implementation in C. We used this program as a simple example that generates enough computational load to produce stable and comparable energy measurements. Using smaller input values would lead to shorter executions, making the results more sensitive to background system activity and measurement noise.
+In this section, we demonstrate the use of GreenMeasurer in both calibration modes and for the two types of measurements it can perform while executing the recursive Fibonacci(55) implementation in C. We used this program as a simple example that generates enough computational load to produce stable and comparable energy measurements. Using smaller input values would lead to shorter executions, making the results more sensitive to background system activity and measurement noise.
 
 The machine used for the demonstration was running Linux Ubuntu~22.04, equipped with an Intel(R) Core(TM) i7-8750H processor (6~cores, 12~threads, base clock 2.2~GHz, turbo speed 4.1~GHz), 16~GB of RAM and cache sizes of 384~KB (L1), 1.5~MB (L2) and 9~MB (L3).
 
@@ -15,24 +15,10 @@ The first step is temperature calibration. To do this, we executed a \textit{sle
 Next, we performed the power cap calibration to determine the optimal power cap value. In this step, we aimed to identify the power cap at which the \textit{Package} power consumption is minimized. We tested power cap settings ranging from 2 W to 25 W using the Python implementation of the Fibonacci algorithm provided in the \texttt{Utils/} folder, with an input value of 40. During this process, we also configured three additional parameters: a time limit of 4~hours for each program execution, a CPU temperature variance threshold of 5\textdegree{}C and the number of repetitions for each program (4 runs).
  The standard output of this calibration, available in the file \texttt{powercap\_report.txt}, summarizes the results. Based on this analysis, we found that a power cap value of \textit{4~W} provides the most efficient balance. Therefore, all subsequent measurements were conducted using this setting. In the following subsections, we present the results for each type of measurement offered by GreenMeasurer. For this purpose, we used the \texttt{measure.sh} Bash script.
 
-\subsection{\textit{perf} Measurements}
-\label{perfM_results}
-
-To evaluate the \textit{perf} metrics described in Section~\ref{perf_section} for the Fibonacci algorithm in C with an input of 55, we executed the program both without power capping and with a power cap of 4~W, repeating each configuration 10 times (\textit{n\_times = 10}). We maintained the same \textit{time\_out\_limit} of 4~hours and the CPU temperature variance threshold of 5\textdegree C, as defined during the power cap calibration process. 
-
-The results are presented in Figure~\ref{fig:perf_res}. We can observe that there are no significant differences in the \textit{perf} metrics between executions with and without power capping. As this is a tool paper, we do not perform an in-depth analysis of the \textit{perf} metrics in this context; instead, our goal is to demonstrate that GreenMeasurer is capable of collecting a wide range of \textit{perf} metrics for any target software.
-
-\begin{figure}[!ht]
-    \centering
-    \includegraphics[width=\linewidth]{images/results/perf.pdf}
-    \caption{\textit{perf} Results for Fibonacci(55) in C}
-    \label{fig:perf_res}
-\end{figure}
-
 \subsection{Standard Measurements}
 \label{stdM_results}
 
-To demonstrate how GreenMeasurer can measure the energy consumption and execution time of a software system (referred to here as \textit{standard measurements}), we ran the same Fibonacci program in C using the parameters from Section~\ref{perfM_results} with a power cap of 4~W and without power cap enabled. Figure~\ref{fig:std} shows the RAPL energy components (\textit{Package}, \textit{Core}, \textit{DRAM} and \textit{GPU}) along with the runtime for all 10 measurements. We observe that applying a power cap reduces the energy consumption of all components but increases the runtime. This behavior was previously reported in~\cite{10.1145/3687997.3695638}, although in that study, energy consumption was measured only at the \textit{Package} level. Our primary goal here is to demonstrate that GreenMeasurer can measure energy components and runtime for software systems, so an in-depth analysis of these results is beyond the scope of this paper.
+To demonstrate how GreenMeasurer can measure the energy consumption and execution time of a software system (referred to here as \textit{standard measurements}), we ran the Fibonacci algorithm in C with an input of 55, both without power capping and with a power cap of 4~W, repeating each configuration 10 times (\textit{n\_times = 10}), with a \textit{time\_out\_limit} of 4~hours and a CPU temperature variance threshold of 5\textdegree C, as defined during the power cap calibration process. Figure~\ref{fig:std} shows the RAPL energy components (\textit{Package}, \textit{Core}, \textit{DRAM} and \textit{GPU}) along with the runtime for all 10 measurements. We observe that applying a power cap reduces the energy consumption of all components but increases the runtime. This behavior was previously reported in~\cite{10.1145/3687997.3695638}, although in that study, energy consumption was measured only at the \textit{Package} level. Our primary goal here is to demonstrate that GreenMeasurer can measure energy components and runtime for software systems, so an in-depth analysis of these results is beyond the scope of this paper.
 
 \begin{figure}[!ht]
     \centering
@@ -43,7 +29,7 @@ To demonstrate how GreenMeasurer can measure the energy consumption and executio
 
 \subsection{Over-Time Measurements}
 
-In this type of measurement, we executed the same Fibonacci program in C using the parameters described in Section~\ref{perfM_results} and Section~\ref{stdM_results}, except for the number of executions (\textit{n\_times}), which ranged from 10 to 1 for demonstration purposes only. The experiments were conducted both with a 4~W power cap and without any power cap enabled. This setup allows us to compare the four energy counters under consideration throughout the program's execution. As shown in Figure~\ref{fig:Overtime_res}, the CPU temperature increases during execution without a power cap but decreases when the power cap is applied, which is consistent with the expected behavior due to power limitation. Furthermore, the total energy consumption decreases when the power cap is enabled, similarly to what was observed in Section~\ref{stdM_results}. As a suggestion for future researchers, increasing the measurement interval could provide a more detailed view of the results. Overall, these experiments demonstrate that GreenMeasurer can effectively measure both energy consumption and CPU temperature during the execution of a software system.
+In this type of measurement, we executed the same Fibonacci program in C using the parameters described in Section~\ref{stdM_results}, except for the number of executions (\textit{n\_times}), which ranged from 10 to 1 for demonstration purposes only. The experiments were conducted both with a 4~W power cap and without any power cap enabled. This setup allows us to compare the four energy counters under consideration throughout the program's execution. As shown in Figure~\ref{fig:Overtime_res}, the CPU temperature increases during execution without a power cap but decreases when the power cap is applied, which is consistent with the expected behavior due to power limitation. Furthermore, the total energy consumption decreases when the power cap is enabled, similarly to what was observed in Section~\ref{stdM_results}. As a suggestion for future researchers, increasing the measurement interval could provide a more detailed view of the results. Overall, these experiments demonstrate that GreenMeasurer can effectively measure both energy consumption and CPU temperature during the execution of a software system.
 
 \begin{figure}[!ht]
     \centering

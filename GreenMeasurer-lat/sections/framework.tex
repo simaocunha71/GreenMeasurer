@@ -26,7 +26,7 @@ An unavailable value is written as \texttt{NOT\_SUPPORTED}, never as zero.
     \label{architecture_diagram}
 \end{figure*}
 
-In Table \ref{table:arguments}, we present the parameters of \textit{GreenMeasurer}, many of which are also used for \textit{perf} measurements (Section~\ref{perf_section}), \textit{over-time} measurements (Section~\ref{overtime_section}) and the two calibration modes (Section~\ref{calibration_modes_section}).
+In Table \ref{table:arguments}, we present the parameters of \textit{GreenMeasurer}, many of which are shared by the \textit{standard} mode, \textit{over-time} measurements (Section~\ref{overtime_section}) and the two calibration modes (Section~\ref{calibration_modes_section}).
 
 \begin{table*}[t]
     \centering
@@ -109,7 +109,7 @@ A backend implements the interface in \texttt{energy-backend.h}: a \texttt{detec
 
 \subsection{System Requirements}
 
-GreenMeasurer runs on Linux and on macOS (Apple Silicon). The \texttt{src/Makefile} selects \texttt{platform/linux} or \texttt{platform/macos} according to the operating system. Reading the energy counters requires root privileges. On Linux the Intel backends use RAPL through the \texttt{msr} kernel module; CPU temperature is read with \textit{lm-sensors} \cite{lm-sensors}; the Intel power-capping support uses \textit{powercap} \cite{powercap2025} and \textit{raplcap} \cite{raplcap}; the NVIDIA backend needs the NVML header and library at build time. A missing optional dependency only skips the backend that needs it. On macOS there are no RAPL or MSR counters, so the Apple backends run \texttt{powermetrics} in the background and integrate the average power it reports in each sampling interval (100 ms by default) into energy; the energy is thus known only to within one sampling interval. There is no power capping and no CPU temperature on macOS. The helper scripts that disable Wi-Fi and use \textit{perf} are Linux-only. On Linux, a dedicated setup script installs the dependencies (\textit{i.e.} \textit{raplLibrariesSetup.sh}).
+GreenMeasurer runs on Linux and on macOS (Apple Silicon). The \texttt{src/Makefile} selects \texttt{platform/linux} or \texttt{platform/macos} according to the operating system. Reading the energy counters requires root privileges. On Linux the Intel backends use RAPL through the \texttt{msr} kernel module; CPU temperature is read with \textit{lm-sensors} \cite{lm-sensors}; the Intel power-capping support uses \textit{powercap} \cite{powercap2025} and \textit{raplcap} \cite{raplcap}; the NVIDIA backend needs the NVML header and library at build time. A missing optional dependency only skips the backend that needs it. On macOS there are no RAPL or MSR counters, so the Apple backends run \texttt{powermetrics} in the background and integrate the average power it reports in each sampling interval (100 ms by default) into energy; the energy is thus known only to within one sampling interval. There is no power capping and no CPU temperature on macOS. The helper scripts that disable Wi-Fi are Linux-only. On Linux, a dedicated setup script installs the dependencies (\textit{i.e.} \textit{raplLibrariesSetup.sh}).
 
 \subsection{Makefile Integration}
 
@@ -119,8 +119,7 @@ The standard targets are:
 \begin{itemize}
     \item \texttt{compile} - builds the program using the corresponding compiler or interpreter;
     \item \texttt{run} - executes the compiled or interpreted program with a parametrized input;
-    \item \texttt{measure} - runs the program and collects energy and runtime data with the selected backends;
-    \item \texttt{perf} - gathers detailed CPU performance metrics using Linux \texttt{perf} (see Section \ref{perf_section});
+    \item \texttt{standard} - runs the program and collects energy and runtime data with the selected backends;
     \item \texttt{overtime} - runs the program and collects energy data with the selected backends during the program's execution time (see Section \ref{overtime_section});
     \item \texttt{clean} - removes all generated binaries and temporary files.
 \end{itemize}
@@ -151,30 +150,6 @@ sudo ./main --powercap-calibration -range <min>-<max>
 \end{verbatim}
 
 
-\subsection{perf Measurements}
-\label{perf_section}
-
-In addition to energy measurements, GreenMeasurer can collect detailed CPU performance metrics using the Linux \textit{perf} tool. This functionality captures low-level hardware counters, allowing researchers to correlate energy consumption with processor activity. The specific metrics collected by GreenMeasurer are defined in the \texttt{perf\_events.json} configuration file, which can be easily modified to include other \textit{perf} events. Currently, the metrics collected by \textit{GreenMeasurer} include:
-
-
-\begin{itemize}
-    \item \textbf{cycles} - The total number of CPU cycles consumed by the program.
-    \item \textbf{instructions} - The total number of instructions executed by the program.
-    \item \textbf{cache-misses} - The total number of cache misses (both data and instruction cache).
-    \item \textbf{branch-misses} - The total number of branch prediction misses.
-    \item \textbf{stalled-cycles-frontend} - The number of cycles the instruction fetch unit was stalled.
-    \item \textbf{stalled-cycles-backend} - The number of cycles the instruction execution unit was stalled.
-    \item \textbf{resource-stalls.any} - Total number of cycles where execution was stalled due to resource limitations.
-    \item \textbf{mem\_trans\_retired.load\_latency\_gt\_128} - Number of memory transactions with load latency greater than 128 cycles.
-    \item \textbf{cpu-cycles} - Total number of CPU cycles (repeat of the \textit{cycles} metric).
-    \item \textbf{uops\_executed.stall\_cycles} - Number of cycles during which micro-operations were stalled.
-\end{itemize}
-
-
-
-Automation with GreenMeasurer is provided through the scripts and Makefiles. Running \textit{make perf} in a language-specific directory executes the target program while collecting all metrics and stores the results in \texttt{perf\_stats.csv}. This setup enables combined analysis of energy consumption and performance, facilitating studies of energy-performance trade-offs.
-
-
 \subsection{Over-Time Measurements}
 \label{overtime_section}
 
@@ -198,7 +173,7 @@ An automated and simplified way to run \textit{GreenMeasurer} on Linux is illust
 
 First, the script disables the Wi-Fi interface (the user must identify the correct interface name). It then builds the framework, including the core and the available backends. 
 
-After this setup, for each program in each programming language to be analyzed, and for each power cap value to be tested, the script compiles the program and executes the corresponding measurement procedure - either \textit{measure}, \textit{perf} (Section~\ref{perf_section}) or \textit{over-time} (Section~\ref{overtime_section}).
+After this setup, for each program in each programming language to be analyzed, and for each power cap value to be tested, the script compiles the program and executes the corresponding measurement procedure - either \textit{measure} or \textit{over-time} (Section~\ref{overtime_section}).
 
 \begin{figure*}[!ht]
     \centering
