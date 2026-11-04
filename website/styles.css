@@ -51,18 +51,19 @@ a:hover { text-decoration: underline; }
               linear-gradient(160deg, #0f2a1b 0%, #14452a 60%, #1b6a3c 100%);
   color: #fff; padding: 3.5rem 0 3rem;
 }
-.hero-logo { width: 72px; height: 72px; margin-bottom: 1rem; filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.35)); }
-.hero h1 { font-size: 2.4rem; line-height: 1.2; margin: 0 0 1rem; letter-spacing: -0.02em; max-width: none; }
-.lead { font-size: 1.15rem; color: #cfe8d6; max-width: none; margin: 0 0 1.5rem; }
-.hero-cmd { max-width: none; border-color: rgba(167, 239, 119, 0.4); }
+.hero { text-align: center; }
+.hero-logo { width: 88px; height: 88px; margin: 0 auto 0.8rem; display: block; filter: drop-shadow(0 0 18px rgba(167, 239, 119, 0.35)); }
+.hero h1 { font-size: 2.4rem; line-height: 1.2; margin: 0 0 1rem; letter-spacing: -0.02em; max-width: 50rem; margin-left: auto; margin-right: auto; }
+.lead { font-size: 1.15rem; color: #cfe8d6; max-width: 42rem; margin: 0 auto 1.5rem; }
+.hero-cmd { max-width: 44rem; margin: 0 auto; text-align: left; border-color: rgba(167, 239, 119, 0.4); }
 
-.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.5rem 0 1.5rem; }
+.actions { display: flex; justify-content: center; gap: 1rem; margin: 1.5rem 0 2.5rem; }
+.actions .btn { min-width: 11rem; }
 .btn {
   display: block; text-align: center; padding: 0.7rem 1.2rem; border-radius: 6px; font-weight: 600;
   border: 1px solid var(--border); background: #fff; color: var(--text);
 }
 .btn:hover { text-decoration: none; background: var(--alt); }
-.hero .cards { margin-top: 1rem; }
 .hero .btn { background: transparent; color: #fff; border-color: rgba(255, 255, 255, 0.45); }
 .hero .btn:hover { background: rgba(255, 255, 255, 0.12); }
 .btn.primary, .hero .btn.primary { background: var(--lime); border-color: var(--lime); color: var(--deep); }
@@ -70,6 +71,7 @@ a:hover { text-decoration: underline; }
 
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
 .card { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(167, 239, 119, 0.35); border-radius: 8px; padding: 1rem 1.1rem; }
+.card { text-align: left; }
 .card h3 { margin: 0 0 0.3rem; font-size: 1.02rem; color: var(--lime); }
 .card p { margin: 0; color: #dcefe1; font-size: 0.94rem; }
 
@@ -102,7 +104,8 @@ li { margin: 0.35rem 0; }
 footer { border-top: 2px solid var(--accent); background: var(--deep); text-align: center; color: #b9d6c1; font-size: 0.9rem; padding: 1rem 0; }
 
 @media (max-width: 800px) {
-  .cards, .actions { grid-template-columns: 1fr; }
+  .cards { grid-template-columns: 1fr; }
+  .actions { flex-direction: column; align-items: center; }
 }
 @media (max-width: 600px) {
   .hero h1 { font-size: 1.8rem; }
