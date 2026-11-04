@@ -15,6 +15,14 @@
 #include <limits.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#define BACKEND_PLATFORM_DIR "platform/macos"
+#define BACKEND_INSTALLED_DIR "../lib/greenmeasurer/platform/macos"
+#else
+#define BACKEND_PLATFORM_DIR "platform/linux"
+#define BACKEND_INSTALLED_DIR "../lib/greenmeasurer/platform/linux"
+#endif
 
 #include "include/energy-backend.h"
 
@@ -272,8 +280,8 @@ static int is_directory(const char *path) {
     return stat(path, &status) == 0 && S_ISDIR(status.st_mode);
 }
 
-/* Backend lookup order: $GREENMEASURER_BACKEND_DIR, <exe dir>/platform/linux,
-   <exe dir>/../lib/greenmeasurer/platform/linux. Each root contains cpu/ and gpu/. */
+/* Backend lookup order: $GREENMEASURER_BACKEND_DIR, <exe dir>/platform/<linux|macos>,
+   <exe dir>/../lib/greenmeasurer/platform/<linux|macos>. Each root contains cpu/ and gpu/. */
 static int get_backend_root(void) {
     const char *override_dir = getenv(BACKEND_DIR_ENV);
     if (override_dir && override_dir[0] != '\0') {
@@ -286,6 +294,13 @@ static int get_backend_root(void) {
     }
 
     char executable_path[PATH_MAX];
+#ifdef __APPLE__
+    uint32_t path_size = sizeof(executable_path);
+    if (_NSGetExecutablePath(executable_path, &path_size) != 0) {
+        fprintf(stderr, "[ERROR] Unable to resolve executable path.\n");
+        return -1;
+    }
+#else
     ssize_t length = readlink("/proc/self/exe", executable_path, sizeof(executable_path) - 1);
     if (length < 0 || (size_t)length >= sizeof(executable_path) - 1) {
         perror("[ERROR] Unable to resolve executable path");
@@ -293,6 +308,7 @@ static int get_backend_root(void) {
     }
 
     executable_path[length] = '\0';
+#endif
     char *separator = strrchr(executable_path, '/');
     if (!separator) {
         fprintf(stderr, "[ERROR] Executable path has no parent directory.\n");
@@ -301,8 +317,8 @@ static int get_backend_root(void) {
     *separator = '\0';
 
     static const char *const relative_roots[] = {
-        "platform/linux",
-        "../lib/greenmeasurer/platform/linux"
+        BACKEND_PLATFORM_DIR,
+        BACKEND_INSTALLED_DIR
     };
     for (size_t i = 0; i < sizeof(relative_roots) / sizeof(relative_roots[0]); i++) {
         char candidate[PATH_MAX];
@@ -749,6 +765,25 @@ static int waitForCommand(pid_t child_pid, double *peak_metric_values,
     return -1;
 }
 
+/* clock_nanosleep is not available on macOS, so sleep for the remaining time. */
+static void sleep_until_monotonic(const struct timespec *deadline) {
+#ifdef __APPLE__
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    struct timespec remaining = {
+        .tv_sec = deadline->tv_sec - now.tv_sec,
+        .tv_nsec = deadline->tv_nsec - now.tv_nsec
+    };
+    if (remaining.tv_nsec < 0) {
+        remaining.tv_sec--;
+        remaining.tv_nsec += 1000000000L;
+    }
+    if (remaining.tv_sec >= 0) nanosleep(&remaining, NULL);
+#else
+    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, deadline, NULL);
+#endif
+}
+
 static void* programWorks(void *arg) {
     FILE *fp = popen((const char *)arg, "r");
     if (!fp) { 
@@ -985,7 +1020,7 @@ static void* overtimeLogger(void *arg) {
             next_tick.tv_sec += 1;
         }
 
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next_tick, NULL);
+        sleep_until_monotonic(&next_tick);
         if (!ctx->run_flag || global_terminate) break;
 
         current_timestamp += ctx->interval_ms;

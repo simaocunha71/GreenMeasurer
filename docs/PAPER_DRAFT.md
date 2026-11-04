@@ -4,9 +4,9 @@
 
 ## Abstract
 
-GreenMeasurer is a Linux framework for measuring the energy consumption and execution time of software without modifying the target program. It combines a C measurement executable, hardware-specific energy backends, shell scripts and workload Makefiles. The executable provides standard repeated measurements and time-series energy sampling, as well as temperature and power-cap calibration workflows. A shared CPU/GPU backend interface and runtime plugin discovery separate measurement orchestration from hardware-specific counter access. The framework records energy, execution time, temperatures and memory-use data in CSV files, while reporting unsupported metrics explicitly rather than substituting unrelated values. This document describes the current architecture, operating requirements, measurement procedures, implementation status and validation needs.
+GreenMeasurer is a Linux and macOS framework for measuring the energy consumption and execution time of software without modifying the target program. It combines a C measurement executable, hardware-specific energy backends, shell scripts and workload Makefiles. The executable provides standard repeated measurements and time-series energy sampling, as well as temperature and power-cap calibration workflows. A shared CPU/GPU backend interface and runtime plugin discovery separate measurement orchestration from hardware-specific counter access. The framework records energy, execution time, temperatures and memory-use data in CSV files, while reporting unsupported metrics explicitly rather than substituting unrelated values. This document describes the current architecture, operating requirements, measurement procedures, implementation status and validation needs.
 
-**Index Terms—** software energy measurement, energy efficiency, RAPL, hardware telemetry, power capping, Linux.
+**Index Terms—** software energy measurement, energy efficiency, RAPL, hardware telemetry, power capping, Linux, macOS.
 
 ## I. Introduction
 
@@ -30,9 +30,26 @@ The remainder follows the organization of the supplied paper: Section II discuss
 
 Software-energy measurement tools differ in the level at which they operate, the hardware counters they use, and whether they require application instrumentation. Hardware interfaces such as Intel RAPL provide energy measurements for platform domains, while tools built around language-specific APIs can expose these measurements from within a program. The supplied paper discusses RAPL and power-capping interfaces [5]–[7], earlier energy-efficiency studies [8]–[10], and software tools including pyRAPL, jRAPL, CodeCarbon, Scaphandre and Kepler [13]–[17].
 
-GreenMeasurer focuses on an external, command-oriented workflow: it can measure an executable without requiring changes to its source. Its plugin architecture is intended to isolate the core from the vendor- and device-specific counter APIs. This differs from a claim that the framework provides process-level energy attribution: many available hardware counters represent a package, memory or accelerator domain and include activity outside the target process.
+GreenMeasurer is compared experimentally against two tools: **CodeCarbon** and **EnergiBridge**. CodeCarbon is a Python library that estimates energy and carbon emissions from hardware counters and, when they are unavailable, from models, and is typically integrated into the program under test. EnergiBridge is a cross-platform command-line tool that measures the energy of a command through hardware counters. [TODO: confirm the description, supported platforms and references of both tools against their current documentation before submission.]
 
-The bibliography and claims in this section must be checked against the final paper's reference list. The bracketed reference numbers above are retained from the supplied PDF and should not be treated as a newly verified bibliography.
+GreenMeasurer's positioning relative to them rests on three properties:
+
+1. **Ease of use.** The user supplies a command and a few parameters; no instrumentation or code change is required, and the same workflow applies to any language.
+2. **Ease of extension.** Hardware support is added by dropping a self-contained backend directory (CPU or GPU) into the source tree. The core, the Makefile and the CSV schema adapt automatically, with no vendor-specific branch in `main.c`.
+3. **Graceful degradation.** CPU and GPU backends are selected independently at runtime. A missing or unsupported backend is reported as `NOT_SUPPORTED` rather than aborting the run or silently substituting an estimate.
+
+Further capabilities are a built-in temperature-based stabilisation step (the run waits until temperatures are close to a calibrated baseline), standard and time-series (over-time) modes, and optional CPU power capping, which has been used in prior studies [cite]. All measurements are hardware-domain measurements (package, core, DRAM, GPU), not per-process attributions, and they include activity outside the target command.
+
+Additional advantages, each with its justification:
+
+- **Testable hardware support.** The plugin interface allows fake backends, and `make -C src test` uses them to check priority selection, undetected, invalid and unbuilt backends, the absence of a GPU or of any backend, an invalid backend directory, and the abort on power-cap failure. *Justification:* correct fallback behaviour is verified by tests without needing every hardware combination (these tests check orchestration, not counter accuracy). Tools that read counters directly from their own code cannot be tested this way.
+- **Self-describing, always-consistent output.** Each backend declares its metrics (name, unit, kind and scope), and the CSV header is generated from the selected backends. `--csv-header` and `--overtime-csv-header` print the columns for a machine without running a workload. *Justification:* the output cannot drift from what the hardware provides, and a new metric needs no change to the core. A missing reading is `NOT_SUPPORTED`, never zero, so downstream analysis cannot mistake absent data for a measured value.
+- **Controlled experimental conditions.** The temperature calibration and variance threshold delay a run until the CPU is near an idle baseline, and the scripts disable Wi-Fi during runs and restore it afterwards. *Justification:* temperature and background network activity are known sources of variation in energy measurements, and handling them in the tool makes experiments easier to repeat. Whether this reduces variance must be shown experimentally (see the evaluation plan).
+- **Batch experiments across languages.** Workloads are directories with a Makefile exposing `compile`, `standard` and `overtime`, and `scripts/measure.sh` runs them for several languages and collects the results in one CSV. *Justification:* adding a language or program is a new directory, which supports comparing implementations of the same algorithm under identical conditions.
+- **Independent CPU and GPU selection, with explicit diagnostics.** At startup the tool prints each backend's state (`selected`, `available`, `not detected`, `not built`, `load failed`, `invalid`) and a hint on why. *Justification:* the user can see immediately why a metric is missing, instead of finding out from a silently empty result.
+- **Small dependency footprint.** The core is C with `dlopen`; optional dependencies (powercap/raplcap, NVML) only affect the backend that needs them, and a missing one skips that backend rather than failing the build. *Justification:* the tool builds on machines that lack some libraries, which supports the portability goal.
+
+The bracketed reference numbers above are retained from the supplied PDF and have not been re-verified.
 
 ## III. The GreenMeasurer Framework
 
@@ -139,15 +156,17 @@ The current backend implementations are:
 | Category | Implementation | Energy source | Additional capabilities |
 |---|---|---|---|
 | CPU | Intel | RAPL MSRs | CPU energy domains, temperature integration and power capping |
-| CPU | AMD Zen | MSRs | CPU energy domains; independent DRAM energy is unsupported |
+| CPU | AMD Zen | MSRs | Experimental, not yet validated on hardware; planned future work. Independent DRAM energy is unsupported |
 | GPU | Intel integrated GPU | RAPL PP1 MSR when available | Direct GPU hwmon temperature when exposed |
 | GPU | NVIDIA | NVML total-energy counter | NVML telemetry; optional plugin depending on build-time dependencies |
+| CPU | Apple Silicon (macOS) | `powermetrics` "CPU Power" and "ANE Power" | Implemented, not yet validated on hardware. No power capping and no temperature |
+| GPU | Apple Silicon (macOS) | `powermetrics` "GPU Power" | Implemented, not yet validated on hardware |
 
 These are the implementations currently present in the repository, not a promise that every model exposes every counter. For example, MSR access requires the `msr` kernel module and sufficient privileges. GPU temperature is never inferred from CPU/package temperature.
 
 ### B. System Requirements
 
-The current implementation targets Linux. The build requires a C compiler, GNU Make and the dynamic-loader library. Specific plugins may need additional libraries or headers. The Intel CPU power-capping backend uses the configured `raplcap` and `powercap` libraries; the NVIDIA plugin is built only when the NVML header and library are found. Missing optional dependencies skip that plugin rather than preventing the core from building.
+The implementation targets Linux and macOS (Apple Silicon). The Makefile selects `platform/linux` or `platform/macos` according to the operating system, and the core uses the corresponding backend directory at run time. On macOS there are no RAPL or MSR counters, so the Apple backends run `powermetrics` (root required) in the background, write its output to a temporary file and integrate the average power it reports for each sampling interval (100 ms by default) into energy. Energy on macOS is thus known only to within one sampling interval. The helper scripts that control Wi-Fi and use Linux `perf` are Linux-only; on macOS the executable or the workload Makefiles are used directly. The build requires a C compiler, GNU Make and the dynamic-loader library. Specific plugins may need additional libraries or headers. The Intel CPU power-capping backend uses the configured `raplcap` and `powercap` libraries; the NVIDIA plugin is built only when the NVML header and library are found. Missing optional dependencies skip that plugin rather than preventing the core from building.
 
 Energy-counter access through MSRs commonly requires root privileges and the `msr` kernel module:
 
@@ -182,7 +201,7 @@ sudo ./src/main --temperature-calibration \
   -calib-file /tmp/cores_temperatures.txt
 ```
 
-**Power-cap calibration (`--powercap-calibration`).** The CPU backend sweeps the requested power range and records the configured limits in a CSV. It invokes the repository's post-processing utility when available. Power capping is optional and currently implemented by the Intel CPU backend; a backend without power-cap callbacks cannot provide this operation. Destroying the RAPL context does not restore previously configured package limits.
+**Power-cap calibration (`--powercap-calibration`).** The CPU backend sweeps the requested power range and records the configured limits in a CSV. It invokes the repository's post-processing utility when available. Power capping is optional and currently available only on Intel CPUs. The executable validates this at run time: if the selected CPU backend has no power-cap callbacks (for example AMD, or no active CPU backend), calibration and capped runs abort with an error instead of running uncapped. Power capping has been used in previous studies [cite]. Destroying the RAPL context does not restore previously configured package limits.
 
 ```sh
 sudo ./src/main --powercap-calibration \
@@ -294,7 +313,7 @@ sudo ./src/main --standard \
   -output measurements.csv
 ```
 
-This test checks command execution, repeated rows, CSV shape and availability reporting. It does not characterize application energy, because `sleep` is an idle workload and the counters may include whole-system activity. For a paper-quality experiment, use a deterministic compute workload with documented input, perform warm-up runs where appropriate, repeat enough times to estimate variability, retain raw measurements, and report robust summary statistics. Compare the uncapped and capped configurations only when the selected CPU backend supports power capping and the cap was confirmed to have been applied.
+This test checks command execution, repeated rows, CSV shape and availability reporting. It does not characterize application energy, because `sleep` is an idle workload and the counters may include whole-system activity. For a paper-quality experiment, use a deterministic compute workload with documented input, perform warm-up runs where appropriate, repeat enough times to estimate variability, retain raw measurements, and report robust summary statistics.
 
 ### B. Over-Time Measurements
 
@@ -316,6 +335,22 @@ The CSV should contain monotonically increasing timestamps at approximately the 
 
 The repository's `scripts/merda.sh` is a convenience smoke-test script that invokes the executable directly for temperature calibration, standard mode, over-time mode and (when run as root) power-cap calibration. Its simple workload and settings are for functionality checks only. The output should not be presented as a scientific benchmark result. Preserve the generated CSVs and full logs when conducting a formal evaluation.
 
+### C. Evaluation Plan: Comparison with CodeCarbon and EnergiBridge
+
+**Workload.** A recursive Fibonacci implementation in Python (`Languages/Python/Fibonacci`, run with `make standard` and `make overtime`). It is deterministic, CPU-bound and needs no external dependencies. Choose the input (default 35) so that a run lasts long enough (several seconds) for the counters to be meaningful, and keep it identical across tools. The C version (`Languages/C/Fibonacci`) can be added as a second language to show language independence.
+
+**Tools under comparison.** GreenMeasurer, EnergiBridge and CodeCarbon, all on the same machine, with the same workload, input and number of repetitions (e.g. 30). CodeCarbon must wrap the Python call (`EmissionsTracker`), while GreenMeasurer and EnergiBridge execute the command externally. Record the version of every tool.
+
+**Experiments.**
+
+1. *Standard mode (total energy per run).* Report mean, standard deviation and coefficient of variation of energy (J) and time (ms) per tool, plus the relative difference between tools. Run in a fixed order or randomised order, with idle periods between runs, and with the same system state (Wi-Fi off, no background load). Test the statistical differences (e.g. Shapiro–Wilk, then Mann–Whitney U or t-test, with effect size).
+2. *Over-time mode (power profile).* Plot cumulative energy and derived power against time for GreenMeasurer, and compare it with the time series of the other tools where they provide one (sampling interval fixed at, for example, 100 ms). Compare the total at the end of the run with experiment 1.
+3. *Tool overhead.* Compare the energy and time of the workload run with each tool against a run without any tool, and the energy of an idle period of the same length.
+4. *Usability and extensibility.* Compare the steps and lines of configuration needed to measure the same workload, and the effort to add a new backend (number of files and lines changed in GreenMeasurer, with no change to `main.c`). Present the result in a feature table (language independence, source change needed, CPU/GPU support, over-time mode, root requirement, behaviour when a counter is missing).
+5. *Portability (optional, depending on available machines).* Repeat experiment 1 on each available system (different CPU, with and without NVIDIA GPU) and report which backends were detected and how unsupported ones were reported.
+
+**Threats to validity.** Counters measure hardware domains rather than the process, so background activity is included; the three tools may read different domains (package vs. whole system vs. modelled values), so differences in absolute values must be explained rather than assumed to be errors; results are limited to the machines and Linux versions tested; AMD CPUs are not covered.
+
 ## V. Conclusions and Future Work
 
 GreenMeasurer provides a command-oriented workflow for collecting software execution telemetry without modifying the target program. The current implementation combines standard repeated measurements, over-time energy sampling, temperature calibration, optional CPU power-cap calibration and dynamically loaded hardware backends. Separating the core from backend implementations is intended to make hardware support extensible while keeping the measurement orchestrator vendor-neutral.
@@ -324,7 +359,7 @@ Several limitations must be considered when interpreting measurements. Hardware 
 
 Future work includes:
 
-1. Measuring framework overhead and counter-reading perturbation.
+1. Adding validated AMD CPU support (the AMD backend exists but has not been tested on hardware).
 2. Comparing measurements against an external power meter and reporting uncertainty.
 3. Evaluating repeatability across workloads, hardware models and operating-system versions.
 4. Validating optional backends on their target hardware, including the NVML plugin.
@@ -332,3 +367,48 @@ Future work includes:
 6. Extending backend coverage while documenting domain overlap and platform-specific semantics.
 
 Before submission, the authors should update the bibliography, replace the demonstration protocol with retained raw data and statistical results, and ensure every claim in the abstract and conclusion is supported by experiments on the stated hardware and software versions.
+
+
+## Appendix A. Command-line options
+
+All modes accept `-command` (alias `-run_cmd`) with the command to run through `/bin/sh -c`.
+
+| Option | Unit / type | Modes | Meaning |
+|---|---|---|---|
+| `-language` | text | standard, over-time, power-cap calibration | Label written to the `Language` column; does not change how the command runs (default `C` in standard mode) |
+| `-program` | text | same | Label written to the `Program` column (default `Target` in standard mode) |
+| `-n_times` | count | standard (default 1), power-cap calibration (default 3) | Number of measured runs (per power limit in calibration) |
+| `-variance` | °C | all measurement modes | Maximum temperature above the calibrated baseline at which a run may start; otherwise the tool waits, checking each second (defaults: 0 standard, 5 over-time and calibration). Skipped when no CPU temperature is available |
+| `-time_out_limit` | hours | standard, power-cap calibration | Time limit for the initial check run; on expiry a `TimeOut` row is recorded (default 1) |
+| `-interval` | ms | over-time | Time between samples (default 100) |
+| `-powercap` | W, or `-1` | standard, over-time | Package power limit (Intel only); `-1` means no cap (default); otherwise at least 1 |
+| `-sleep_time`, `-sleep-secs` | s | all | Idle time used to settle the machine when a temperature baseline has to be created (default 5; default 10 as `-secs_to_sleep` in power-cap calibration) |
+| `-calib-file` | path | all | Baseline-temperature file (default `/tmp/cores_temperatures.txt`); created by a calibration if missing |
+| `-output`, `-measurements-file` | path | all | Output CSV (defaults `measurements.csv`, `measurements_ot.csv`, `powercap_calibration.csv`) |
+| `-range` | `min-max`, W | power-cap calibration | Range of limits to test; minimum at least 1 W |
+| `-compile_cmd` | text | power-cap calibration | Optional command run once before the sweep |
+
+Other entry points: `--csv-header` and `--overtime-csv-header` print the CSV header for the current machine; `--help` shows the built-in help. `GREENMEASURER_BACKEND_DIR` overrides the backend directory; `GREENMEASURER_VERBOSE_BACKENDS=1` lists every backend at startup; `GREENMEASURER_POWERMETRICS` and `GREENMEASURER_POWERMETRICS_INTERVAL_MS` set the `powermetrics` executable and its interval on macOS.
+
+## Appendix B. Output columns
+
+| Column | Unit | Type | Source | Meaning |
+|---|---|---|---|---|
+| `Language`, `Program` | text | core | options | Labels |
+| `Powercap` | W | core | option | Cap used, or `-1` |
+| `Time_ms` | ms | core, standard | wall clock | Duration of the run |
+| `Timestamp_ms` | ms | core, over-time | wall clock | Time since the start of the run |
+| `CPU_Memory_KB` | KiB | core, standard | `wait4()` / `ru_maxrss` | Peak resident memory of the command (separate run) |
+| `cpu.Package_J` | J | window | Intel, AMD | Energy of the CPU package |
+| `cpu.Core_J` | J | window | Intel, AMD | Energy of the cores (part of the package) |
+| `cpu.DRAM_J` | J | window | Intel | Energy of the memory; `NOT_SUPPORTED` on AMD |
+| `cpu.Temperature_C` | °C | gauge | Intel, AMD | Average core temperature |
+| `cpu.CPU_J` | J | window | Apple Silicon | CPU energy from `powermetrics` |
+| `cpu.ANE_J` | J | window | Apple Silicon | Neural Engine energy from `powermetrics` |
+| `gpu.GPU_J` | J | window | NVIDIA, Intel, Apple Silicon | GPU energy |
+| `gpu.Power_W` | W | gauge | NVIDIA | Instantaneous GPU power |
+| `gpu.Temperature_C` | °C | gauge | NVIDIA, Intel | GPU temperature |
+| `gpu.Utilization_%` | % | gauge | NVIDIA | GPU utilization |
+| `gpu.VRAM_MiB` | MiB | peak | NVIDIA | GPU memory used by the process (highest value seen) |
+
+A *window* metric is the difference of a counter between the start and the end of the run (cumulative since the start in over-time mode); a *gauge* is a single reading (at the end of the run, or at each sample in over-time mode); a *peak* is the highest reading seen while the command ran. An unavailable value is written as `NOT_SUPPORTED`, never as zero.

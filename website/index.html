@@ -1,566 +1,727 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#101714">
-    <meta
-      name="description"
-      content="GreenMeasurer documentation: Linux CPU and GPU energy measurement and telemetry with extensible hardware backends."
-    >
-    <title>GreenMeasurer — Documentation</title>
-    <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="styles.css">
-    <script src="script.js" defer></script>
-  </head>
-  <body>
-    <a class="skip-link" href="#main">Skip to content</a>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="GreenMeasurer: a non-intrusive framework to measure the energy consumption of software on Linux and macOS, with CPU and GPU backends that are easy to add.">
+  <title>GreenMeasurer: A Non-Intrusive Framework to Measure the Energy Consumption of Software Systems</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#top">GreenMeasurer</a>
+    <nav>
+      <a href="#usage">Usage</a>
+      <a href="#reference">Reference</a>
+      <a href="#backends">Backends</a>
+      <a href="#output">Output</a>
+      <a href="#install">Install</a>
+      <a href="#extend">Extend</a>
+      <a href="#comparison">Comparison</a>
+      <a href="#limits">Limits</a>
+      <a class="gh" href="https://github.com/simaocunha71/GreenMeasurer">GitHub</a>
+    </nav>
+  </div>
+</header>
 
-    <header class="site-header">
-      <a class="brand" href="#top" aria-label="GreenMeasurer — home">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 40 40" fill="none">
-            <path d="M20 3.5 34.3 11.8v16.4L20 36.5 5.7 28.2V11.8L20 3.5Z" stroke="currentColor" stroke-width="2"/>
-            <path d="M11 22h5l2.4-7 4.1 12 2.2-6H29" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4"/>
-          </svg>
-        </span>
-        <span class="brand-name">Green<span>Measurer</span></span>
-      </a>
-      <div class="header-actions">
-        <span class="status-pill"><span></span> Linux · C · plugins</span>
-        <a class="header-link" href="https://github.com/simaocunha71/GreenMeasurer" target="_blank" rel="noreferrer">
-          Source code <span aria-hidden="true">↗</span>
-        </a>
-        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
-          <span class="menu-toggle-label">Menu</span>
-          <span class="menu-icon" aria-hidden="true"><i></i><i></i></span>
-        </button>
-      </div>
-    </header>
+<section class="hero" id="top">
+  <div class="wrap">
+    <h1>GreenMeasurer: A Non-Intrusive Framework to Measure the Energy Consumption of Software Systems</h1>
+    <p class="lead">
+      GreenMeasurer runs your program, reads CPU and GPU energy counters, and writes the
+      results to CSV. No code changes, any language. Works on Linux and macOS.
+    </p>
+    <pre class="hero-cmd">sudo ./src/main --standard -command "python3 fibonacci.py 35" \
+  -language Python -program fibonacci -n_times 5 ...</pre>
+    <div class="actions">
+      <a class="btn primary" href="#install">Get started</a>
+      <a class="btn" href="#usage">See usage</a>
+    </div>
+    <div class="cards">
+      <div class="card"><h3>Easy to use</h3><p>One command and a few options. Nothing to instrument or import.</p></div>
+      <div class="card"><h3>Easy to extend</h3><p>New CPU or GPU support is a new directory. The core and the CSV adapt.</p></div>
+      <div class="card"><h3>Linux and macOS</h3><p>CPU and GPU backends are chosen independently. Unsupported ones are reported, not fatal.</p></div>
+    </div>
+  </div>
+</section>
 
-    <div class="layout" id="top">
-      <aside class="sidebar" id="site-nav" aria-label="Documentation navigation">
-        <p class="nav-caption">DOCUMENTATION</p>
-        <nav>
-          <a class="nav-link active" href="#overview"><span>01</span> Overview</a>
-          <a class="nav-link" href="#architecture"><span>02</span> Architecture</a>
-          <a class="nav-link" href="#modes"><span>03</span> Measurement modes</a>
-          <a class="nav-link" href="#metrics"><span>04</span> Metrics and backends</a>
-          <a class="nav-link" href="#csv"><span>05</span> Getting the data</a>
-          <a class="nav-link" href="#install"><span>06</span> Installation</a>
-          <a class="nav-link" href="#extend-metric"><span>07</span> Adding metrics</a>
-          <a class="nav-link" href="#extend-backend"><span>08</span> Adding backends</a>
-          <a class="nav-link" href="#limits"><span>09</span> Limitations</a>
-        </nav>
-        <div class="sidebar-note">
-          <span class="note-icon" aria-hidden="true">↗</span>
-          <p>CSV columns depend on the hardware and selected backends.</p>
-          <a href="#metrics">View supported metrics <span aria-hidden="true">→</span></a>
-        </div>
-        <div class="sidebar-footer">
-          <span class="live-dot"></span>
-          <span>Repository documentation</span>
-        </div>
-      </aside>
+<main class="wrap">
+<section id="overview">
+  <h2>Overview</h2>
+  <p>
+    You give GreenMeasurer a command. It runs it, reads the energy counters and
+    sensors available on the machine, and writes the results to a CSV file. The
+    program being measured does not need to know about the tool, and it can be
+    written in any language.
+  </p>
+  <p>Three things it was designed for:</p>
+  <ul>
+    <li><b>Easy to use.</b> One command and a few options. No instrumentation, no library to import.</li>
+    <li><b>Easy to extend.</b> Hardware support lives in small plugins. To support a new CPU or GPU you add a directory; the core, the Makefile and the CSV header do not change.</li>
+    <li><b>Runs on Linux and macOS.</b> CPU and GPU backends are chosen independently at startup. If one is not supported, its columns are reported as <code>NOT_SUPPORTED</code> and the others still work.</li>
+  </ul>
+  <p>
+    The core is written in C. It coordinates the run, the sampling and the output;
+    the backends talk to the hardware (RAPL, NVML, hwmon).
+  </p>
+  <p class="note">
+    Hardware counters measure hardware domains, not processes. RAPL package energy,
+    for example, includes the operating system and any other activity on the machine.
+  </p>
+</section>
 
-      <main id="main">
-        <section class="hero section-shell" aria-labelledby="hero-title">
-          <div class="hero-copy">
-            <div class="eyebrow"><span class="eyebrow-line"></span> ENERGY TELEMETRY · LINUX</div>
-            <h1 id="hero-title">Measure energy.<br><span>Understand the system.</span></h1>
-            <p class="hero-lede">
-              GreenMeasurer is an extensible tool for collecting energy, temperature,
-              utilization, and memory data while programs run — without instrumenting
-              application code.
-            </p>
-            <div class="hero-actions">
-              <a class="button button-primary" href="#install">Get started <span aria-hidden="true">↓</span></a>
-              <a class="button button-secondary" href="#architecture">Explore the architecture</a>
-            </div>
-            <div class="hero-meta">
-              <span><b>01</b> observed command</span>
-              <span><b>02</b> hardware plugins</span>
-              <span><b>CSV</b> exportable data</span>
-            </div>
-          </div>
-          <div class="hero-visual" aria-label="Illustrative example of energy data over time">
-            <div class="visual-topline">
-              <span class="window-dots"><i></i><i></i><i></i></span>
-              <span>telemetry / live sample</span>
-              <span class="visual-live"><i></i> ILLUSTRATION</span>
-            </div>
-            <div class="visual-body">
-              <div class="visual-readout">
-                <div>
-                  <span class="readout-label">CPU PACKAGE</span>
-                  <strong>42.68 <small>J</small></strong>
-                </div>
-                <div class="readout-change">+ 8.4% <span>during execution</span></div>
-              </div>
-              <div class="chart-wrap">
-                <div class="chart-axis"><span>50 J</span><span>25 J</span><span>0 J</span></div>
-                <svg class="chart" viewBox="0 0 520 176" role="img" aria-label="Illustrative cumulative energy line">
-                  <defs>
-                    <linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="0" stop-color="#a7ef77" stop-opacity=".24"/>
-                      <stop offset="1" stop-color="#a7ef77" stop-opacity="0"/>
-                    </linearGradient>
-                  </defs>
-                  <path class="chart-grid" d="M0 24H520M0 82H520M0 140H520"/>
-                  <path class="chart-area" d="M0 139 39 134 72 136 108 116 147 119 181 98 218 104 254 80 291 87 326 62 363 65 397 42 435 46 473 19 520 24V156H0Z"/>
-                  <path class="chart-line" d="M0 139 39 134 72 136 108 116 147 119 181 98 218 104 254 80 291 87 326 62 363 65 397 42 435 46 473 19 520 24"/>
-                  <circle cx="473" cy="19" r="5" class="chart-point"/>
-                </svg>
-              </div>
-              <div class="chart-time"><span>0 ms</span><span>500 ms</span><span>1 000 ms</span><span>1 500 ms</span><span>2 000 ms</span></div>
-              <div class="visual-stats">
-                <div><span>SAMPLING</span><b>100 <small>ms</small></b></div>
-                <div><span>STATUS</span><b class="good-state"><i></i> running</b></div>
-                <div><span>SOURCE</span><b>RAPL / MSR</b></div>
-              </div>
-            </div>
-            <p class="visual-caption">Conceptual visualization · actual data is exported as CSV.</p>
-          </div>
-          <div class="hero-scroll" aria-hidden="true"><span></span> SCROLL TO EXPLORE</div>
-        </section>
+<section id="usage">
+  <h2>Usage</h2>
+  <p>On Linux, commands need root to read MSR counters; run <code>sudo modprobe msr</code> first. On macOS, root is needed to run <code>powermetrics</code>.</p>
 
-        <section class="trust-strip" aria-label="Features">
-          <div><span class="trust-icon">⌘</span><p><b>No instrumentation</b><small>measures an external command</small></p></div>
-          <div><span class="trust-icon">◈</span><p><b>Pluggable backends</b><small>hardware-specific access</small></p></div>
-          <div><span class="trust-icon">↗</span><p><b>Explicit metrics</b><small>no fabricated missing values</small></p></div>
-          <div><span class="trust-icon">▤</span><p><b>Dynamic CSV</b><small>schema built from plugins</small></p></div>
-        </section>
-
-        <section class="content-section section-shell" id="overview">
-          <div class="section-heading">
-            <div class="section-index">01 <span>—</span> OVERVIEW</div>
-            <h2>A practical way to observe<br><em>software energy.</em></h2>
-          </div>
-          <div class="intro-grid">
-            <div class="intro-text">
-              <p>
-                GreenMeasurer runs a user-provided program and collects telemetry through
-                interfaces available on the system: RAPL counters, MSRs, NVML, and sensors
-                exposed by Linux. The measured program does not need to know about the tool.
-              </p>
-              <p>
-                The C core coordinates execution, manages sampling windows, and writes
-                results. Backends handle hardware detection, counter reads, and declare
-                which metrics they can provide.
-              </p>
-              <div class="callout callout-warm">
-                <span class="callout-mark">!</span>
-                <p><b>Hardware energy is not automatically process energy.</b>
-                  For example, RAPL package energy represents a CPU domain and may include
-                  activity from the operating system and other processes.</p>
-              </div>
-            </div>
-            <div class="facts-card">
-              <div class="facts-title"><span class="tiny-square"></span> AT A GLANCE</div>
-              <dl>
-                <div><dt>Current platform</dt><dd>Linux</dd></div>
-                <div><dt>Implementation</dt><dd>C · Make · .so plugins</dd></div>
-                <div><dt>Output</dt><dd>CSV per run</dd></div>
-                <div><dt>Selection</dt><dd>one CPU + one GPU</dd></div>
-                <div><dt>No valid reading</dt><dd><code>NOT_SUPPORTED</code></dd></div>
-              </dl>
-              <a href="#metrics" class="text-link">View the metric matrix <span aria-hidden="true">↗</span></a>
-            </div>
-          </div>
-        </section>
-
-        <section class="content-section section-shell section-tinted" id="architecture">
-          <div class="section-heading">
-            <div class="section-index">02 <span>—</span> ARCHITECTURE</div>
-            <h2>One shared core.<br><em>Specialized drivers.</em></h2>
-            <p class="section-intro">The core does not need to change when a compatible backend is added.</p>
-          </div>
-          <div class="architecture">
-            <div class="arch-core">
-              <div class="arch-icon">GM</div>
-              <div><span class="card-kicker">ORCHESTRATOR</span><h3><code>src/main.c</code></h3><p>CLI, workload execution, sampling, calibration, and CSV output.</p></div>
-              <span class="arch-badge">C core</span>
-            </div>
-            <div class="arch-connector"><span>Shared API · <code>energy-backend.h</code></span><i></i></div>
-            <div class="arch-plugins">
-              <article class="plugin-card">
-                <div class="plugin-top"><span class="plugin-type cpu-type">CPU</span><span class="plugin-symbol">▦</span></div>
-                <h3>CPU backend</h3>
-                <p>Detects the platform, initializes sensors, and reads its declared metrics.</p>
-                <div class="plugin-files"><code>platform/linux/cpu/&lt;name&gt;/</code><span>backend.so</span></div>
-              </article>
-              <article class="plugin-card">
-                <div class="plugin-top"><span class="plugin-type gpu-type">GPU</span><span class="plugin-symbol">◫</span></div>
-                <h3>GPU backend</h3>
-                <p>Provides accelerator telemetry when support and permissions are available.</p>
-                <div class="plugin-files"><code>platform/linux/gpu/&lt;name&gt;/</code><span>backend.so</span></div>
-              </article>
-            </div>
-            <div class="arch-foot">
-              <div><span class="arch-foot-icon">↳</span><span>Runtime discovery with <code>dlopen</code> and <code>dlsym</code></span></div>
-              <div><span class="arch-foot-icon">⇢</span><span>One plugin selected per category by detection and priority</span></div>
-              <div><span class="arch-foot-icon">▤</span><span>Declared metrics build the CSV header</span></div>
-            </div>
-          </div>
-          <div class="directory-card">
-            <div class="directory-label"><span class="tiny-square"></span> RELEVANT SOURCE TREE</div>
-            <pre><code>src/
-├── main.c                    <span># execution and CLI</span>
-├── include/energy-backend.h  <span># plugin and metric API</span>
-├── utils/memory.c            <span># workload RSS</span>
-├── platform/linux/
-│   ├── cpu/
-│   │   ├── amd/              <span># AMD Zen</span>
-│   │   └── intel/            <span># Intel RAPL</span>
-│   └── gpu/
-│       ├── intel/            <span># Intel iGPU</span>
-│       └── nvidia/           <span># NVIDIA NVML</span>
-└── tests/                    <span># fake backends and tests</span></code></pre>
-          </div>
-        </section>
-
-        <section class="content-section section-shell" id="modes">
-          <div class="section-heading">
-            <div class="section-index">03 <span>—</span> MEASUREMENT MODES</div>
-            <h2>Choose the window.<br><em>Ask the right question.</em></h2>
-            <p class="section-intro">Each mode has a different purpose and output format.</p>
-          </div>
-          <div class="mode-grid">
-            <article class="mode-card">
-              <div class="mode-number">01</div><div class="mode-icon">▤</div>
-              <span class="card-kicker">REPEATED RUNS + AGGREGATION</span>
-              <h3>Standard measurement</h3>
-              <p>Runs the command repeatedly. Produces one CSV row per run, with elapsed time, RSS, and backend metrics.</p>
-              <ul><li>Configure repetitions, timeout, and temperature variance.</li><li>Window metrics cover each run.</li><li>Peak metrics are sampled while the process runs.</li></ul>
-              <pre class="code-block"><code>sudo ./src/main --standard \
-  -command "./program arg" \
-  -language C -program demo \
+  <h3>Standard mode</h3>
+  <p>Runs the command several times and writes one CSV row per run (time, memory and energy).</p>
+<pre>sudo ./src/main --standard \
+  -command "python3 fibonacci.py 35" \
+  -language Python -program fibonacci \
   -n_times 5 -variance 5 \
   -time_out_limit 1 -sleep_time 5 \
-  -powercap -1 -output runs.csv</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
-            </article>
-            <article class="mode-card mode-card-featured">
-              <div class="mode-number">02</div><div class="mode-icon">⌁</div>
-              <span class="card-kicker">TIME SERIES</span>
-              <h3>Over-time measurement</h3>
-              <p>Records successive readings during a run. Window energy is reported as cumulative energy from the start.</p>
-              <ul><li>Configurable interval in milliseconds.</li><li>Elapsed timestamp on every row.</li><li>Gauge and process values are read at every tick.</li></ul>
-              <pre class="code-block"><code>sudo ./src/main --overtime \
-  -command "./program arg" \
+  -powercap -1 -output runs.csv</pre>
+
+  <h3>Over-time mode</h3>
+  <p>Samples during a single run. Energy is cumulative from the start, with a timestamp on every row.</p>
+<pre>sudo ./src/main --overtime \
+  -command "python3 fibonacci.py 35" \
   -interval 100 \
-  -language C -program demo \
+  -language Python -program fibonacci \
   -variance 5 -sleep-secs 5 \
-  -output timeline.csv</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
-            </article>
-            <article class="mode-card">
-              <div class="mode-number">03</div><div class="mode-icon">◌</div>
-              <span class="card-kicker">THERMAL BASELINE</span>
-              <h3>Temperature calibration</h3>
-              <p>Waits through an idle period and saves a temperature baseline used to avoid starting measurements above the configured variance.</p>
-              <pre class="code-block"><code>sudo ./src/main \
-  --temperature-calibration \
-  -sleep-secs 20 \
-  -calib-file /tmp/cores_temperatures.txt</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
-            </article>
-            <article class="mode-card">
-              <div class="mode-number">04</div><div class="mode-icon">⌗</div>
-              <span class="card-kicker">POWER LIMITS</span>
-              <h3>Power-cap calibration</h3>
-              <p>A CPU backend with power-cap support sweeps a range of limits and records the results. Power capping is currently implemented by the Intel backend.</p>
-              <pre class="code-block"><code>sudo ./src/main \
-  --powercap-calibration \
+  -output timeline.csv</pre>
+
+  <h3>Temperature calibration</h3>
+  <p>
+    Waits while the machine is idle and saves a temperature baseline. Both modes
+    above wait until the CPU is close to this baseline before starting a run, which
+    reduces variation between runs.
+  </p>
+<pre>sudo ./src/main --temperature-calibration \
+  -sleep-secs 20 -calib-file /tmp/cores_temperatures.txt</pre>
+
+  <h3>Power capping (Intel only)</h3>
+  <p>
+    Power capping, and the power-cap calibration that sweeps a range of limits, are
+    only available on Intel CPUs. The tool checks this: if the selected CPU backend
+    cannot set power limits (for example on AMD, or when no CPU backend is active),
+    it stops with an error instead of running without the cap. Use
+    <code>-powercap -1</code> to run without a cap.
+  </p>
+<pre>sudo ./src/main --powercap-calibration \
   -range 15-25 -n_times 3 \
   -time_out_limit 1 -secs_to_sleep 10 \
   -command "./program arg" \
   -language C -program demo \
-  -output powercap.csv</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
-              <div class="mode-warning">Applied settings may persist after the run. Use only limits supported by your processor.</div>
-            </article>
-          </div>
-          <div class="mode-tip"><span>i</span><p>Commands are examples. Permissions, available counters, and power limits vary between machines.</p></div>
-        </section>
+  -output powercap.csv</pre>
+  <p>Caps may stay applied after the run. Use limits supported by your processor.</p>
 
-        <section class="content-section section-shell section-tinted" id="metrics">
-          <div class="section-heading">
-            <div class="section-index">04 <span>—</span> METRICS AND BACKENDS</div>
-            <h2>Hardware defines<br><em>what can be measured.</em></h2>
-            <p class="section-intro">Each backend declares its own metrics. The CSV schema reflects the backend selected on this machine — there is no universal set of guaranteed columns.</p>
-          </div>
-          <div class="backend-grid">
-            <article class="backend-card">
-              <div class="backend-card-head">
-                <span class="backend-logo intel-logo">i</span>
-                <div><span class="plugin-type cpu-type">CPU</span><h3>Intel RAPL</h3></div>
-                <span class="priority-label">PRIORITY 0</span>
-              </div>
-              <p class="backend-summary">MSR RAPL energy counters and average core temperature.</p>
-              <div class="metric-table-wrap"><table class="metric-table">
-                <thead><tr><th>CSV metric</th><th>Kind</th><th>How it is obtained</th></tr></thead>
-                <tbody>
-                  <tr><td><code>cpu.Package_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between package energy MSR readings, converted to joules.</td></tr>
-                  <tr><td><code>cpu.Core_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between RAPL PP0 counter readings (core domain).</td></tr>
-                  <tr><td><code>cpu.DRAM_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between DRAM energy MSR readings, when supported and readable.</td></tr>
-                  <tr><td><code>cpu.Temperature_C</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>Average core temperature read using the <code>sensors</code> command.</td></tr>
-                </tbody>
-              </table></div>
-              <div class="backend-footnote">Package/core/DRAM energy describes hardware domains; it is not attributed exclusively to the process.</div>
-            </article>
+  <h3>Using the Makefiles</h3>
+  <p>
+    The <code>Languages/</code> folder has example workloads (recursive Fibonacci in
+    C and in Python). In a workload directory:
+  </p>
+<pre>make compile
+make standard
+make overtime</pre>
+  <p><code>scripts/measure.sh</code> runs this for several languages and collects the results in one CSV.</p>
+</section>
 
-            <article class="backend-card">
-              <div class="backend-card-head">
-                <span class="backend-logo amd-logo">A</span>
-                <div><span class="plugin-type cpu-type">CPU</span><h3>AMD Zen</h3></div>
-                <span class="priority-label">PRIORITY 0</span>
-              </div>
-              <p class="backend-summary">Energy MSRs for compatible AMD Zen CPUs and the k10temp sensor.</p>
-              <div class="metric-table-wrap"><table class="metric-table">
-                <thead><tr><th>CSV metric</th><th>Kind</th><th>How it is obtained</th></tr></thead>
-                <tbody>
-                  <tr><td><code>cpu.Package_J</code></td><td><span class="kind kind-window">Window</span></td><td>Modular difference of the package counter × the MSR energy unit.</td></tr>
-                  <tr><td><code>cpu.Core_J</code></td><td><span class="kind kind-window">Window</span></td><td>Modular difference between core energy counter readings.</td></tr>
-                  <tr><td><code>cpu.DRAM_J</code></td><td><span class="kind kind-window">Window</span></td><td>Declared for a consistent schema, but returns <code>NOT_SUPPORTED</code>: this backend has no independent DRAM counter.</td></tr>
-                  <tr><td><code>cpu.Temperature_C</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>Read from hwmon <code>k10temp</code>; falls back to <code>Tdie</code>/<code>Tctl</code> from <code>sensors</code>.</td></tr>
-                </tbody>
-              </table></div>
-              <div class="backend-footnote">MSR counters require access to the device and the <code>msr</code> module.</div>
-            </article>
+<section id="reference">
+  <h2>Command-line reference</h2>
+  <p>
+    Every mode is selected by the first argument. Options take a value, for example
+    <code>-n_times 5</code>. Run <code>./src/main --help</code> for the built-in summary.
+    Several options have alternative names, shown in the table.
+  </p>
 
-            <article class="backend-card">
-              <div class="backend-card-head">
-                <span class="backend-logo intel-logo">i</span>
-                <div><span class="plugin-type gpu-type">GPU</span><h3>Intel integrada</h3></div>
-                <span class="priority-label">PRIORITY 0</span>
-              </div>
-              <p class="backend-summary">RAPL PP1 when available and direct GPU temperature via hwmon.</p>
-              <div class="metric-table-wrap"><table class="metric-table">
-                <thead><tr><th>CSV metric</th><th>Kind</th><th>How it is obtained</th></tr></thead>
-                <tbody>
-                  <tr><td><code>gpu.GPU_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between <code>PP1_ENERGY_STATUS</code> MSR readings × the energy unit.</td></tr>
-                  <tr><td><code>gpu.Temperature_C</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>hwmon sensor labelled <code>GPU</code>. CPU/package temperature is not used as a substitute.</td></tr>
-                </tbody>
-              </table></div>
-              <div class="backend-footnote">The backend may be detected by its temperature sensor alone; in that case, the energy column can still be <code>NOT_SUPPORTED</code>.</div>
-            </article>
+  <h3>Options shared by the measurement modes</h3>
+  <table>
+    <tr><th>Option</th><th>Unit / type</th><th>Meaning</th></tr>
+    <tr><td><code>-command</code> (or <code>-run_cmd</code>)</td><td>string</td><td>The command to measure, run through <code>/bin/sh -c</code>. Quote it.</td></tr>
+    <tr><td><code>-language</code></td><td>string</td><td>Label written to the CSV <code>Language</code> column. It does not change how the command runs. Default in standard mode: <code>C</code>.</td></tr>
+    <tr><td><code>-program</code></td><td>string</td><td>Label written to the CSV <code>Program</code> column. Default in standard mode: <code>Target</code>.</td></tr>
+    <tr><td><code>-variance</code></td><td>°C</td><td>(Needs a CPU temperature sensor; with none, e.g. on macOS, the check is skipped.) How far above the calibrated baseline temperature the CPU may be when a run starts. If it is hotter, the tool waits (checking every second) until it cools down. Default: 0 in standard mode, 5 in over-time mode.</td></tr>
+    <tr><td><code>-powercap</code></td><td>W, or <code>-1</code></td><td>Package power limit applied during the run (Intel only). <code>-1</code> means no cap and is the default. Other values must be at least 1.</td></tr>
+    <tr><td><code>-sleep_time</code> (or <code>-sleep-secs</code>)</td><td>seconds</td><td>Idle time used to let the machine settle when the temperature baseline has to be created. Default: 5. Not used if the calibration file already exists.</td></tr>
+    <tr><td><code>-calib-file</code></td><td>path</td><td>File holding the baseline temperature. Default: <code>/tmp/cores_temperatures.txt</code>. If it does not exist, a calibration is done first.</td></tr>
+    <tr><td><code>-output</code></td><td>path</td><td>CSV file to write. Defaults: <code>measurements.csv</code> (standard) and <code>measurements_ot.csv</code> (over-time). Standard mode also accepts <code>-measurements-file</code>.</td></tr>
+  </table>
 
-            <article class="backend-card">
-              <div class="backend-card-head">
-                <span class="backend-logo nvidia-logo">N</span>
-                <div><span class="plugin-type gpu-type">GPU</span><h3>NVIDIA NVML</h3></div>
-                <span class="priority-label priority-high">PRIORITY 100</span>
-              </div>
-              <p class="backend-summary">NVML telemetry from the first detected GPU device.</p>
-              <div class="metric-table-wrap"><table class="metric-table">
-                <thead><tr><th>CSV metric</th><th>Kind</th><th>How it is obtained</th></tr></thead>
-                <tbody>
-                  <tr><td><code>gpu.GPU_J</code></td><td><span class="kind kind-window">Window</span></td><td>Difference between NVML total energy readings (mJ), converted to joules.</td></tr>
-                  <tr><td><code>gpu.Power_W</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>Instantaneous NVML power in mW, converted to W.</td></tr>
-                  <tr><td><code>gpu.Temperature_C</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>NVML GPU temperature in °C.</td></tr>
-                  <tr><td><code>gpu.Utilization_%</code></td><td><span class="kind kind-gauge">Gauge</span></td><td>GPU utilization reported by NVML.</td></tr>
-                  <tr><td><code>gpu.VRAM_MiB</code></td><td><span class="kind kind-peak">Peak / process</span></td><td>Workload process memory queried through NVML; standard mode retains the highest sampled value.</td></tr>
-                </tbody>
-              </table></div>
-              <div class="backend-footnote">Each NVML call's availability depends on the GPU, driver, and permissions.</div>
-            </article>
-          </div>
-          <div class="selection-note">
-            <div class="selection-icon">⇄</div>
-            <div><b>One backend per category.</b><p>If multiple GPU plugins are detected, the one with the highest priority wins (NVIDIA declares 100; Intel integrated graphics declares 0). An unselected plugin does not add columns to the CSV.</p></div>
-          </div>
-        </section>
+  <h3><code>--standard</code></h3>
+  <p>Uses the shared options above, plus:</p>
+  <table>
+    <tr><th>Option</th><th>Unit / type</th><th>Meaning</th></tr>
+    <tr><td><code>-n_times</code></td><td>count</td><td>Number of measured runs. One CSV row is written per run. Default: 1.</td></tr>
+    <tr><td><code>-time_out_limit</code></td><td>hours</td><td>Maximum time allowed for the command in the initial check run. If exceeded, a <code>TimeOut</code> row is recorded. Default: 1.</td></tr>
+  </table>
 
-        <section class="content-section section-shell" id="csv">
-          <div class="section-heading">
-            <div class="section-index">05 <span>—</span> GETTING THE DATA</div>
-            <h2>From sensor reading to CSV,<br><em>without made-up values.</em></h2>
-          </div>
-          <div class="metric-semantics">
-            <article><span class="semantics-number">A</span><div><h3>Window · interval delta</h3><p>The backend reads a counter at the start and end of the window. The difference represents consumption observed during that interval. In over-time mode, per-tick differences are accumulated.</p></div></article>
-            <article><span class="semantics-number">B</span><div><h3>Gauge · point-in-time reading</h3><p>An instantaneous reading such as temperature, power, or utilization. Standard mode reads it at the end of a run; over-time mode reads it at each tick.</p></div></article>
-            <article><span class="semantics-number">C</span><div><h3>Peak · highest observed value</h3><p>Tracked while the workload runs. In standard mode, the core polls peak metrics approximately every 50 ms and retains the highest value seen. Very brief allocations may be missed.</p></div></article>
-          </div>
-          <div class="scope-note"><span class="scope-icon">◎</span><p><b>Scope matters too.</b> <code>DEVICE</code> describes a hardware domain (for example, the CPU package or the whole GPU); <code>PROCESS</code> describes the workload process. In the current set, <code>gpu.VRAM_MiB</code> is process-scoped; energy, power, temperature, and utilization are device/domain readings.</p></div>
-          <div class="csv-grid">
-            <div class="csv-explainer">
-              <span class="card-kicker">DYNAMIC SCHEMA</span>
-              <h3>Check the header<br>on your machine.</h3>
-              <p>Common columns are followed by metrics declared by the selected plugins, CPU first and then GPU.</p>
-              <pre class="code-block"><code>./src/main --csv-header
-./src/main --overtime-csv-header</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
-              <div class="csv-unavailable"><span>!</span><p>When a counter or sensor cannot provide a valid reading, the value is <code>NOT_SUPPORTED</code>, not zero.</p></div>
-            </div>
-            <div class="csv-example">
-              <div class="terminal-bar"><span class="window-dots"><i></i><i></i><i></i></span><span>example · Intel + NVIDIA system</span><span>CSV</span></div>
-              <pre><code>              <span class="csv-muted"># Standard mode</span>
-Language,Program,Powercap,Time_ms,CPU_Memory_KB,
+  <h3><code>--overtime</code> (or <code>--over-time</code>)</h3>
+  <p>Uses the shared options above, plus:</p>
+  <table>
+    <tr><th>Option</th><th>Unit / type</th><th>Meaning</th></tr>
+    <tr><td><code>-interval</code></td><td>milliseconds</td><td>Time between samples during the run. Default: 100. Smaller values give finer curves and more overhead.</td></tr>
+  </table>
+
+  <h3><code>--temperature-calibration</code></h3>
+  <table>
+    <tr><th>Option</th><th>Unit / type</th><th>Meaning</th></tr>
+    <tr><td><code>-sleep-secs</code> (or <code>-sleep_time</code>)</td><td>seconds</td><td>How long to stay idle before reading the temperatures.</td></tr>
+    <tr><td><code>-calib-file</code></td><td>path</td><td>Where to save the baseline.</td></tr>
+  </table>
+
+  <h3><code>--powercap-calibration</code> (Intel only)</h3>
+  <table>
+    <tr><th>Option</th><th>Unit / type</th><th>Meaning</th></tr>
+    <tr><td><code>-range</code></td><td><code>min-max</code>, W</td><td>Range of power limits to test, for example <code>15-25</code>. Required.</td></tr>
+    <tr><td><code>-command</code> (or <code>-run_cmd</code>)</td><td>string</td><td>Command to run under each limit.</td></tr>
+    <tr><td><code>-compile_cmd</code></td><td>string</td><td>Optional command run once before the sweep to build the program.</td></tr>
+    <tr><td><code>-language</code>, <code>-program</code></td><td>string</td><td>Labels for the output CSV.</td></tr>
+    <tr><td><code>-n_times</code></td><td>count</td><td>Runs per power limit. Default: 3.</td></tr>
+    <tr><td><code>-variance</code></td><td>°C</td><td>Same as above. Default: 5.</td></tr>
+    <tr><td><code>-time_out_limit</code></td><td>hours</td><td>Time limit for the initial check run. Default: 1.</td></tr>
+    <tr><td><code>-secs_to_sleep</code> (or <code>-sleep_time</code>)</td><td>seconds</td><td>Idle time between steps. Default: 10.</td></tr>
+    <tr><td><code>-calib-file</code></td><td>path</td><td>Temperature baseline file.</td></tr>
+    <tr><td><code>-output</code></td><td>path</td><td>Output CSV. Default: <code>powercap_calibration.csv</code>.</td></tr>
+  </table>
+
+  <h3>Other commands and variables</h3>
+  <table>
+    <tr><th>Item</th><th>Meaning</th></tr>
+    <tr><td><code>--csv-header</code>, <code>--overtime-csv-header</code></td><td>Print the CSV header for standard or over-time mode on this machine, then exit.</td></tr>
+    <tr><td><code>--help</code> (or <code>-h</code>)</td><td>Show the built-in help.</td></tr>
+    <tr><td><code>GREENMEASURER_BACKEND_DIR</code></td><td>Directory with <code>cpu/</code> and <code>gpu/</code> backends to use instead of the default.</td></tr>
+    <tr><td><code>GREENMEASURER_VERBOSE_BACKENDS=1</code></td><td>List every backend at startup, not only the selected ones.</td></tr>
+  </table>
+</section>
+
+<section id="metrics">
+  <h2>Metrics reference</h2>
+  <h3>Columns written by the core</h3>
+  <table>
+    <tr><th>Column</th><th>Unit</th><th>Meaning</th></tr>
+    <tr><td><code>Language</code>, <code>Program</code></td><td>text</td><td>The labels given with <code>-language</code> and <code>-program</code>.</td></tr>
+    <tr><td><code>Powercap</code></td><td>W</td><td>Power cap used for the run, or <code>-1</code> if none.</td></tr>
+    <tr><td><code>Time_ms</code></td><td>milliseconds</td><td>Standard mode. Wall-clock duration of the run.</td></tr>
+    <tr><td><code>Timestamp_ms</code></td><td>milliseconds</td><td>Over-time mode. Time since the start of the run, at each sample.</td></tr>
+    <tr><td><code>CPU_Memory_KB</code></td><td>KiB</td><td>Standard mode. Peak resident memory of the command, measured in a separate run.</td></tr>
+  </table>
+
+  <h3>Columns written by the backends</h3>
+  <p>
+    Names follow <code>&lt;category&gt;.&lt;name&gt;_&lt;unit&gt;</code>. The type says how the
+    value is obtained: <b>window</b> values are the difference between a counter read at the start
+    and at the end of the run (in over-time mode they are cumulative since the start),
+    <b>gauge</b> values are a single reading at the end of the run (at every sample in over-time mode),
+    and <b>peak</b> values are the highest reading seen while the command ran.
+  </p>
+  <table>
+    <tr><th>Column</th><th>Unit</th><th>Type</th><th>Backend</th><th>Meaning</th></tr>
+    <tr><td><code>cpu.Package_J</code></td><td>joules (J)</td><td>window</td><td>Intel, AMD</td><td>Energy of the whole CPU package (cores, caches, memory controller, and so on).</td></tr>
+    <tr><td><code>cpu.Core_J</code></td><td>joules (J)</td><td>window</td><td>Intel, AMD</td><td>Energy of the CPU cores only. This is part of the package energy, so do not add the two.</td></tr>
+    <tr><td><code>cpu.DRAM_J</code></td><td>joules (J)</td><td>window</td><td>Intel</td><td>Energy of the memory attached to the CPU. <code>NOT_SUPPORTED</code> on AMD.</td></tr>
+    <tr><td><code>cpu.Temperature_C</code></td><td>degrees Celsius (°C)</td><td>gauge</td><td>Intel, AMD</td><td>Average CPU core temperature.</td></tr>
+    <tr><td><code>gpu.GPU_J</code></td><td>joules (J)</td><td>window</td><td>NVIDIA, Intel</td><td>Energy of the GPU. For Intel it is the integrated-graphics RAPL domain (PP1).</td></tr>
+    <tr><td><code>gpu.Power_W</code></td><td>watts (W)</td><td>gauge</td><td>NVIDIA</td><td>Instantaneous GPU power draw.</td></tr>
+    <tr><td><code>gpu.Temperature_C</code></td><td>degrees Celsius (°C)</td><td>gauge</td><td>NVIDIA, Intel</td><td>GPU temperature. Never copied from the CPU.</td></tr>
+    <tr><td><code>gpu.Utilization_%</code></td><td>percent (%)</td><td>gauge</td><td>NVIDIA</td><td>Share of time the GPU was busy.</td></tr>
+    <tr><td><code>gpu.VRAM_MiB</code></td><td>mebibytes (MiB)</td><td>peak</td><td>NVIDIA</td><td>GPU memory used by the measured process (highest value seen).</td></tr>
+    <tr><td><code>cpu.CPU_J</code></td><td>joules (J)</td><td>window</td><td>Apple Silicon</td><td>Energy of the CPU cores, from <code>powermetrics</code> "CPU Power".</td></tr>
+    <tr><td><code>cpu.ANE_J</code></td><td>joules (J)</td><td>window</td><td>Apple Silicon</td><td>Energy of the Apple Neural Engine, from "ANE Power".</td></tr>
+    <tr><td><code>gpu.GPU_J</code></td><td>joules (J)</td><td>window</td><td>Apple Silicon</td><td>Energy of the GPU, from "GPU Power". Same column name as the Linux GPU backends.</td></tr>
+  </table>
+  <p>Apple Silicon columns have different names from the Intel ones (<code>cpu.CPU_J</code> instead of <code>cpu.Package_J</code>) because they measure different things. Any column is written as <code>NOT_SUPPORTED</code> when the hardware cannot provide it.</p>
+</section>
+
+<section id="backends">
+  <h2>Backends</h2>
+  <p>
+    Each backend declares which metrics it provides, so the CSV columns depend on
+    the machine. At startup the tool prints which backends were selected and why
+    the others were not. At most one CPU and one GPU backend are used; if several
+    are detected, the one with the highest priority wins.
+  </p>
+
+  <table>
+    <tr><th>Category</th><th>Backend</th><th>Source</th><th>Status</th></tr>
+    <tr><td>CPU</td><td>Intel</td><td>RAPL (MSR)</td><td>Tested. Supports power capping.</td></tr>
+    <tr><td>CPU</td><td>AMD Zen</td><td>Energy MSRs, k10temp</td><td>Implemented, not tested on hardware yet. No power capping, no DRAM.</td></tr>
+    <tr><td>GPU</td><td>NVIDIA</td><td>NVML</td><td>Built only if the NVML header and library are found.</td></tr>
+    <tr><td>GPU</td><td>Intel integrated</td><td>RAPL PP1, hwmon</td><td>Energy only if the CPU exposes PP1.</td></tr>
+    <tr><td>CPU</td><td>Apple Silicon (macOS)</td><td><code>powermetrics</code></td><td>Implemented, not tested on hardware yet. Needs root. No power capping, no temperature.</td></tr>
+    <tr><td>GPU</td><td>Apple Silicon (macOS)</td><td><code>powermetrics</code></td><td>Implemented, not tested on hardware yet. Needs root.</td></tr>
+  </table>
+  <p>
+    Linux and macOS use separate backend folders (<code>platform/linux</code> and
+    <code>platform/macos</code>); the build picks the one for the current system. macOS has no
+    RAPL or MSR counters, so the Apple backends run <code>powermetrics</code> in the background and
+    integrate the average power it reports for each sampling interval (100 ms by default,
+    <code>GREENMEASURER_POWERMETRICS_INTERVAL_MS</code> to change it). Energy on macOS is therefore only
+    known to within one interval. Intel Macs are not supported. The CPU and GPU backends each start one
+    <code>powermetrics</code> process.
+  </p>
+
+  <p>
+    Because CPU and GPU are independent, an AMD CPU with an NVIDIA GPU still reports
+    GPU energy. Only the CPU columns are <code>NOT_SUPPORTED</code>. If no backend at all
+    is usable, the tool exits with an error.
+  </p>
+
+  <p>The columns each backend can provide are listed in the <a href="#metrics">metrics reference</a>.</p>
+</section>
+
+<section id="output">
+  <h2>Output</h2>
+  <p>
+    Results are written as CSV. To see the columns for your machine without running
+    anything:
+  </p>
+<pre>./src/main --csv-header
+./src/main --overtime-csv-header</pre>
+  <p>Example header for standard mode on an Intel + NVIDIA machine:</p>
+<pre>Language,Program,Powercap,Time_ms,CPU_Memory_KB,
 cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,
-gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,
-gpu.Utilization_%,gpu.VRAM_MiB
+gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB</pre>
+  <p>
+    Over-time mode has <code>Timestamp_ms</code> instead of <code>Time_ms</code> and no
+    <code>CPU_Memory_KB</code>.
+  </p>
+  <p>
+    A value the hardware cannot provide is written as <code>NOT_SUPPORTED</code>,
+    never as zero.
+  </p>
+  <p>
+    <code>CPU_Memory_KB</code> is the peak resident memory of the command, measured
+    in a separate run with <code>wait4()</code>.
+  </p>
+</section>
 
-<span class="csv-muted"># Over-time mode (does not include CPU_Memory_KB)</span>
-Language,Program,Powercap,Timestamp_ms,
-cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,
-gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,
-gpu.Utilization_%,gpu.VRAM_MiB</code></pre>
-            </div>
-          </div>
-          <div class="rss-card">
-            <div class="rss-symbol">RAM</div>
-            <div><span class="card-kicker">FRAMEWORK METADATA · NOT A BACKEND METRIC</span><h3><code>CPU_Memory_KB</code> — peak resident memory</h3><p>The core runs the command separately to estimate <code>ru_maxrss</code> via <code>wait4()</code> (KiB on Linux). This is not an energy sample and may not represent memory from the same timed run. VRAM, when available, is a separate backend-provided metric.</p></div>
-          </div>
-        </section>
-
-        <section class="content-section section-shell section-tinted" id="install">
-          <div class="section-heading">
-            <div class="section-index">06 <span>—</span> INSTALLATION</div>
-            <h2>Build on Linux.<br><em>Enable accessible hardware.</em></h2>
-            <p class="section-intro">The core and plugins are compiled locally. Missing optional dependencies can cause individual plugins to be skipped without preventing the rest of the build.</p>
-          </div>
-          <div class="install-layout">
-            <div class="install-steps">
-              <article class="install-step"><span>01</span><div><h3>Install the base tools</h3><p>Example for Debian/Ubuntu; other distributions use different package names.</p><pre class="code-block"><code>sudo apt update
-sudo apt install build-essential make git cmake \
-  pkg-config lm-sensors msr-tools python3 \
-  python3-venv</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre></div></article>
-              <article class="install-step"><span>02</span><div><h3>Get the source and build</h3><pre class="code-block"><code>git clone https://github.com/simaocunha71/GreenMeasurer.git
+<section id="install">
+  <h2>Installation</h2>
+  <h3>Linux</h3>
+  <p>Debian/Ubuntu example:</p>
+<pre>sudo apt update
+sudo apt install build-essential make git cmake pkg-config \
+  lm-sensors msr-tools python3 python3-venv
+git clone https://github.com/simaocunha71/GreenMeasurer.git
 cd GreenMeasurer
-make -C src</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre><p>The build checks backend dependencies. Run <code>make VERBOSE=1 -C src</code> to see why any plugin was skipped.</p></div></article>
-              <article class="install-step"><span>03</span><div><h3>Enable MSR and run</h3><pre class="code-block"><code>sudo modprobe msr
-sudo ./src/main --csv-header</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre><p>MSR access requires the module and read permissions. Root is not required for all telemetry, but may be needed for counters and power capping.</p></div></article>
-            </div>
-            <aside class="requirements-card">
-              <div class="req-header"><span class="tiny-square"></span> DEPENDENCIES BY BACKEND</div>
-              <div class="req-row"><span class="req-status req-always">CORE</span><div><b>GCC/CC, GNU Make</b><small>C core and plugins.</small></div></div>
-              <div class="req-row"><span class="req-status req-optional">INTEL</span><div><b>powercap + raplcap</b><small>Headers and libraries, required to build the Intel CPU plugin and power-capping support.</small></div></div>
-              <div class="req-row"><span class="req-status req-optional">NVIDIA</span><div><b>NVML</b><small>Development header and an NVIDIA library accessible to the linker.</small></div></div>
-              <div class="req-row"><span class="req-status req-runtime">RUNTIME</span><div><b>Driver and permissions</b><small>Hardware, modules, and permissions compatible with the backend.</small></div></div>
-              <div class="req-note"><b>Installer included</b><p><code>bash scripts/install.sh</code> attempts to prepare Linux dependencies, may use <code>sudo</code>, builds powercap/raplcap from source, and installs pandas in a virtual environment. Review the script before running it.</p></div>
-            </aside>
-          </div>
-        </section>
+make -C src
+sudo modprobe msr
+sudo ./src/main --csv-header</pre>
+  <p>
+    A backend whose dependencies are missing is skipped; the rest still builds.
+    Run <code>make VERBOSE=1 -C src</code> to see why. The Intel backend needs
+    <code>powercap</code> and <code>raplcap</code>; the NVIDIA backend needs the NVML header and library.
+    <code>scripts/install.sh</code> can install these for you; read it before running it.
+  </p>
 
-        <section class="content-section section-shell" id="extend-metric">
-          <div class="section-heading">
-            <div class="section-index">07 <span>—</span> EXTENDING METRICS</div>
-            <h2>A new metric.<br><em>A clear contract.</em></h2>
-            <p class="section-intro">If an existing backend is the right fit, a metric using the current sampling kinds usually only requires changes to that plugin.</p>
-          </div>
-          <div class="extension-grid">
-            <div class="extension-list">
-              <article><span>1</span><div><h3>Declare the name, unit, and semantics</h3><p>The name becomes the CSV key; the category comes from the backend. Choose <code>WINDOW</code>, <code>GAUGE</code>, or <code>PEAK</code>, and the <code>DEVICE</code> or <code>PROCESS</code> scope.</p></div></article>
-              <article><span>2</span><div><h3>Implement the read</h3><p>The getter returns a value in the declared unit. If the read fails or the device does not provide it, return <code>METRIC_NOT_SUPPORTED</code>.</p></div></article>
-              <article><span>3</span><div><h3>Build and verify the schema</h3><p>Rebuild the project and check <code>--csv-header</code> and <code>--overtime-csv-header</code> on the target hardware.</p></div></article>
-            </div>
-            <div class="code-panel">
-              <div class="code-panel-heading"><span class="code-file-dot"></span> backend.c <span>METRIC EXAMPLE</span></div>
-              <pre><code><span class="code-purple">static const</span> EnergyMetricDescriptor metrics[] = {
-    {
-        <span class="code-green">"BoardPower"</span>,
-        <span class="code-green">"W"</span>,
-        ENERGY_METRIC_GAUGE,
-        ENERGY_METRIC_DEVICE,
-        ENERGY_METRIC_FLAG_NONE
+  <h3>macOS (Apple Silicon)</h3>
+<pre>xcode-select --install
+git clone https://github.com/simaocunha71/GreenMeasurer.git
+cd GreenMeasurer
+make -C src
+sudo ./src/main --csv-header</pre>
+  <p>
+    <code>make</code> builds the macOS backends automatically. Run the tool with <code>sudo</code> so it can
+    start <code>powermetrics</code>. The helper scripts in <code>scripts/</code> (Wi-Fi control, Linux
+    <code>perf</code>) are Linux-only; call <code>./src/main</code> directly or use a workload Makefile.
+  </p>
+</section>
+
+<section id="extend">
+  <h2>Extending</h2>
+  <h3>Adding a backend: worked examples</h3>
+  <p>
+    A backend is one C file compiled into a shared library called <code>backend.so</code>.
+    The core finds it by scanning <code>platform/&lt;os&gt;/cpu/*</code> and
+    <code>platform/&lt;os&gt;/gpu/*</code>, loads it, calls <code>detect()</code>, and uses the
+    highest-priority detected backend of each category. You never edit <code>main.c</code>.
+  </p>
+  <p>
+    The repository includes two complete, working examples in
+    <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/examples/toy_backends"><code>examples/toy_backends/</code></a>:
+    <b>TOY_CPU</b> and <b>TOY_GPU</b>. They have no real energy counter: they pretend the device draws a constant
+    power (10 W and 5 W) and multiply it by the elapsed time, so their numbers are not real measurements. They exist to show
+    the structure every backend needs.
+  </p>
+
+  <h4>The steps</h4>
+  <ol>
+    <li><b>Create a directory</b> under <code>cpu/</code> or <code>gpu/</code>; the category decides which interface you implement
+      (<code>CpuBackend</code> or <code>GpuBackend</code>, both in <code>src/include/energy-backend.h</code>).</li>
+    <li><b>Write <code>detect()</code></b>: return 1 if the backend can run on this machine, 0 otherwise. Add <code>diagnose()</code>
+      to explain a 0 in the startup table.</li>
+    <li><b>Write <code>init()</code> / <code>cleanup()</code></b> to open and release whatever you need.</li>
+    <li><b>Write <code>sample_start()</code> / <code>sample_stop()</code></b>: they open and close a measurement window. Read your
+      counter in each. Return 0 on success; any other value makes the window's metrics <code>NOT_SUPPORTED</code>.</li>
+    <li><b>Declare the metrics</b> in an array of <code>EnergyMetricDescriptor</code>: name, unit, kind
+      (<code>WINDOW</code>, <code>GAUGE</code> or <code>PEAK</code>), scope (<code>DEVICE</code> or <code>PROCESS</code>) and flags.
+      The CSV column is <code>&lt;category&gt;.&lt;name&gt;_&lt;unit&gt;</code>.</li>
+    <li><b>Write <code>get_metric()</code></b>: given the index of a metric, return its value in the declared unit, or
+      <code>METRIC_NOT_SUPPORTED</code>.</li>
+    <li><b>Export <code>energy_backend_descriptor</code></b> with the category, priority and a pointer to your struct.</li>
+    <li><b>Build it.</b> Inside <code>src/platform/&lt;os&gt;/</code> the main Makefile builds it for you (add a
+      <code>backend.mk</code> only if you need extra flags or libraries). Outside the tree, use a small Makefile like the one below.</li>
+  </ol>
+
+  <h4>TOY_CPU: <code>cpu/toy_cpu/toy_cpu.c</code></h4>
+<pre>/* TOY_CPU: a minimal, complete CPU backend used as a tutorial.
+ *
+ * It has no real energy counter. It pretends the CPU draws a constant
+ * TOY_CPU_WATTS and integrates that over time, so the numbers are not real
+ * measurements. What matters here is the structure every backend must have.
+ *
+ * Metrics:
+ *   cpu.Energy_J    window  fake energy (power x elapsed time)
+ *   cpu.LoadAvg_1m  gauge   1-minute load average (real, from getloadavg)
+ */
+#include &lt;stdlib.h&gt;
+#include &lt;time.h&gt;
+
+#include "../../../../src/include/energy-backend.h"
+
+#define TOY_CPU_WATTS 10.0
+
+static struct timespec window_start;
+static double window_seconds = 0.0;
+static int window_valid = 0;
+
+static double seconds_between(const struct timespec *a, const struct timespec *b) {
+    return (double)(b-&gt;tv_sec - a-&gt;tv_sec) + (double)(b-&gt;tv_nsec - a-&gt;tv_nsec) / 1e9;
+}
+
+/* 1 = this backend can run on this machine, 0 = it cannot. */
+static int toy_cpu_detect(void) {
+    struct timespec now;
+    return clock_gettime(CLOCK_MONOTONIC, &amp;now) == 0;
+}
+
+/* Shown in the startup table when detect() returns 0. */
+static const char *toy_cpu_diagnose(void) {
+    return "CLOCK_MONOTONIC is not available";
+}
+
+static int toy_cpu_init(int core) {
+    (void)core;
+    window_valid = 0;
+    return 0;
+}
+
+static void toy_cpu_cleanup(void) {}
+
+/* Open a measurement window. Return 0 on success. */
+static int toy_cpu_sample_start(int core) {
+    (void)core;
+    window_valid = 0;
+    return clock_gettime(CLOCK_MONOTONIC, &amp;window_start);
+}
+
+/* Close the window. A non-zero return makes the metrics NOT_SUPPORTED. */
+static int toy_cpu_sample_stop(int core) {
+    (void)core;
+    struct timespec end;
+    if (clock_gettime(CLOCK_MONOTONIC, &amp;end) != 0) return -1;
+    window_seconds = seconds_between(&amp;window_start, &amp;end);
+    window_valid = 1;
+    return 0;
+}
+
+/* Name + unit become the CSV column: &lt;category&gt;.&lt;name&gt;_&lt;unit&gt;. */
+static const EnergyMetricDescriptor toy_cpu_metrics[] = {
+    {"Energy", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"LoadAvg", "1m", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE}
+};
+
+/* metric_index is the position in toy_cpu_metrics. */
+static double toy_cpu_get_metric(size_t metric_index, int core, pid_t process_id) {
+    (void)core;
+    (void)process_id;
+    switch (metric_index) {
+        case 0:
+            if (!window_valid) return METRIC_NOT_SUPPORTED;
+            return TOY_CPU_WATTS * window_seconds;
+        case 1: {
+            double load[1];
+            if (getloadavg(load, 1) != 1) return METRIC_NOT_SUPPORTED;
+            return load[0];
+        }
+        default:
+            return METRIC_NOT_SUPPORTED;
     }
+}
+
+CpuBackend toy_cpu_backend = {
+    .name = "TOY_CPU",
+    .detect = toy_cpu_detect,
+    .init = toy_cpu_init,
+    .cleanup = toy_cpu_cleanup,
+    .sample_start = toy_cpu_sample_start,
+    .sample_stop = toy_cpu_sample_stop,
+    .metrics = toy_cpu_metrics,
+    .metric_count = sizeof(toy_cpu_metrics) / sizeof(toy_cpu_metrics[0]),
+    .get_metric = toy_cpu_get_metric,
+    .set_powercap = NULL,
+    .destroy_powercap = NULL,
+    .calibrate_powercap = NULL,
+    .diagnose = toy_cpu_diagnose
 };
 
-<span class="code-purple">static double</span> get_metric(
-    <span class="code-purple">size_t</span> index, <span class="code-purple">int</span> device,
-    pid_t process_id)
-{
-    (<span class="code-purple">void</span>)device;
-    (<span class="code-purple">void</span>)process_id;
-
-    <span class="code-purple">if</span> (index != 0)
-        <span class="code-purple">return</span> METRIC_NOT_SUPPORTED;
-
-    <span class="code-purple">return</span> read_board_power_watts();
-}</code></pre>
-              <div class="code-panel-foot"><span>Generated column:</span><code>cpu.BoardPower_W</code> <span>or</span> <code>gpu.BoardPower_W</code>, depending on the category.</div>
-            </div>
-          </div>
-          <div class="semantics-callout">
-            <span class="callout-mark">i</span><p><b>Semantics are part of the contract.</b> An energy metric should be a window metric; temperature is usually a gauge. Over-time mode accumulates window values, so do not incorrectly declare an instantaneous reading as window energy.</p>
-          </div>
-        </section>
-
-        <section class="content-section section-shell section-tinted" id="extend-backend">
-          <div class="section-heading">
-            <div class="section-index">08 <span>—</span> CREATING BACKENDS</div>
-            <h2>Add hardware support,<br><em>without core branches.</em></h2>
-            <p class="section-intro">A plugin implements its category interface and exports the expected descriptor. The core discovers backend directories and selects the detected plugin with the highest priority.</p>
-          </div>
-          <div class="backend-howto">
-            <div class="backend-howto-steps">
-              <article><span class="howto-num">01</span><div><h3>Create the backend directory</h3><pre><code>src/platform/linux/cpu/acme/
-  acme.c
-  backend.mk</code></pre><p>For a GPU, place it under <code>platform/linux/gpu/</code>.</p></div></article>
-              <article><span class="howto-num">02</span><div><h3>Implement the interface</h3><p>Use <code>CpuBackend</code> or <code>GpuBackend</code> from <code>include/energy-backend.h</code>. Implement detection, initialization, sampling start/stop, descriptors, and the getter. Export <code>energy_backend_descriptor</code>.</p></div></article>
-              <article><span class="howto-num">03</span><div><h3>Declare build dependencies if needed</h3><pre><code>BACKEND_SOURCE_platform_linux_cpu_acme := acme.c
-BACKEND_CFLAGS_platform_linux_cpu_acme := -I/opt/acme/include
-BACKEND_LDLIBS_platform_linux_cpu_acme := -lacme</code></pre><p>The Makefile creates <code>backend.so</code>. Dependencies linked only into the executable can use <code>BACKEND_HOST_LDLIBS_*</code>.</p></div></article>
-              <article><span class="howto-num">04</span><div><h3>Test detection and fallback</h3><p>Check plugin selection, unavailable hardware, diagnostic messages, and the CSV header. Fake-plugin tests run with <code>make -C src test</code>.</p></div></article>
-            </div>
-            <div class="descriptor-panel">
-              <div class="code-panel-heading"><span class="code-file-dot"></span> minimal export <span>CPU</span></div>
-              <pre><code><span class="code-purple">CpuBackend</span> acme_cpu_backend = {
-    .name = <span class="code-green">"Acme CPU"</span>,
-    .detect = acme_detect,
-    .init = acme_init,
-    .cleanup = acme_cleanup,
-    .sample_start = acme_sample_start,
-    .sample_stop = acme_sample_stop,
-    .metrics = metrics,
-    .metric_count = <span class="code-purple">sizeof</span>(metrics) /
-                    <span class="code-purple">sizeof</span>(metrics[0]),
-    .get_metric = get_metric
-};
-
-<span class="code-purple">const</span> EnergyBackendDescriptor
-energy_backend_descriptor = {
+/* The core looks this symbol up with dlsym. Highest priority wins among the
+   detected backends of the same category. */
+const EnergyBackendDescriptor energy_backend_descriptor = {
     .type = ENERGY_BACKEND_CPU,
-    .priority = 10,
-    .backend.cpu = &amp;acme_cpu_backend
-};</code></pre>
-              <div class="priority-note"><span>↥</span><p>Higher priority only wins among detected plugins in the same category. Currently, at most one CPU and one GPU backend are selected.</p></div>
-            </div>
-          </div>
-          <div class="backend-override">
-            <div><span class="card-kicker">DISCOVERY PATH</span><h3>Test an external plugin set</h3><p>The path must point to a directory containing <code>cpu/</code> and <code>gpu/</code> subdirectories.</p></div>
-            <pre class="code-block"><code>GREENMEASURER_BACKEND_DIR=/path/to/platform/linux \
-  ./src/main --csv-header</code><button class="copy-button" type="button" aria-label="Copy command">Copy</button></pre>
-          </div>
-        </section>
+    .priority = 0,
+    .backend.cpu = &amp;toy_cpu_backend
+};</pre>
 
-        <section class="content-section section-shell" id="limits">
-          <div class="section-heading">
-            <div class="section-index">09 <span>—</span> INTERPRETATION AND LIMITATIONS</div>
-            <h2>Useful data starts<br><em>with context.</em></h2>
-          </div>
-          <div class="limits-grid">
-            <article><span class="limit-icon">01</span><h3>Hardware domains</h3><p>Package, cores, and GPU are not synonymous with a process. Background activity may contribute to counters; do not sum overlapping domains without checking the hardware semantics.</p></article>
-            <article><span class="limit-icon">02</span><h3>Resolution and rollover</h3><p>MSR backends use modular differences for 32-bit energy counters and handle one wrap between readings. Multiple wraps within the same window cannot be distinguished.</p></article>
-            <article><span class="limit-icon">03</span><h3>Sampling is not continuous</h3><p>The over-time interval, system latency, and sensor resolution affect the data. Short peaks may be missed; timestamps reflect the requested interval, not guaranteed perfect timing.</p></article>
-            <article><span class="limit-icon">04</span><h3>Support depends on the machine</h3><p>A plugin may compile but not be detected. A selected backend may still be unable to read a specific metric. Missing values appear as <code>NOT_SUPPORTED</code>.</p></article>
-            <article><span class="limit-icon">05</span><h3>Power caps may persist</h3><p>Limits applied by the Intel backend are not necessarily restored after a measurement. Check system settings after calibration and capped runs.</p></article>
-            <article><span class="limit-icon">06</span><h3>Plugins are executable code</h3><p>Plugins are loaded with <code>dlopen</code>. Use trusted backend directories, especially when running the executable with elevated privileges.</p></article>
-          </div>
-          <div class="closing-banner">
-            <div class="closing-orbit" aria-hidden="true"><span></span><i></i><b></b></div>
-            <div><span class="card-kicker">READY TO MEASURE?</span><h2>Start with the header.<br><em>Then interpret the values.</em></h2><p>Discover which metrics are actually available before comparing experiments.</p></div>
-            <div class="closing-action"><a class="button button-primary" href="#install">Install and build <span aria-hidden="true">↑</span></a><a href="#csv" class="text-link">View CSV commands <span aria-hidden="true">→</span></a></div>
-          </div>
-        </section>
+  <h4>TOY_GPU: <code>gpu/toy_gpu/toy_gpu.c</code></h4>
+  <p>
+    Same structure as the CPU one, plus a <code>PEAK</code> metric with <code>PROCESS</code> scope. For those, the core
+    passes the process id of the measured command (and of its children) to <code>get_metric()</code> while the command runs
+    and keeps the highest value seen.
+  </p>
+<pre>/* TOY_GPU: a minimal, complete GPU backend used as a tutorial.
+ *
+ * It has no real GPU. It pretends the device draws a constant TOY_GPU_WATTS
+ * and reports the resident memory of the measured process as "GPU memory", so
+ * the numbers are not real measurements. It shows a process-scoped peak
+ * metric, which the CPU example does not.
+ *
+ * Metrics:
+ *   gpu.Energy_J    window  fake energy (power x elapsed time)
+ *   gpu.Power_W     gauge   constant fake power
+ *   gpu.Memory_MiB  peak    resident memory of the measured process tree
+ */
+#include &lt;stdio.h&gt;
+#include &lt;time.h&gt;
 
-        <footer class="site-footer">
-          <a class="brand brand-footer" href="#top">
-            <span class="brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 40 40" fill="none"><path d="M20 3.5 34.3 11.8v16.4L20 36.5 5.7 28.2V11.8L20 3.5Z" stroke="currentColor" stroke-width="2"/><path d="M11 22h5l2.4-7 4.1 12 2.2-6H29" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4"/></svg>
-            </span>
-            <span class="brand-name">Green<span>Measurer</span></span>
-          </a>
-          <p>Community documentation · always verify support on your target hardware.</p>
-          <a href="https://github.com/simaocunha71/GreenMeasurer" target="_blank" rel="noreferrer">View the project on GitHub <span aria-hidden="true">↗</span></a>
-        </footer>
-      </main>
-    </div>
-  </body>
+#include "../../../../src/include/energy-backend.h"
+
+#define TOY_GPU_WATTS 5.0
+
+static struct timespec window_start;
+static double window_seconds = 0.0;
+static int window_valid = 0;
+
+static double seconds_between(const struct timespec *a, const struct timespec *b) {
+    return (double)(b-&gt;tv_sec - a-&gt;tv_sec) + (double)(b-&gt;tv_nsec - a-&gt;tv_nsec) / 1e9;
+}
+
+static int toy_gpu_detect(void) {
+    struct timespec now;
+    return clock_gettime(CLOCK_MONOTONIC, &amp;now) == 0;
+}
+
+static const char *toy_gpu_diagnose(void) {
+    return "CLOCK_MONOTONIC is not available";
+}
+
+static int toy_gpu_init(int device) {
+    (void)device;
+    window_valid = 0;
+    return 0;
+}
+
+static void toy_gpu_cleanup(void) {}
+
+static int toy_gpu_sample_start(int device) {
+    (void)device;
+    window_valid = 0;
+    return clock_gettime(CLOCK_MONOTONIC, &amp;window_start);
+}
+
+static int toy_gpu_sample_stop(int device) {
+    (void)device;
+    struct timespec end;
+    if (clock_gettime(CLOCK_MONOTONIC, &amp;end) != 0) return -1;
+    window_seconds = seconds_between(&amp;window_start, &amp;end);
+    window_valid = 1;
+    return 0;
+}
+
+/* Resident memory of one process, in MiB (Linux only). */
+static double process_memory_mib(pid_t process_id) {
+    char path[64], line[256];
+    snprintf(path, sizeof(path), "/proc/%d/status", (int)process_id);
+    FILE *file = fopen(path, "r");
+    if (!file) return METRIC_NOT_SUPPORTED;
+
+    double result = METRIC_NOT_SUPPORTED;
+    while (fgets(line, sizeof(line), file)) {
+        long kib;
+        if (sscanf(line, "VmRSS: %ld kB", &amp;kib) == 1) {
+            result = (double)kib / 1024.0;
+            break;
+        }
+    }
+    fclose(file);
+    return result;
+}
+
+/* PROCESS scope: the core calls get_metric with a real process_id and
+   combines the process tree. PEAK: the highest value seen is kept. */
+static const EnergyMetricDescriptor toy_gpu_metrics[] = {
+    {"Energy", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"Power", "W", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
+    {"Memory", "MiB", ENERGY_METRIC_PEAK, ENERGY_METRIC_PROCESS, ENERGY_METRIC_FLAG_NONE}
+};
+
+static double toy_gpu_get_metric(size_t metric_index, int device, pid_t process_id) {
+    (void)device;
+    switch (metric_index) {
+        case 0:
+            if (!window_valid) return METRIC_NOT_SUPPORTED;
+            return TOY_GPU_WATTS * window_seconds;
+        case 1:
+            return TOY_GPU_WATTS;
+        case 2:
+            if (process_id &lt;= 0) return METRIC_NOT_SUPPORTED;
+            return process_memory_mib(process_id);
+        default:
+            return METRIC_NOT_SUPPORTED;
+    }
+}
+
+GpuBackend toy_gpu_backend = {
+    .name = "TOY_GPU",
+    .detect = toy_gpu_detect,
+    .init = toy_gpu_init,
+    .cleanup = toy_gpu_cleanup,
+    .sample_start = toy_gpu_sample_start,
+    .sample_stop = toy_gpu_sample_stop,
+    .metrics = toy_gpu_metrics,
+    .metric_count = sizeof(toy_gpu_metrics) / sizeof(toy_gpu_metrics[0]),
+    .get_metric = toy_gpu_get_metric,
+    .diagnose = toy_gpu_diagnose
+};
+
+const EnergyBackendDescriptor energy_backend_descriptor = {
+    .type = ENERGY_BACKEND_GPU,
+    .priority = 0,
+    .backend.gpu = &amp;toy_gpu_backend
+};</pre>
+
+  <h4>Building and running them</h4>
+<pre># Builds the TOY_CPU and TOY_GPU example backends into build/, laid out the way
+# the core expects: &lt;root&gt;/cpu/&lt;name&gt;/backend.so and &lt;root&gt;/gpu/&lt;name&gt;/backend.so.
+#
+#   make -C examples/toy_backends
+#   GREENMEASURER_BACKEND_DIR=$PWD/examples/toy_backends/build ./src/main --csv-header
+
+CC ?= cc
+CFLAGS ?= -O2 -Wall -Wextra
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    SHARED_FLAGS := -fPIC -dynamiclib -undefined dynamic_lookup
+else
+    SHARED_FLAGS := -fPIC -shared
+endif
+
+all: build/cpu/toy_cpu/backend.so build/gpu/toy_gpu/backend.so
+
+build/cpu/toy_cpu/backend.so: cpu/toy_cpu/toy_cpu.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(SHARED_FLAGS) -o $@ $&lt;
+
+build/gpu/toy_gpu/backend.so: gpu/toy_gpu/toy_gpu.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(SHARED_FLAGS) -o $@ $&lt;
+
+clean:
+	rm -rf build
+
+.PHONY: all clean</pre>
+<pre>make -C src
+make -C examples/toy_backends
+GREENMEASURER_BACKEND_DIR=$PWD/examples/toy_backends/build ./src/main --csv-header</pre>
+  <p>The header now shows the metrics the two backends declared:</p>
+<pre>Language,Program,Powercap,Time_ms,CPU_Memory_KB,cpu.Energy_J,cpu.LoadAvg_1m,gpu.Energy_J,gpu.Power_W,gpu.Memory_MiB</pre>
+  <p>
+    <code>GREENMEASURER_BACKEND_DIR</code> replaces the default backend folder, so only the toy backends are loaded.
+    A real run of <code>--standard</code> on a 2-second workload gives, for example, <code>cpu.Energy_J</code> = 20.4
+    (10 W &times; 2.04 s) and <code>gpu.Energy_J</code> = 10.2 (5 W &times; 2.04 s).
+  </p>
+
+  <h4>Moving a backend into the source tree</h4>
+<pre>mkdir -p src/platform/linux/cpu/toy_cpu
+cp examples/toy_backends/cpu/toy_cpu/toy_cpu.c src/platform/linux/cpu/toy_cpu/
+sed -i 's|../../../../src/include/|../../../../include/|' src/platform/linux/cpu/toy_cpu/toy_cpu.c
+echo 'BACKEND_SOURCE_platform_linux_cpu_toy_cpu := toy_cpu.c' &gt; src/platform/linux/cpu/toy_cpu/backend.mk
+make -C src</pre>
+  <p>
+    If a backend needs a library, add <code>BACKEND_LDLIBS_platform_linux_cpu_toy_cpu := -ltoy</code> and, to skip it when the library is
+    missing, <code>BACKEND_AVAILABLE_platform_linux_cpu_toy_cpu := no</code> (see the Intel and NVIDIA <code>backend.mk</code> files).
+    Test your backend logic with fake plugins using <code>make -C src test</code>.
+  </p>
+  <p>
+    Once built inside the tree, a backend only competes with the others of its category. The one with the highest
+    <code>.priority</code> wins; on a tie, the first one found is used. TOY_CPU has priority 0, like the Intel backend, so on an Intel
+    machine Intel is selected. Run with <code>GREENMEASURER_VERBOSE_BACKENDS=1</code> to see every backend and its status.
+    Power capping is optional: leave <code>set_powercap</code> unset and the tool refuses capped runs on that backend.
+  </p>
+
+  <h3>Adding a metric</h3>
+  <p>
+    Declare it in the backend's metric table (name, unit, kind, scope) and return it
+    from the getter. It appears in the CSV automatically. Kinds are
+    <code>WINDOW</code> (difference over the run, e.g. energy), <code>GAUGE</code>
+    (point-in-time, e.g. temperature) and <code>PEAK</code> (highest value seen).
+    Return <code>METRIC_NOT_SUPPORTED</code> when it cannot be read.
+  </p>
+<pre>static const EnergyMetricDescriptor metrics[] = {
+    { "BoardPower", "W", ENERGY_METRIC_GAUGE,
+      ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE }
+};</pre>
+  <p>This produces the column <code>cpu.BoardPower_W</code> or <code>gpu.BoardPower_W</code>.</p>
+</section>
+
+<section id="comparison">
+  <h2>Comparison with other tools</h2>
+  <p>
+    GreenMeasurer is evaluated against <a href="https://github.com/mlco2/codecarbon">CodeCarbon</a>
+    and <a href="https://github.com/tdurieux/EnergiBridge">EnergiBridge</a> using the same
+    workload (recursive Fibonacci in Python) in standard and over-time modes. The
+    results will be published with the paper.
+  </p>
+  <p>
+    The main differences are in how the tool is used and extended: GreenMeasurer
+    measures an external command in any language, needs no code changes, and adds
+    hardware support through plugins. See the paper for the details and measurements.
+  </p>
+
+  <h3>Why these choices</h3>
+  <ul>
+    <li><b>Testable hardware support.</b> Backends are plugins, so the tests (<code>make -C src test</code>) use fake ones to check backend selection, missing GPUs, missing backends and powercap failures. Fallback behaviour is verified without needing every hardware combination. These tests check the orchestration, not the accuracy of the counters.</li>
+    <li><b>Output that matches the hardware.</b> The CSV header is built from the metrics the selected backends declare, so it cannot drift from what the machine provides, and a new metric needs no change to the core. Missing data is <code>NOT_SUPPORTED</code>, never zero, so it cannot be mistaken for a measurement.</li>
+    <li><b>Controlled conditions.</b> A run waits until the CPU is near an idle temperature baseline, and the scripts turn Wi-Fi off during runs and restore it afterwards. Temperature and network activity are known sources of variation, so handling them in the tool makes experiments easier to repeat. Whether this reduces variance is part of the evaluation in the paper.</li>
+    <li><b>Many languages in one run.</b> A workload is a directory with a Makefile (<code>compile</code>, <code>standard</code>, <code>overtime</code>), and <code>scripts/measure.sh</code> runs several of them and collects one CSV. Comparing implementations of the same algorithm under the same conditions only needs a new directory.</li>
+    <li><b>Clear diagnostics.</b> At startup each backend is reported as selected, available, not detected, not built, failed to load or invalid, with a hint. You see why a metric is missing instead of getting an empty result.</li>
+    <li><b>Few hard dependencies.</b> The core only needs a C compiler and Make. Libraries such as powercap/raplcap or NVML only matter to the backend that uses them; if one is missing, that backend is skipped and the rest builds.</li>
+  </ul>
+</section>
+
+<section id="limits">
+  <h2>Limitations</h2>
+  <ul>
+    <li><b>Hardware domains, not processes.</b> Background activity is included. Do not add up domains that overlap (package and core, for example).</li>
+    <li><b>Counter wrap-around.</b> 32-bit counters are handled for one wrap between readings. More than one cannot be detected.</li>
+    <li><b>Sampling.</b> Over-time mode samples at the requested interval. Short peaks can be missed, and timestamps are approximate.</li>
+    <li><b>Hardware support varies.</b> A backend can build but not be detected, or be selected and still miss some metrics. Those show as <code>NOT_SUPPORTED</code>.</li>
+    <li><b>AMD.</b> Implemented but not validated on real hardware yet.</li>
+    <li><b>Power caps can persist</b> after a run. Check your system settings afterwards.</li>
+    <li><b>Plugins are loaded with <code>dlopen</code>.</b> Only use backend directories you trust, especially as root.</li>
+    <li><b>Linux and macOS only.</b> Root is needed for MSR counters (Linux) and for <code>powermetrics</code> (macOS).</li>
+    <li><b>macOS.</b> The Apple Silicon backends have not been tested on real hardware yet. There is no power capping, no temperature reading and no per-process GPU memory.</li>
+  </ul>
+</section>
+</main>
+
+<footer>
+  <p>GreenMeasurer · <a href="https://github.com/simaocunha71/GreenMeasurer">GitHub</a></p>
+</footer>
+</body>
 </html>

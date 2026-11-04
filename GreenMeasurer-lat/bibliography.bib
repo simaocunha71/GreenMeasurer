@@ -1,0 +1,239 @@
+@article{10.1007/s10664-013-9276-6,
+author = {Hindle, Abram},
+title = {Green mining: a methodology of relating software change and configuration to power consumption},
+year = {2015},
+issue_date = {April     2015},
+publisher = {Kluwer Academic Publishers},
+address = {USA},
+volume = {20},
+number = {2},
+issn = {1382-3256},
+url = {https://doi.org/10.1007/s10664-013-9276-6},
+doi = {10.1007/s10664-013-9276-6},
+abstract = {Power consumption is becoming more and more important with the increased popularity of smart-phones, tablets and laptops. The threat of reducing a customer's battery-life now hangs over the software developer, who now asks, "will this next change be the one that causes my software to drain a customer's battery?" One solution is to detect power consumption regressions by measuring the power usage of tests, but this is time-consuming and often noisy. An alternative is to rely on software metrics that allow us to estimate the impact that a change might have on power consumption thus relieving the developer from expensive testing. This paper presents a general methodology for investigating the impact of software change on power consumption, we relate power consumption to software changes, and then investigate the impact of OO software metrics and churn metrics on power consumption. We demonstrated that software change can effect power consumption using the Firefox web-browser and the Azureus/Vuze BitTorrent client. We found evidence of a potential relationship between some software metrics and power consumption. We also investigate the effect of library versioning on the power consumption of rTorrent. In conclusion, we investigate the effect of software change on power consumption on two projects; and we provide an initial investigation on the impact of software metrics on power consumption.},
+journal = {Empirical Softw. Engg.},
+month = apr,
+pages = {374–409},
+numpages = {36},
+keywords = {Sustainable-software, Software metrics, Power consumption, Power, Mining software repositories, Energy consumption, Dynamic analysis}
+}
+
+@article{10.1145/3154384,
+author = {Pinto, Gustavo and Castor, Fernando},
+title = {Energy efficiency: a new concern for application software developers},
+year = {2017},
+issue_date = {December 2017},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {60},
+number = {12},
+issn = {0001-0782},
+url = {https://doi.org/10.1145/3154384},
+doi = {10.1145/3154384},
+abstract = {Development of energy-efficient software is hindered by a lack of knowledge and a lack of tools.},
+journal = {Commun. ACM},
+month = nov,
+pages = {68–75},
+numpages = {8}
+}
+
+@inproceedings{10.1145/2168836.2168841,
+author = {Pathak, Abhinav and Hu, Y. Charlie and Zhang, Ming},
+title = {Where is the energy spent inside my app? fine grained energy accounting on smartphones with Eprof},
+year = {2012},
+isbn = {9781450312233},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/2168836.2168841},
+doi = {10.1145/2168836.2168841},
+abstract = {Where is the energy spent inside my app? Despite the immense popularity of smartphones and the fact that energy is the most crucial aspect in smartphone programming, the answer to the above question remains elusive. This paper first presents eprof, the first fine-grained energy profiler for smartphone apps. Compared to profiling the runtime of applications running on conventional computers, profiling energy consumption of applications running on smartphones faces a unique challenge, asynchronous power behavior, where the effect on a component's power state due to a program entity lasts beyond the end of that program entity. We present the design, implementation and evaluation of eprof on two mobile OSes, Android and Windows Mobile.We then present an in-depth case study, the first of its kind, of six popular smartphones apps (including Angry-Birds, Facebook and Browser). Eprof sheds lights on internal energy dissipation of these apps and exposes surprising findings like 65\%-75\% of energy in free apps is spent in third-party advertisement modules. Eprof also reveals several "wakelock bugs", a family of "energy bugs" in smartphone apps, and effectively pinpoints their location in the source code. The case study highlights the fact that most of the energy in smartphone apps is spent in I/O, and I/O events are clustered, often due to a few routines. Thismotivates us to propose bundles, a new accounting presentation of app I/O energy, which helps the developer to quickly understand and optimize the energy drain of her app. Using the bundle presentation, we reduced the energy consumption of four apps by 20\% to 65\%.},
+booktitle = {Proceedings of the 7th ACM European Conference on Computer Systems},
+pages = {29–42},
+numpages = {14},
+keywords = {Eprof, energy, mobile, smartphones},
+location = {Bern, Switzerland},
+series = {EuroSys '12}
+}
+
+@inproceedings{10.1145/2568225.2568297,
+author = {Manotas, Irene and Pollock, Lori and Clause, James},
+title = {SEEDS: a software engineer's energy-optimization decision support framework},
+year = {2014},
+isbn = {9781450327565},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/2568225.2568297},
+doi = {10.1145/2568225.2568297},
+abstract = {Reducing the energy usage of software is becoming more important in many environments, in particular, battery-powered mobile devices, embedded systems and data centers. Recent empirical studies indicate that software engineers can support the goal of reducing energy usage by making design and implementation decisions in ways that take into consideration how such decisions impact the energy usage of an application. However, the large number of possible choices and the lack of feedback and information available to software engineers necessitates some form of automated decision-making support. This paper describes the first known automated support for systematically optimizing the energy usage of applications by making code-level changes. It is effective at reducing energy usage while freeing developers from needing to deal with the low-level, tedious tasks of applying changes and monitoring the resulting impacts to the energy usage of their application. We present a general framework, SEEDS, as well as an instantiation of the framework that automatically optimizes Java applications by selecting the most energy-efficient library implementations for Java's Collections API. Our empirical evaluation of the framework and instantiation show that it is possible to improve the energy usage of an application in a fully automated manner for a reasonable cost.},
+booktitle = {Proceedings of the 36th International Conference on Software Engineering},
+pages = {503–514},
+numpages = {12},
+keywords = {software optimization, analysis framework, Energy usage},
+location = {Hyderabad, India},
+series = {ICSE 2014}
+}
+
+@misc{powercap2025,
+  author       = {Connor Imes and Alex Shpilkin and Henry Hoffmann and Steven Hofmeyr},
+  title        = {C bindings to the Linux Power Capping Framework in sysfs},
+  howpublished = {\url{https://github.com/powercap/powercap}},
+  year         = {2016},
+  note         = {Accessed: October 10, 2025},
+}
+
+@article{PEREIRA2021102609,
+title = {Ranking programming languages by energy efficiency},
+journal = {Science of Computer Programming},
+volume = {205},
+pages = {102609},
+year = {2021},
+issn = {0167-6423},
+doi = {https://doi.org/10.1016/j.scico.2021.102609},
+url = {https://www.sciencedirect.com/science/article/pii/S0167642321000022},
+author = {Rui Pereira and Marco Couto and Francisco Ribeiro and Rui Rua and Jácome Cunha and João Paulo Fernandes and João Saraiva},
+keywords = {Energy efficiency, Programming languages, Language benchmarking, Green software},
+abstract = {This paper compares a large set of programming languages regarding their efficiency, including from an energetic point-of-view. Indeed, we seek to establish and analyze different rankings for programming languages based on their energy efficiency. The goal of being able to rank programming languages based on their energy efficiency is both recent, and certainly deserves further studies. We have taken rigorous and strict solutions to 10 well defined programming problems, expressed in (up to) 27 programming languages, from the well known Computer Language Benchmark Game repository. This repository aims to compare programming languages based on a strict set of implementation rules and configurations for each benchmarking problem. We have also built a framework to automatically, and systematically, run, measure and compare the energy, time, and memory efficiency of such solutions. Ultimately, it is based on such comparisons that we propose a series of efficiency rankings, based on single and multiple criteria. Our results show interesting findings, such as how slower/faster languages can consume less/more energy, and how memory usage influences energy consumption. We also present a simple way to use our results to provide software engineers and practitioners support in deciding which language to use when energy efficiency is a concern. In addition, we further validate our results and rankings against implementations from a chrestomathy program repository, Rosetta Code., by reproducing our methodology and benchmarking system. This allows us to understand how the results and conclusions from our rigorously and well defined benchmarked programs compare to those based on more representative and real-world implementations. Indeed our results show that the rankings do not change apart from one programming language.}
+}
+
+@inproceedings{10.1145/3687997.3695638,
+author = {Cunha, Sim\~{a}o and Silva, Lu\'{\i}s and Saraiva, Jo\~{a}o and Fernandes, Jo\~{a}o Paulo},
+title = {Trading Runtime for Energy Efficiency: Leveraging Power Caps to Save Energy across Programming Languages},
+year = {2024},
+isbn = {9798400711800},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3687997.3695638},
+doi = {10.1145/3687997.3695638},
+abstract = {Energy efficiency of software is crucial in minimizing environmental impact and reducing operational costs of ICT systems. Energy efficiency is therefore a key area of contemporary software language engineering research. A recurrent discussion that excites our community is whether runtime performance is always a proxy for energy efficiency. While a generalized intuition seems to suggest this is the case, this intuition does not align with the fact that energy is the accumulation of power over time; hence, time is only one of the factors in this accumulation. We focus on the other factor, power, and the impact that capping it has on the energy efficiency of running software.                We conduct an extensive investigation comparing regular and power-capped executions of 9 benchmark programs obtained from The Computer Language Benchmarks Game, across 20 distinct programming languages. Our results show that employing power caps can be used to trade running time, which is degraded, for energy efficiency, which is improved, in all the programming languages and in all benchmarks that were considered. We observe overall energy savings of almost 14\% across the 20 programming languages, with notable savings of 27\% in Haskell. This saving, however, comes at the cost of an overall increase of the program's execution time of 91\% in average.                We are also able to draw similar observations using language specific benchmarks for programming languages of different paradigms and with different execution models. This is achieved analyzing a wide range of benchmark programs from the nofib Benchmark Suite of Haskell Programs, DaCapo Benchmark Suite for Java, and the Python Performance Benchmark Suite. We observe energy savings of approximately 8\% to 21\% across the test suites, with execution time increases ranging from 21\% to 46\%. Notably, the DaCapo suite exhibits the most significant values, with 20.84\% energy savings and a 45.58\% increase in execution time.                Our results have the potential to drive significant energy savings in the context of computational tasks for which runtime is not critical, including Batch Processing Systems, Background Data Processing and Automated Backups.},
+booktitle = {Proceedings of the 17th ACM SIGPLAN International Conference on Software Language Engineering},
+pages = {130–142},
+numpages = {13},
+keywords = {Energy Efficiency, Green Software, Language Benchmarking, Power Cap, Programming Languages},
+location = {Pasadena, CA, USA},
+series = {SLE '24}
+}
+
+@online{intel-rapl-reporting,
+  author       = {{Intel}},
+  title        = {Running Average Power Limit Energy Reporting},
+  year         = {2024},
+  url          = {https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/running-average-power-limit-energy-reporting.html},
+  note         = {Accessed: October 10, 2025},
+}
+
+@manual{msr4,
+  title        = {msr(4) - Linux manual page},
+  author       = {{Linux man-pages project}},
+  year         = 2025,
+  url          = {https://man7.org/linux/man-pages/man4/msr.4.html},
+  note         = {Accessed: October 10, 2025},
+}
+
+@misc{lm-sensors,
+  author       = {{lm-sensors}},
+  title        = {lm-sensors repository},
+  year         = 2024,
+  url          = {https://github.com/lm-sensors/lm-sensors},
+  note         = {Accessed: October 10, 2025},
+}
+
+@misc{raplcap,
+  author       = {Connor Imes and Huazhe Zhang and Kevin Zhao and Henry Hoffmann},
+  title        = {RAPLCap: RAPL Power Capping C Interface with Multiple Implementations},
+  year         = 2016,
+  url          = {https://github.com/powercap/raplcap},
+  note         = {Accessed: October 10, 2025},
+}
+
+@article{10.1145/3177754,
+author = {Khan, Kashif Nizam and Hirki, Mikael and Niemi, Tapio and Nurminen, Jukka K. and Ou, Zhonghong},
+title = {RAPL in Action: Experiences in Using RAPL for Power Measurements},
+year = {2018},
+issue_date = {June 2018},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {3},
+number = {2},
+issn = {2376-3639},
+url = {https://doi.org/10.1145/3177754},
+doi = {10.1145/3177754},
+abstract = {To improve energy efficiency and comply with the power budgets, it is important to be able to measure the power consumption of cloud computing servers. Intel’s Running Average Power Limit (RAPL) interface is a powerful tool for this purpose. RAPL provides power limiting features and accurate energy readings for CPUs and DRAM, which are easily accessible through different interfaces on large distributed computing systems. Since its introduction, RAPL has been used extensively in power measurement and modeling. However, the advantages and disadvantages of RAPL have not been well investigated yet. To fill this gap, we conduct a series of experiments to disclose the underlying strengths and weaknesses of the RAPL interface by using both customized microbenchmarks and three well-known application level benchmarks: Stream, Stress-ng, and ParFullCMS. Moreover, to make the analysis as realistic as possible, we leverage two production-level power measurement datasets from the Taito, a supercomputing cluster of the Finnish Center of Scientific Computing and also replicate our experiments on Amazon EC2. Our results illustrate different aspects of RAPL and document the findings through comprehensive analysis. Our observations reveal that RAPL readings are highly correlated with plug power, promisingly accurate enough, and have negligible performance overhead. Experimental results suggest RAPL can be a very useful tool to measure and monitor the energy consumption of servers without deploying any complex power meters. We also show that there are still some open issues, such as driver support, non-atomicity of register updates, and unpredictable timings that might weaken the usability of RAPL in certain scenarios. For such scenarios, we pinpoint solutions and workarounds.},
+journal = {ACM Trans. Model. Perform. Eval. Comput. Syst.},
+month = mar,
+articleno = {9},
+numpages = {26},
+keywords = {power modeling, RAPL validation, RAPL accuracy, RAPL, DRAM power}
+}
+
+
+@software{benoit_courty_2024_11171501,
+  author       = {Benoit Courty and
+                  Victor Schmidt and
+                  Sasha Luccioni and
+                  others},
+  title        = {mlco2/codecarbon: v2.4.1},
+  month        = may,
+  year         = 2024,
+  publisher    = {Zenodo},
+  version      = {v2.4.1},
+  doi          = {10.5281/zenodo.11171501},
+  url          = {https://doi.org/10.5281/zenodo.11171501}
+}
+
+@misc{jRAPL,
+  title={{jRAPL}: A framework for profiling energy consumption of Java programs},
+  author={Kenan Liu and Anthony Canino},
+  howpublished={\url{https://github.com/kliu20/jRAPL}},
+  note         = {Accessed: October 20, 2025},
+}
+
+@misc{pyrapl,
+  title={{pyRAPL}: a library to measure the python energy consumption of python code},
+  author={Arthur d'Azémar and Chakib Belgaid and others},
+  howpublished={\url{https://github.com/powerapi-ng/pyRAPL}},
+  note         = {Accessed: October 20, 2025},
+}
+
+@INPROCEEDINGS{10254956,
+  author={Amaral, Marcelo and Chen, Huamin and Chiba, Tatsuhiro and Nakazawa, Rina and Choochotkaew, Sunyanan and Lee, Eun Kyung and Eilam, Tamar},
+  booktitle={2023 IEEE 16th International Conference on Cloud Computing (CLOUD)}, 
+  title={Kepler: A Framework to Calculate the Energy Consumption of Containerized Applications}, 
+  year={2023},
+  pages={69-71},
+  keywords={Measurement;Training;Cloud computing;Power demand;Power measurement;Protocols;Computational modeling;Sustainability;energy accounting;container power modeling;kubernetes;eBPF;RAPL},
+  doi={10.1109/CLOUD60044.2023.00017}}
+
+@inproceedings{10.1145/3136014.3136031,
+author = {Pereira, Rui and Couto, Marco and Ribeiro, Francisco and Rua, Rui and Cunha, J\'{a}come and Fernandes, Jo\~{a}o Paulo and Saraiva, Jo\~{a}o},
+title = {Energy efficiency across programming languages: how do energy, time, and memory relate?},
+year = {2017},
+isbn = {9781450355254},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3136014.3136031},
+doi = {10.1145/3136014.3136031},
+abstract = {This paper presents a study of the runtime, memory usage and energy consumption of twenty seven well-known software languages. We monitor the performance of such languages using ten different programming problems, expressed in each of the languages. Our results show interesting findings, such as, slower/faster languages consuming less/more energy, and how memory usage influences energy consumption. Finally, we show how to use our results to provide software engineers support to decide which language to use when energy efficiency is a concern.},
+booktitle = {Proceedings of the 10th ACM SIGPLAN International Conference on Software Language Engineering},
+pages = {256–267},
+numpages = {12},
+keywords = {Energy Efficiency, Green Software, Language Benchmarking, Programming Languages},
+location = {Vancouver, BC, Canada},
+series = {SLE 2017}
+}
+
+@misc{castor2024estimatingenergyfootprintsoftware,
+      title={Estimating the Energy Footprint of Software Systems: a Primer}, 
+      author={Fernando Castor},
+      year={2024},
+      eprint={2407.11611},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2407.11611}, 
+}
+
+@misc{Scaphandre,
+  title={{Scaphandre}: Energy consumption metrology agent},
+  author={{hubblo-org}},
+  howpublished={\url{https://github.com/hubblo-org/scaphandre}},
+  note         = {Accessed: October 20, 2025},
+}

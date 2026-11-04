@@ -5,14 +5,24 @@ LDFLAGS ?= -pthread -lm
 .DEFAULT_GOAL := all
 
 UNAME_S := $(shell uname -s)
-ifneq ($(UNAME_S),Linux)
+ifeq ($(UNAME_S),Linux)
+    PLATFORM := linux
+    SHARED_FLAGS := -fPIC -shared
+    HOST_EXPORT_FLAGS := -rdynamic
+    DL_LIBS := -ldl
+else ifeq ($(UNAME_S),Darwin)
+    PLATFORM := macos
+    SHARED_FLAGS := -fPIC -dynamiclib -undefined dynamic_lookup
+    HOST_EXPORT_FLAGS := -Wl,-export_dynamic
+    DL_LIBS :=
+else
     $(error [BUILD] Unsupported operating system: $(UNAME_S))
 endif
 
 SRCS = main.c utils/memory.c
 OBJS = $(SRCS:.c=.o)
 TARGET = main
-BACKEND_DIRS := $(shell find platform/linux -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
+BACKEND_DIRS := $(shell find platform/$(PLATFORM) -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
 
 backend_key = $(subst /,_,$(1))
 
@@ -33,7 +43,7 @@ $(if $(VERBOSE),$(foreach dir,$(BACKEND_DIRS),$(if $(filter no,$(call backend_av
 
 define backend_rule
 $(1)/backend.so: $(call backend_source,$(1)) $(wildcard $(1)/backend.mk)
-	$$(CC) $$(CFLAGS) $$(BACKEND_CFLAGS_$(call backend_key,$(1))) -fPIC -shared -o $$@ $$< $$(LDFLAGS) $$(BACKEND_LDLIBS_$(call backend_key,$(1)))
+	$$(CC) $$(CFLAGS) $$(BACKEND_CFLAGS_$(call backend_key,$(1))) $$(SHARED_FLAGS) -o $$@ $$< $$(LDFLAGS) $$(BACKEND_LDLIBS_$(call backend_key,$(1)))
 endef
 
 $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call backend_available,$(dir))),$(eval $(call backend_rule,$(dir)))))
@@ -41,7 +51,7 @@ $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call backend_available,$(dir))
 all: $(TARGET)
 
 $(TARGET): $(OBJS) $(BACKEND_TARGETS)
-	$(CC) $(CFLAGS) -rdynamic -o $@ $(OBJS) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) -ldl
+	$(CC) $(CFLAGS) $(HOST_EXPORT_FLAGS) -o $@ $(OBJS) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) $(DL_LIBS)
 
 %.o: %.c
 	@mkdir -p $(dir $@)

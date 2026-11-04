@@ -1,0 +1,46 @@
+\section{Introduction}
+
+\textcolor{red}{ATUALIZAR ESTE PAPER DE ACORDO COM O NOVO README DE 5 DE FEVEREIRO DE 2026}
+The energy consumption of software systems has become a central concern in modern computing, driven by the growing deployment of applications across energy-constrained environments such as mobile devices, embedded systems and large-scale cloud infrastructures. Software is now recognized as a major contributor to the overall energy footprint of computing systems, influencing not only performance and operating costs but also environmental sustainability \cite{10.1007/s10664-013-9276-6, 10.1145/3154384}. Accurate measurement of software energy consumption is therefore essential for understanding how design decisions, programming languages and runtime behaviors affect energy efficiency \cite{10.1145/2168836.2168841, 10.1145/2568225.2568297}. 
+
+To address these challenges, the GreenMeasurer framework provides a practical and extensible environment for non-intrusively measuring the energy consumption and execution time of software programs in two ways: \begin{enumerate*}[label=(\arabic*), itemjoin={{; }}, itemjoin*={{; and }}]
+    \item measuring both metrics immediately before and after program execution
+    \item continuously measuring both metrics throughout the program's runtime
+\end{enumerate*}.
+
+
+GreenMeasurer reads the energy counters exposed by the hardware through \emph{backends}. The current backends use Intel's \textit{Running Average Power Limit} (RAPL) \cite{intel-rapl-reporting, 10.1145/3177754} interface through Model-Specific Registers (MSRs) for Intel CPUs and integrated GPUs, NVIDIA's NVML for NVIDIA GPUs and, on macOS, \texttt{powermetrics} for Apple Silicon. CPU and GPU backends are chosen independently at run time, so a machine with an unsupported CPU and a supported GPU (or the opposite) still yields the metrics that can be measured, and the others are reported as unsupported. Measurements are hardware-domain measurements, not per-process attributions.
+
+GreenMeasurer contributes the following main features:
+\begin{itemize}
+    \item Hardware-level energy monitoring: Measures energy consumption of the CPU (e.g., Package, Core, DRAM) and the GPU, according to the backends available on the machine;
+    \item Easy to use and easy to extend: the user supplies a command and a few parameters, and support for a new CPU or GPU is added as a self-contained backend directory, with no change to the core (Section~\ref{sec:adding_backend});
+    \item Graceful degradation: a missing or unsupported backend never aborts a run; its metrics are written as \texttt{NOT\_SUPPORTED};
+    \item Language-agnostic operation: Supports any executable program - binary, bytecode or source code - without requiring instrumentation or modifications to the source code;
+    \item Measurement modes: Offers three complementary modes: 
+    \begin{itemize}
+        \item Standard - measures overall energy and execution time per run;
+        \item Perf - collects detailed CPU performance counters;
+        \item Over-time - continuously records energy consumption and CPU temperature during execution.
+    \end{itemize}
+    \item Automated calibration and validation: Includes CPU temperature calibration to ensure consistent thermal conditions and allows configurable variance thresholds to improve measurement reliability;
+    \item Power capping support: Available only on Intel CPUs, where it integrates with the Linux Powercap library \cite{powercap2025} to impose predefined power limits. The tool validates this at run time and refuses a capped run when the selected CPU backend does not support it.
+\end{itemize}
+
+Originally developed and validated in previous research works \cite{10.1145/3136014.3136031, PEREIRA2021102609,10.1145/3687997.3695638}, this repository has been recently updated to include full parameterization of all execution arguments, a plugin-based backend architecture, support for NVIDIA GPUs and macOS, and a module for system power capping \cite{powercap2025} on Intel CPUs.
+
+To address the challenges of accurately quantifying software energy consumption, we developed GreenMeasurer, a lightweight and extensible framework designed to provide repeatable energy measurements on Linux and macOS machines. GreenMeasurer measures hardware energy consumption of the CPU and GPU components through the backends available on the machine. It supports any type of program - whether distributed as binaries, bytecode or source code - without requiring modifications to the application's implementation. To enhance measurement reliability, the framework automatically controls system conditions, such as disabling Wi-Fi, to minimize external interference and measurement noise. Each experiment includes CPU temperature calibration and validation phases to ensure consistent thermal conditions across runs. Additionally, GreenMeasurer offers optional system power capping to facilitate energy-performance trade-off analysis and produces detailed measurement logs in CSV format for subsequent statistical processing. Finally, it includes a runtime monitoring feature that continuously records the energy consumption of the \textit{Package}, \textit{Core}, \textit{DRAM} and \textit{GPU}, along with CPU temperature, enabling time-based analysis of these metrics and generating an additional CSV file with the over-time measurements. Currently, it supports three complementary measurement modes that address different analysis needs: \textit{standard} measurements capture overall energy consumption and execution time per run; \textit{perf} measurements collect detailed CPU performance counters; and \textit{over-time} measurements record energy and temperature evolution during execution. Together, these modes provide both aggregate and fine-grained perspectives on software energy behavior.
+
+GreenMeasurer has certain limitations. CPU energy is currently measured on Intel processors (RAPL through MSRs \cite{msr4}) and on Apple Silicon (\texttt{powermetrics}); support for AMD processors is left as future work. The macOS backends are implemented but have not yet been validated on hardware. Power capping \cite{powercap2025} is available only on Linux with Intel CPUs. The tool is not intended for containerized or virtualized environments, and network and I/O energy consumption cannot be measured separately from total system consumption.
+
+To ensure measurement reliability, the framework includes internal validation mechanisms. Users can calibrate a baseline CPU temperature, after which executions are allowed only if the current temperature remains at or below the baseline plus a configurable variance threshold. For over-time measurements, the CPU temperature must consistently stay at or below the value recorded during the calibration process. Programs can also be re-executed multiple times to mitigate the effects of outliers \cite{castor2024estimatingenergyfootprintsoftware} and a configurable timeout prevents excessively long runs.
+
+To demonstrate GreenMeasurer's capabilities, this paper presents example results obtained through its execution. We utilized GreenMeasurer to analyze the C implementation of the recursive Fibonacci algorithm in C. This analysis aims to illustrate GreenMeasurer's effectiveness in tasks such as measuring the energy consumption and execution time of multiple hardware components (\textit{Package}, \textit{Core}, \textit{DRAM} and \textit{GPU}) of any software without modifying its source code, continuously monitoring energy consumption and execution time throughout the program's runtime, and evaluating the impact of power capping on software energy consumption and runtime in Linux systems with Intel CPUs. The paper also describes how a new backend is added (Section~\ref{sec:adding_backend}) and plans a comparison with CodeCarbon and EnergiBridge (Section~\ref{sec:eval_plan}).
+
+The following sections describe related work (Section \ref{rw_section}), the design of GreenMeasurer (Section \ref{sec:greenmeasurer}), demonstrate its usage through practical experiments (Section \ref{demo_section}) and discuss conclusions and future directions (Section \ref{conc_section}).
+
+\begin{tcolorbox}[colback=gray!10!white, colframe=black!60, arc=4pt, boxrule=0.5pt]
+\centering
+\faGithub\ \textbf{All collected data and source code are available at:}\\[3pt]
+\href{https://github.com/simaocunha71/GreenMeasurer}{\texttt{https://github.com/simaocunha71/GreenMeasurer}}
+\end{tcolorbox}

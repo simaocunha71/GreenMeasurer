@@ -1,7 +1,7 @@
 # GreenMeasurer documentation website
 
 Standalone, dependency-free static website. The page is built from `index.html`,
-`styles.css`, `script.js` and `favicon.svg`; it does not need a bundler or package
+`styles.css` and `favicon.svg`; it does not need JavaScript, a bundler or a package
 manager.
 
 ## Preview locally
@@ -20,7 +20,7 @@ Then visit `http://localhost:8000`.
    repository (or configure its static-site host to use this directory).
 2. Enable GitHub Pages for the branch and folder containing `index.html`, or
    deploy the directory to any static web host.
-3. Keep the files together so the relative stylesheet, script and favicon paths
+3. Keep the files together so the relative stylesheet and favicon paths
    continue to work.
 
 No build step, framework runtime, API server or package installation is required.
