@@ -28,8 +28,6 @@ typedef struct {
 #endif
 
 extern WEAK_SENSOR CpuSensorDriver intel_sensor_driver;
-extern WEAK_SENSOR CpuSensorDriver amd_sensor_driver;
-extern WEAK_SENSOR CpuSensorDriver mac_sensor_driver;
 extern WEAK_SENSOR GpuSensorDriver nvidia_sensor_driver;
 extern WEAK_SENSOR GpuSensorDriver intel_gpu_sensor_driver;
 

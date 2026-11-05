@@ -11,8 +11,6 @@ static CpuSensorDriver* resolve_cpu_sensor(void) {
 
     CpuSensorDriver *drivers[] = {
         &intel_sensor_driver,
-        &amd_sensor_driver,
-        &mac_sensor_driver,
         NULL
     };
 
@@ -120,13 +118,6 @@ int dump_temperature_baseline(const char *target_calib_file) {
             fprintf(fp, "# Linux sysfs thermal dump\n");
             fclose(fp);
         }
-    }
-    return 0;
-#elif defined(__APPLE__)
-    FILE *fp = fopen(target_calib_file, "w");
-    if (fp) {
-        fprintf(fp, "# Apple Silicon / macOS thermal baseline\n");
-        fclose(fp);
     }
     return 0;
 #else

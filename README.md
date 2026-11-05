@@ -25,10 +25,6 @@ src/
 ├── platform/
 │   └── linux/
 │       ├── cpu/
-│       │   ├── amd/
-│       │   │   ├── amd.c               # AMD Zen MSR counter acquisition & 32-bit wrap delta
-│       │   │   ├── amd.h               # AMD Zen MSR definitions & constants
-│       │   │   └── sensors.c           # k10temp (Tctl/Tdie) sensor driver
 │       │   └── intel/
 │       │       ├── intel.c             # Intel RAPL MSR telemetry & raplcap powercapping
 │       │       ├── intel.h             # Intel MSR addresses & model declarations
@@ -40,6 +36,8 @@ src/
 │               └── sensors.c           # NVIDIA NVML thermal querying
 ├── sensors/
 │   └── sensors.c                       # Shared runtime sensor dispatcher & calibration
+├── metrics/
+│   └── system_metrics.c                # Core count, per-core frequency, process counts, RSS
 ├── main.c                              # Main benchmark runner, CLI parser & overtime sampler
 └── Makefile                            # Architecture-aware dynamic build system
 ```
@@ -51,7 +49,6 @@ src/
 | Platform Target | Energy Telemetry | Power Capping | Thermal Sensors | Driver / Mechanism |
 |---|---|---|---|---|
 | **Intel CPU** | Package, Core, DRAM, GPU (iGPU) | Supported (`raplcap` / `powercap`) | Core average & Package | Model-Specific Registers (`/dev/cpu/%d/msr`) |
-| **AMD Zen CPU** | Package, Core | Baseline only | Tctl / Tdie | Zen MSRs with 32-bit overflow handling |
 | **NVIDIA GPU** | Dedicated GPU domain | Supported by NVML API | Core junction | NVML (`libnvidia-ml`) |
 
 > **Note on CSV Semantics:** Any metric not exposed or unsupported on the running machine reports `NOT_SUPPORTED` (backed by negative sentinel values internally), preventing false zero-consumption (`0.0 J`) distortions.
@@ -206,13 +203,15 @@ For example, standard mode on a system with Intel CPU and NVIDIA GPU backends ma
 produce:
 
 ```csv
-Language,Program,Powercap,Time_ms,CPU_Memory_KB,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+Language,Program,Powercap,Time_ms,CPU_Memory_KB,Cores,Workload_Processes_Peak,System_Running_Processes_Peak,Core0_Avg_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
 
 `Language`, `Program`, and `Powercap` describe the run. `Time_ms` is elapsed
 wall-clock time in milliseconds, and `CPU_Memory_KB` is maximum RSS in KiB estimated by
 a separate execution measured with `wait4()`/`ru_maxrss`. Backend metric values use the unit in the
-column name. A metric without a supported reading is written as `NOT_SUPPORTED`.
+column name. `Cores` is the number of online logical cores, `Workload_Processes_Peak` and
+`System_Running_Processes_Peak` are the maxima seen during the run, and `Core<N>_Avg_Freq_MHz` is each
+core's mean frequency over the run (all sampled every 50 ms). A metric without a supported reading is written as `NOT_SUPPORTED`.
 
 Metric behavior is declared by each backend:
 
@@ -222,11 +221,16 @@ Metric behavior is declared by each backend:
   aggregated across the workload process tree. Polling is every 50 ms, so brief
   allocations may be missed.
 
-In over-time mode, metadata uses `Timestamp_ms` instead of `Time_ms` and omits
-`CPU_Memory_KB`. For example:
+In over-time mode, metadata uses `Timestamp_ms` instead of `Time_ms`, and
+`CPU_Memory_KB` is the current resident set size of the workload process tree.
+It also reports `Cores` (online logical cores), `Workload_Processes` (live
+processes in the workload tree), `System_Running_Processes` (runnable processes
+system-wide) and one `Core<N>_Freq_MHz` column per core. Sampling uses one
+thread per data source (CPU backend, GPU backend, system metrics) writing into
+static arrays. For example:
 
 ```csv
-Language,Program,Powercap,Timestamp_ms,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
 
 Window metrics are accumulated from the start of the workload through each

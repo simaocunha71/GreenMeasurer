@@ -10,16 +10,11 @@ ifeq ($(UNAME_S),Linux)
     SHARED_FLAGS := -fPIC -shared
     HOST_EXPORT_FLAGS := -rdynamic
     DL_LIBS := -ldl
-else ifeq ($(UNAME_S),Darwin)
-    PLATFORM := macos
-    SHARED_FLAGS := -fPIC -dynamiclib -undefined dynamic_lookup
-    HOST_EXPORT_FLAGS := -Wl,-export_dynamic
-    DL_LIBS :=
 else
     $(error [BUILD] Unsupported operating system: $(UNAME_S))
 endif
 
-SRCS = main.c utils/memory.c
+SRCS = main.c utils/memory.c metrics/system_metrics.c
 OBJS = $(SRCS:.c=.o)
 TARGET = main
 BACKEND_DIRS := $(shell find platform/$(PLATFORM) -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)

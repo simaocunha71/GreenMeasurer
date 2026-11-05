@@ -1,7 +1,0 @@
-\begin{abstract}
-This tool paper presents GreenMeasurer, a practical and extensible open-source framework for non-intrusively measuring the energy consumption of software systems on Linux and macOS. GreenMeasurer captures energy metrics for CPU and GPU hardware domains without requiring source code modifications. Hardware support is implemented as plugins behind a common CPU/GPU interface: the CPU and GPU backends are selected independently at run time, and a metric whose backend is missing or unsupported is reported explicitly as unavailable instead of aborting the run. The tool integrates configurable temperature calibration, system condition management and, on Intel CPUs, optional power capping into an automated pipeline with a standard (per-run) and an over-time (time series) mode. Adding support for a new CPU or GPU only requires a new backend directory, with no change to the core.
-\end{abstract}
-
-\begin{IEEEkeywords}
-Energy Measurement, Green Computing, Linux, macOS, Intel RAPL, NVIDIA NVML, Power capping
-\end{IEEEkeywords}

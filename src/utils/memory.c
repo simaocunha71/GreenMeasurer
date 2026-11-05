@@ -36,10 +36,6 @@ int platform_measure_memory(const char *command) {
     } while (result < 0 && errno == EINTR);
     if (result < 0) return -1;
 
-    /* ru_maxrss covers waited-for descendants. It is in KiB on Linux, bytes on macOS. */
-#ifdef __APPLE__
-    return (int)(usage.ru_maxrss / 1024);
-#else
+    /* ru_maxrss covers waited-for descendants. It is in KiB on Linux. */
     return (int)usage.ru_maxrss;
-#endif
 }

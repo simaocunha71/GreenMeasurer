@@ -130,17 +130,17 @@ expect "calibration reports backend failure" "Powercap calibration failed"
     FAIL=$((FAIL+1)); echo "  FAIL - calibration callback failure was ignored";
 }
 run_main
-if grep -q '^Language,Program,Powercap,Time_ms,CPU_Memory_KB,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/out.csv"; then
+if grep -Eq '^Language,Program,Powercap,Time_ms,CPU_Memory_KB,Cores,Workload_Processes_Peak,System_Running_Processes_Peak(,Core[0-9]+_Avg_Freq_MHz)+,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/out.csv"; then
     PASS=$((PASS+1)); echo "  ok   - standard CSV uses selected backend metrics"
 else
     FAIL=$((FAIL+1)); echo "  FAIL - standard CSV does not match selected backend metrics"
 fi
-if awk -F, 'NR == 2 && $10 ~ /[0-9]/ && $10 !~ /NOT_SUPPORTED/ { found = 1 } END { exit !found }' "$WORK/out.csv"; then
+if awk -F, 'NR == 2 && $NF ~ /[0-9]/ && $NF !~ /NOT_SUPPORTED/ { found = 1 } END { exit !found }' "$WORK/out.csv"; then
     PASS=$((PASS+1)); echo "  ok   - GPU process memory is recorded"
 else
     FAIL=$((FAIL+1)); echo "  FAIL - GPU process memory was not recorded"
 fi
-if awk -F, 'NR == 2 && $8 ~ /^[[:space:]]*8\.5[0-9]*[[:space:]]*$/ { found = 1 } END { exit !found }' "$WORK/out.csv"; then
+if awk -F, 'NR == 2 && $(NF-2) ~ /^[[:space:]]*8\.5[0-9]*[[:space:]]*$/ { found = 1 } END { exit !found }' "$WORK/out.csv"; then
     PASS=$((PASS+1)); echo "  ok   - backend-defined metric value is recorded"
 else
     FAIL=$((FAIL+1)); echo "  FAIL - backend-defined metric value was not recorded"
@@ -155,7 +155,7 @@ fi
 echo "[TEST] Over-time VRAM reporting"
 run_overtime
 expect "overtime completes"                     "Overtime session finished"
-if grep -q '^Language,Program,Powercap,Timestamp_ms,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/overtime.csv"; then
+if grep -Eq '^Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes(,Core[0-9]+_Freq_MHz)+,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/overtime.csv"; then
     PASS=$((PASS+1)); echo "  ok   - overtime CSV uses selected backend metrics"
 else
     FAIL=$((FAIL+1)); echo "  FAIL - overtime CSV does not match selected backend metrics"
