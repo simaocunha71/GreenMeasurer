@@ -5,7 +5,7 @@
 #include <sys/types.h>
 
 #define SYS_METRIC_NOT_SUPPORTED -1.0
-#define SYS_MAX_CORES 512
+#define SYS_MAX_CORES 256
 #define SYS_MAX_PROCESS_TREE 1024
 
 /* Number of logical cores currently online (0 on failure). */

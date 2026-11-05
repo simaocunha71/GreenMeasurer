@@ -29,7 +29,7 @@ run_main() {
 
 run_overtime() {
     GREENMEASURER_BACKEND_DIR="${BACKEND_DIR:-$ROOT}" "$MAIN" --overtime \
-        -command "sleep 0.1" -interval 20 -language C -program t \
+        -command "sleep 0.1" -language C -program t \
         -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
         -output "$WORK/overtime.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
     RC=$?
@@ -39,7 +39,7 @@ run_overtime() {
 run_powercap_failure() { # <mode>
     if [[ "$1" == "overtime" ]]; then
         GREENMEASURER_BACKEND_DIR="$ROOT" "$MAIN" --overtime \
-            -command "sleep 0.1" -interval 20 -language C -program t \
+            -command "sleep 0.1" -language C -program t \
             -variance 100 -sleep-secs 0 -powercap 1 \
             -calib-file "$WORK/calib.txt" -output "$WORK/cap-failure.csv" \
             > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
@@ -155,7 +155,7 @@ fi
 echo "[TEST] Over-time VRAM reporting"
 run_overtime
 expect "overtime completes"                     "Overtime session finished"
-if grep -Eq '^Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes(,Core[0-9]+_Freq_MHz)+,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/overtime.csv"; then
+if grep -Eq '^Language,Program,Powercap,Time_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes(,Core[0-9]+_Freq_MHz)+,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/overtime.csv"; then
     PASS=$((PASS+1)); echo "  ok   - overtime CSV uses selected backend metrics"
 else
     FAIL=$((FAIL+1)); echo "  FAIL - overtime CSV does not match selected backend metrics"

@@ -8,7 +8,6 @@ language ?= C
 program ?= fibonacci
 export n_times
 command ?= ./fib $(input)
-interval ?= 100
 
 include ../../../config.env
 
@@ -25,7 +24,7 @@ standard:
 
 overtime:
 	-modprobe msr 2>/dev/null || true
-	../../../src/main --overtime -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance)
+	../../../src/main --overtime -command "$(command)" -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance)
 
 run:
 	$(command)

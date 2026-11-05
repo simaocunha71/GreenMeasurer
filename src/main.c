@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
@@ -124,7 +125,7 @@ static double get_temperature_metric(EnergyBackendType type, unsigned int flag) 
 }
 
 void energy_backend_write_csv_header(FILE *fp, int overtime) {
-    fprintf(fp, "Language,Program,Powercap,%s", overtime ? "Timestamp_ms" : "Time_ms");
+    fprintf(fp, "Language,Program,Powercap,%s", "Time_ms");
     fprintf(fp, ",CPU_Memory_KB,Cores");
     /* Standard rows summarise the run (peak / average); overtime rows are instantaneous. */
     fprintf(fp, overtime ? ",Workload_Processes,System_Running_Processes"
@@ -639,6 +640,43 @@ static void run_stats_sample_core_frequencies(void) {
     }
 }
 
+/* Energy windows are split into short segments and summed in 64-bit doubles.
+   A 32-bit hardware counter can wrap several times during a long run, which a
+   single sample_start/sample_stop pair cannot detect; segments of one polling
+   period (50 ms) can wrap at most once, and that wrap is handled by the backend. */
+#define RUN_MAX_METRICS 64
+static double run_window_total[RUN_MAX_METRICS];
+static int run_sample_ready[2];
+static int run_backend_core;
+
+static int run_backend_sample_start(EnergyBackendType type) {
+    if (type == ENERGY_BACKEND_CPU) return active_cpu_backend->sample_start(run_backend_core);
+    return active_gpu_backend->sample_start(0);
+}
+
+static int run_backend_sample_stop(EnergyBackendType type) {
+    if (type == ENERGY_BACKEND_CPU) return active_cpu_backend->sample_stop(run_backend_core);
+    return active_gpu_backend->sample_stop(0);
+}
+
+/* Closes the current segment of every ready backend, adds it to the totals and,
+   unless this is the last call, opens the next segment. */
+static void run_window_accumulate(int restart) {
+    for (int type = 0; type < 2; type++) {
+        if (!run_sample_ready[type]) continue;
+        int stopped = run_backend_sample_stop((EnergyBackendType)type) == 0;
+        for (size_t i = 0; i < active_metric_count && i < RUN_MAX_METRICS; i++) {
+            if (active_metrics[i].backend_type != (EnergyBackendType)type ||
+                active_metrics[i].descriptor->kind != ENERGY_METRIC_WINDOW) continue;
+            double segment = stopped ? read_active_metric(i, 0) : METRIC_NOT_SUPPORTED;
+            if (segment < 0.0) run_window_total[i] = METRIC_NOT_SUPPORTED;
+            else if (run_window_total[i] >= 0.0) run_window_total[i] += segment;
+        }
+        if (!stopped) run_sample_ready[type] = 0;
+        else if (restart && run_backend_sample_start((EnergyBackendType)type) != 0) run_sample_ready[type] = 0;
+    }
+}
+
 typedef struct {
     pid_t root_pid;
     pthread_mutex_t stop_mutex;
@@ -655,6 +693,7 @@ static void* monitor_vram_usage(void *arg) {
         run_stats_sample_workload_processes(context->root_pid);
         run_stats_sample_running_processes();
         run_stats_sample_core_frequencies();
+        run_window_accumulate(1);
         for (size_t i = 0; i < active_metric_count; i++) {
             if (active_metrics[i].descriptor->kind != ENERGY_METRIC_PEAK) continue;
             double current_value =
@@ -794,6 +833,14 @@ static void* measureWorker(void *arg) {
                            active_gpu_backend->sample_start(0) == 0;
 
     run_stats_reset();
+    run_backend_core = args->core;
+    run_sample_ready[ENERGY_BACKEND_CPU] = cpu_sample_ready;
+    run_sample_ready[ENERGY_BACKEND_GPU] = gpu_sample_ready;
+    for (size_t i = 0; i < RUN_MAX_METRICS; i++) {
+        int ready = i < active_metric_count &&
+                    run_sample_ready[active_metrics[i].backend_type];
+        run_window_total[i] = ready ? 0.0 : METRIC_NOT_SUPPORTED;
+    }
     gettimeofday(&tvb, NULL);
     pid_t command_pid = startCommand(args->command);
     if (command_pid < 0) {
@@ -803,12 +850,7 @@ static void* measureWorker(void *arg) {
         waitForCommand(command_pid, args->metric_values, &tva);
     }
 
-    if (cpu_sample_ready && active_cpu_backend->sample_stop(args->core) != 0) {
-        cpu_sample_ready = 0;
-    }
-    if (gpu_sample_ready && active_gpu_backend->sample_stop(0) != 0) {
-        gpu_sample_ready = 0;
-    }
+    run_window_accumulate(0);
 
     double elapsed_ms = ((tva.tv_sec - tvb.tv_sec) * 1000000.0 + (tva.tv_usec - tvb.tv_usec)) / 1000.0;
 
@@ -833,15 +875,13 @@ static void* measureWorker(void *arg) {
         const ActiveMetric *metric = &active_metrics[i];
         int initialized = metric->backend_type == ENERGY_BACKEND_CPU
             ? cpu_initialized : gpu_initialized;
-        int sample_ready = metric->backend_type == ENERGY_BACKEND_CPU
-            ? cpu_sample_ready : gpu_sample_ready;
 
         if (metric->descriptor->kind == ENERGY_METRIC_PEAK) {
             args->metric_values[i] =
                 command_pid > 0 ? args->metric_values[i] : METRIC_NOT_SUPPORTED;
-        } else if (metric->descriptor->kind == ENERGY_METRIC_WINDOW &&
-                   (!initialized || !sample_ready)) {
-            args->metric_values[i] = METRIC_NOT_SUPPORTED;
+        } else if (metric->descriptor->kind == ENERGY_METRIC_WINDOW) {
+            args->metric_values[i] = initialized && i < RUN_MAX_METRICS
+                ? run_window_total[i] : METRIC_NOT_SUPPORTED;
         } else if (metric->descriptor->scope == ENERGY_METRIC_PROCESS) {
             args->metric_values[i] = command_pid > 0
                 ? read_process_tree_metric(i, command_pid)
@@ -963,18 +1003,25 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
 
 /* =========================================================================
    OVERTIME SAMPLING
-   One thread per data source, each looping
-   "start window -> usleep(interval) -> stop window -> store", with results
-   kept in statically allocated arrays (no allocation while sampling). The
-   logger thread is the writer: a two-phase barrier lets it emit one CSV row
-   per tick while every sampler is paused with its fresh values in place.
+   There is no sampling-interval option. Every metric has a sampler thread that
+   runs for the whole workload and stores values in a
+   statically allocated array (no allocation or I/O while sampling). The CSV is
+   written once, after the workload ends. Capacity is OT_MAX_SAMPLES samples per
+   metric (about 7 hours at the 100 ms internal pause); a sampler that reaches
+   it stops recording instead of overwriting data.
+   Backend energy windows share one sample_start/sample_stop pair, so each
+   backend (CPU, GPU) has one sampler thread that fills all of its metrics.
    ========================================================================= */
+#define OT_MAX_SAMPLES 262144          /* samples per metric */
 #define OT_MAX_METRICS 64
-#define OT_SAMPLER_COUNT 3
+#define OT_SAMPLE_PAUSE_US 100000      /* internal pause: keeps sampler overhead negligible; far below any RAPL wrap time */
+#define OT_SCALAR_COUNT 4
+#define OT_FREQ_SLOT OT_SCALAR_COUNT
+#define OT_CPU_SLOT (OT_SCALAR_COUNT + 1)
+#define OT_GPU_SLOT (OT_SCALAR_COUNT + 2)
+#define OT_THREAD_SLOTS (OT_SCALAR_COUNT + 3)
 
 struct OvertimeThreadCtx {
-    volatile int run_flag;
-    int interval_ms;
     pid_t workload_pid;
     const char *language;
     const char *program;
@@ -983,35 +1030,80 @@ struct OvertimeThreadCtx {
 };
 
 typedef struct {
-    int interval_us;
+    double value[OT_MAX_SAMPLES];
+    size_t head;                       /* samples published so far */
+} OvertimeSeries;
+
+typedef struct {
+    OvertimeSeries *series;
+    double (*read)(pid_t workload_pid);
     pid_t workload_pid;
-    EnergyBackendType type; /* used by backend samplers only */
-} OvertimeSampler;
+} OvertimeScalarJob;
 
-enum { OT_STATE_WAIT = 0, OT_STATE_RUN = 1, OT_STATE_ABORT = 2 };
+static OvertimeSeries ot_scalar_series[OT_SCALAR_COUNT];
+static OvertimeScalarJob ot_scalar_jobs[OT_SCALAR_COUNT];
 
-static double ot_backend_values[OT_MAX_METRICS];
-static double ot_cpu_memory_kb;
-static double ot_core_count;
-static double ot_workload_processes;
-static double ot_running_processes;
-static double ot_core_freq_mhz[SYS_MAX_CORES];
+static float ot_freq_mhz[OT_MAX_SAMPLES][SYS_MAX_CORES];
+static size_t ot_freq_head;
 static int ot_freq_core_count;
-static int ot_backend_ready[2];
-static OvertimeSampler ot_samplers[OT_SAMPLER_COUNT];
-static pthread_barrier_t ot_barrier;
-static volatile int ot_state = OT_STATE_WAIT;
-static volatile int ot_stop;
 
-/* One function per system metric. Each writes its own static slot. */
-static void ot_sample_cpu_memory(pid_t pid)   { ot_cpu_memory_kb = sys_workload_memory_kb(pid); }
-static void ot_sample_core_count(void)        { ot_core_count = (double)sys_core_count(); }
-static void ot_sample_workload_processes(pid_t pid) { ot_workload_processes = sys_workload_process_count(pid); }
-static void ot_sample_running_processes(void) { ot_running_processes = sys_running_processes(); }
-static void ot_sample_core_frequencies(void) {
-    for (int core = 0; core < ot_freq_core_count; core++) {
-        ot_core_freq_mhz[core] = sys_core_frequency_mhz(core);
+static double ot_backend_value[OT_MAX_METRICS][OT_MAX_SAMPLES];
+static size_t ot_backend_head[2];
+static int ot_backend_ready[2];
+
+static pid_t ot_workload_pid;
+static struct timespec ot_start_time;
+static uint32_t ot_total_ms;
+static volatile int ot_stop;
+static pthread_t ot_threads[OT_THREAD_SLOTS];
+static int ot_thread_started[OT_THREAD_SLOTS];
+static FILE *ot_file;
+static const struct OvertimeThreadCtx *ot_ctx;
+
+static uint32_t ot_elapsed_ms(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint32_t)((now.tv_sec - ot_start_time.tv_sec) * 1000L +
+                      (now.tv_nsec - ot_start_time.tv_nsec) / 1000000L);
+}
+
+static size_t ot_load_head(const size_t *head) {
+    return __atomic_load_n(head, __ATOMIC_ACQUIRE);
+}
+
+static void ot_publish(size_t *head) {
+    __atomic_store_n(head, *head + 1, __ATOMIC_RELEASE);
+}
+
+/* One function per metric. */
+static double ot_read_cpu_memory(pid_t pid)         { return sys_workload_memory_kb(pid); }
+static double ot_read_core_count(pid_t pid)         { (void)pid; return (double)sys_core_count(); }
+static double ot_read_workload_processes(pid_t pid) { return sys_workload_process_count(pid); }
+static double ot_read_running_processes(pid_t pid)  { (void)pid; return sys_running_processes(); }
+
+static void* ot_scalar_thread(void *arg) {
+    OvertimeScalarJob *job = (OvertimeScalarJob *)arg;
+    OvertimeSeries *series = job->series;
+    while (!ot_stop && series->head < OT_MAX_SAMPLES) {
+        size_t slot = series->head;
+        series->value[slot] = job->read(job->workload_pid);
+        ot_publish(&series->head);
+        usleep(OT_SAMPLE_PAUSE_US);
     }
+    return NULL;
+}
+
+static void* ot_core_frequency_thread(void *arg) {
+    (void)arg;
+    while (!ot_stop && ot_freq_head < OT_MAX_SAMPLES) {
+        size_t slot = ot_freq_head;
+        for (int core = 0; core < ot_freq_core_count; core++) {
+            ot_freq_mhz[slot][core] = (float)sys_core_frequency_mhz(core);
+        }
+        ot_publish(&ot_freq_head);
+        usleep(OT_SAMPLE_PAUSE_US);
+    }
+    return NULL;
 }
 
 static int ot_backend_sample_start(EnergyBackendType type) {
@@ -1024,173 +1116,158 @@ static int ot_backend_sample_stop(EnergyBackendType type) {
     return active_gpu_backend ? active_gpu_backend->sample_stop(0) : -1;
 }
 
-static int ot_wait_for_start(void) {
-    while (ot_state == OT_STATE_WAIT) usleep(1000);
-    return ot_state == OT_STATE_RUN;
+static double ot_read_backend_metric(size_t metric_index, int window_ready) {
+    const ActiveMetric *metric = &active_metrics[metric_index];
+    if (metric->descriptor->kind == ENERGY_METRIC_WINDOW && !window_ready) {
+        return METRIC_NOT_SUPPORTED;
+    }
+    return metric->descriptor->scope == ENERGY_METRIC_PROCESS
+        ? read_process_tree_metric(metric_index, ot_workload_pid)
+        : read_active_metric(metric_index, 0);
 }
 
-static void ot_tick_barrier(void) {
-    pthread_barrier_wait(&ot_barrier); /* A: all samplers have stored their values */
-    pthread_barrier_wait(&ot_barrier); /* B: logger finished writing the row */
-}
+/* Each sample window is short, so a 32-bit hardware counter wraps at most once
+   inside it; the running sum below is a 64-bit double and never overflows. */
+static void* ot_backend_thread(void *arg) {
+    EnergyBackendType type = (EnergyBackendType)(intptr_t)arg;
+    double cumulative[OT_MAX_METRICS];
+    for (size_t i = 0; i < OT_MAX_METRICS; i++) cumulative[i] = 0.0;
 
-static void ot_store_backend_metrics(const OvertimeSampler *sampler, int ready) {
-    for (size_t i = 0; i < active_metric_count; i++) {
-        const ActiveMetric *metric = &active_metrics[i];
-        if (metric->backend_type != sampler->type) continue;
+    int ready = ot_backend_ready[type] && ot_backend_sample_start(type) == 0;
+    while (!ot_stop && ot_backend_head[type] < OT_MAX_SAMPLES) {
+        usleep(OT_SAMPLE_PAUSE_US);
+        if (ready && ot_backend_sample_stop(type) != 0) ready = 0;
 
-        double value;
-        if (metric->descriptor->kind == ENERGY_METRIC_WINDOW && !ready) {
-            value = METRIC_NOT_SUPPORTED;
-        } else {
-            value = metric->descriptor->scope == ENERGY_METRIC_PROCESS
-                ? read_process_tree_metric(i, sampler->workload_pid)
-                : read_active_metric(i, 0);
-        }
-        if (metric->descriptor->kind == ENERGY_METRIC_WINDOW) {
-            if (value < 0.0) {
-                ot_backend_values[i] = METRIC_NOT_SUPPORTED;
-            } else if (ot_backend_values[i] >= 0.0) {
-                ot_backend_values[i] += value; /* energy is reported cumulatively */
+        size_t slot = ot_backend_head[type];
+        for (size_t i = 0; i < active_metric_count; i++) {
+            if (active_metrics[i].backend_type != type) continue;
+            double value = ot_read_backend_metric(i, ready);
+            if (active_metrics[i].descriptor->kind == ENERGY_METRIC_WINDOW) {
+                if (value < 0.0) cumulative[i] = METRIC_NOT_SUPPORTED;
+                else if (cumulative[i] >= 0.0) cumulative[i] += value;
+                value = cumulative[i];
             }
-        } else {
-            ot_backend_values[i] = value;
+            ot_backend_value[i][slot] = value;
         }
-    }
-}
-
-static void* ot_backend_sampler(void *arg) {
-    OvertimeSampler *sampler = (OvertimeSampler *)arg;
-    if (!ot_wait_for_start()) return NULL;
-
-    int ready = ot_backend_ready[sampler->type] &&
-                ot_backend_sample_start(sampler->type) == 0;
-    for (;;) {
-        usleep(sampler->interval_us);
-        if (ready && ot_backend_sample_stop(sampler->type) != 0) ready = 0;
-        ot_store_backend_metrics(sampler, ready);
-        ot_tick_barrier();
-        if (ot_stop) break;
-        ready = ot_backend_ready[sampler->type] &&
-                ot_backend_sample_start(sampler->type) == 0;
+        ot_publish(&ot_backend_head[type]);
+        ready = ot_backend_ready[type] && ot_backend_sample_start(type) == 0;
     }
     return NULL;
 }
 
-static void* ot_system_sampler(void *arg) {
-    OvertimeSampler *sampler = (OvertimeSampler *)arg;
-    if (!ot_wait_for_start()) return NULL;
-
-    for (;;) {
-        usleep(sampler->interval_us);
-        ot_sample_cpu_memory(sampler->workload_pid);
-        ot_sample_core_count();
-        ot_sample_workload_processes(sampler->workload_pid);
-        ot_sample_running_processes();
-        ot_sample_core_frequencies();
-        ot_tick_barrier();
-        if (ot_stop) break;
-    }
-    return NULL;
+static void ot_write_value(FILE *fp, double value) {
+    fprintf(fp, ", ");
+    write_active_metric_value(fp, value);
 }
 
-static void ot_write_row(FILE *fp, const struct OvertimeThreadCtx *ctx,
-                         unsigned long timestamp_ms) {
-    fprintf(fp, "%s, %s, %d, %lu", ctx->language, ctx->program, ctx->powercap,
-            timestamp_ms);
-    fprintf(fp, ", "); write_active_metric_value(fp, ot_cpu_memory_kb);
-    fprintf(fp, ", "); write_active_metric_value(fp, ot_core_count);
-    fprintf(fp, ", "); write_active_metric_value(fp, ot_workload_processes);
-    fprintf(fp, ", "); write_active_metric_value(fp, ot_running_processes);
-    for (int core = 0; core < ot_freq_core_count; core++) {
-        fprintf(fp, ", "); write_active_metric_value(fp, ot_core_freq_mhz[core]);
+/* Writes one CSV row per sample index. Every sampler uses the same fixed pause,
+   so row i holds the i-th sample of each metric. Time_ms is the total run time. */
+static void ot_dump(void) {
+    FILE *fp = ot_file;
+    size_t rows = ot_load_head(&ot_scalar_series[0].head);
+    for (int s = 1; s < OT_SCALAR_COUNT; s++) {
+        size_t head = ot_load_head(&ot_scalar_series[s].head);
+        if (head < rows) rows = head;
     }
-    for (size_t i = 0; i < active_metric_count; i++) {
-        fprintf(fp, ", "); write_active_metric_value(fp, ot_backend_values[i]);
+    size_t freq_rows = ot_load_head(&ot_freq_head);
+    if (freq_rows < rows) rows = freq_rows;
+    size_t backend_rows[2] = {0, 0};
+    for (int type = 0; type < 2; type++) {
+        int present = type == ENERGY_BACKEND_CPU ? active_cpu_backend != NULL : active_gpu_backend != NULL;
+        if (!present) continue;
+        backend_rows[type] = ot_load_head(&ot_backend_head[type]);
+        if (backend_rows[type] < rows) rows = backend_rows[type];
     }
-    fputc('\n', fp);
+
+    for (size_t row = 0; row < rows; row++) {
+        fprintf(fp, "%s, %s, %d, %u", ot_ctx->language, ot_ctx->program, ot_ctx->powercap, ot_total_ms);
+        for (int s = 0; s < OT_SCALAR_COUNT; s++) ot_write_value(fp, ot_scalar_series[s].value[row]);
+        for (int core = 0; core < ot_freq_core_count; core++) ot_write_value(fp, (double)ot_freq_mhz[row][core]);
+        for (size_t i = 0; i < active_metric_count; i++) {
+            int type = active_metrics[i].backend_type;
+            ot_write_value(fp, backend_rows[type] ? ot_backend_value[i][row] : METRIC_NOT_SUPPORTED);
+        }
+        fputc('\n', fp);
+    }
     fflush(fp);
 }
 
-static void* overtimeLogger(void *arg) {
-    struct OvertimeThreadCtx *ctx = (struct OvertimeThreadCtx *)arg;
-    if (active_metric_count > OT_MAX_METRICS) {
-        fprintf(stderr, "[ERROR] Too many metrics for overtime sampling (max %d).\n", OT_MAX_METRICS);
-        return NULL;
+static int ot_start_thread(int slot, void *(*function)(void *), void *arg) {
+    if (pthread_create(&ot_threads[slot], NULL, function, arg) != 0) {
+        fprintf(stderr, "[ERROR] Failed to start overtime sampler thread %d.\n", slot);
+        return -1;
     }
-    FILE *fp = fopen(ctx->output_file, "w");
-    if (!fp) {
-        perror("[ERROR] Failed to open overtime CSV");
-        return NULL;
+    ot_thread_started[slot] = 1;
+    return 0;
+}
+
+/* Stops the samplers, writes the CSV once and closes it. */
+static int overtimeStopSampling(void) {
+    ot_total_ms = ot_elapsed_ms();
+    ot_stop = 1;
+    for (int slot = 0; slot < OT_THREAD_SLOTS; slot++) {
+        if (ot_thread_started[slot]) pthread_join(ot_threads[slot], NULL);
+        ot_thread_started[slot] = 0;
     }
 
+    int result = 0;
+    if (ot_file) {
+        ot_dump(); /* single dump, after every sampler has stopped */
+        result = ferror(ot_file) ? -1 : 0;
+        if (fclose(ot_file) != 0) result = -1;
+        ot_file = NULL;
+    }
+    return result;
+}
+
+static int overtimeStartSampling(pid_t workload_pid, const struct OvertimeThreadCtx *ctx) {
+    if (active_metric_count > OT_MAX_METRICS) {
+        fprintf(stderr, "[ERROR] Too many metrics for overtime sampling (max %d).\n", OT_MAX_METRICS);
+        return -1;
+    }
+    ot_file = fopen(ctx->output_file, "w");
+    if (!ot_file) {
+        perror("[ERROR] Failed to open overtime CSV");
+        return -1;
+    }
+    ot_ctx = ctx;
+    ot_workload_pid = workload_pid;
+    ot_stop = 0;
+    ot_freq_core_count = sys_core_count();
+    if (ot_freq_core_count > SYS_MAX_CORES) ot_freq_core_count = SYS_MAX_CORES;
     ot_backend_ready[ENERGY_BACKEND_CPU] =
         active_cpu_backend && active_cpu_backend->init(0) == 0;
     ot_backend_ready[ENERGY_BACKEND_GPU] =
         active_gpu_backend && active_gpu_backend->init(0) == 0;
 
-    ot_freq_core_count = sys_core_count();
-    if (ot_freq_core_count > SYS_MAX_CORES) ot_freq_core_count = SYS_MAX_CORES;
-    for (size_t i = 0; i < active_metric_count; i++) {
-        ot_backend_values[i] = active_metrics[i].descriptor->kind == ENERGY_METRIC_WINDOW
-            ? 0.0 : METRIC_NOT_SUPPORTED;
-    }
+    energy_backend_write_csv_header(ot_file, 1);
+    fflush(ot_file);
 
-    energy_backend_write_csv_header(fp, 1);
-    fflush(fp);
-
-    typedef void *(*SamplerFn)(void *);
-    SamplerFn functions[OT_SAMPLER_COUNT] = {
-        ot_backend_sampler, ot_backend_sampler, ot_system_sampler
+    double (*readers[OT_SCALAR_COUNT])(pid_t) = {
+        ot_read_cpu_memory, ot_read_core_count,
+        ot_read_workload_processes, ot_read_running_processes /* timeline: keep last */
     };
-    int enabled[OT_SAMPLER_COUNT] = {
-        active_cpu_backend != NULL, active_gpu_backend != NULL, 1
-    };
-    pthread_t threads[OT_SAMPLER_COUNT];
-    int started[OT_SAMPLER_COUNT] = {0};
-    unsigned enabled_count = 0;
-    for (int s = 0; s < OT_SAMPLER_COUNT; s++) enabled_count += enabled[s] ? 1u : 0u;
-
-    ot_state = OT_STATE_WAIT;
-    ot_stop = 0;
-    int ok = pthread_barrier_init(&ot_barrier, NULL, enabled_count + 1) == 0;
-    for (int s = 0; ok && s < OT_SAMPLER_COUNT; s++) {
-        if (!enabled[s]) continue;
-        ot_samplers[s].interval_us = ctx->interval_ms * 1000;
-        ot_samplers[s].workload_pid = ctx->workload_pid;
-        ot_samplers[s].type = s == 0 ? ENERGY_BACKEND_CPU : ENERGY_BACKEND_GPU;
-        if (pthread_create(&threads[s], NULL, functions[s], &ot_samplers[s]) != 0) {
-            fprintf(stderr, "[ERROR] Failed to start overtime sampler thread.\n");
-            ok = 0;
-        } else {
-            started[s] = 1;
-        }
+    for (int i = 0; i < OT_SCALAR_COUNT; i++) {
+        ot_scalar_jobs[i] = (OvertimeScalarJob){&ot_scalar_series[i], readers[i], workload_pid};
     }
 
-    if (ok) {
-        ot_state = OT_STATE_RUN;
-        unsigned long timestamp_ms = 0;
-        for (;;) {
-            pthread_barrier_wait(&ot_barrier);
-            int stop = !ctx->run_flag || global_terminate;
-            if (!stop) {
-                timestamp_ms += ctx->interval_ms;
-                ot_write_row(fp, ctx, timestamp_ms);
-            }
-            ot_stop = stop;
-            pthread_barrier_wait(&ot_barrier);
-            if (stop) break;
-        }
-    } else {
-        ot_state = OT_STATE_ABORT;
+    clock_gettime(CLOCK_MONOTONIC, &ot_start_time);
+    int failed = 0;
+    for (int i = 0; i < OT_SCALAR_COUNT && !failed; i++) {
+        failed = ot_start_thread(i, ot_scalar_thread, &ot_scalar_jobs[i]) != 0;
     }
-
-    for (int s = 0; s < OT_SAMPLER_COUNT; s++) {
-        if (started[s]) pthread_join(threads[s], NULL);
+    if (!failed) failed = ot_start_thread(OT_FREQ_SLOT, ot_core_frequency_thread, NULL) != 0;
+    if (!failed && active_cpu_backend) {
+        failed = ot_start_thread(OT_CPU_SLOT, ot_backend_thread, (void *)(intptr_t)ENERGY_BACKEND_CPU) != 0;
     }
-    pthread_barrier_destroy(&ot_barrier);
-    fclose(fp);
-    return NULL;
+    if (!failed && active_gpu_backend) {
+        failed = ot_start_thread(OT_GPU_SLOT, ot_backend_thread, (void *)(intptr_t)ENERGY_BACKEND_GPU) != 0;
+    }
+    if (failed) {
+        overtimeStopSampling();
+        return -1;
+    }
+    return 0;
 }
 
 static void show_help(const char *bin_name) {
@@ -1204,8 +1281,8 @@ static void show_help(const char *bin_name) {
     printf("  %s --standard -command \"<cmd>\" -language <lang> -program <prog> -n_times <N> -variance <V> -time_out_limit <hours> -sleep_time <sec> -powercap <W> [-calib-file <path>] [-output <path>]\n", bin_name);
     printf("      Runs standard aggregate energy measurements.\n\n");
 
-    printf("  %s --overtime -command \"<cmd>\" -interval <ms> -language <lang> -program <prog> [-powercap <W>] [-variance <V>] [-sleep-secs <sec>] [-calib-file <path>] [-output <path>]\n", bin_name);
-    printf("      Continuously measures energy over time at fixed sampling intervals.\n\n");
+    printf("  %s --overtime -command \"<cmd>\" -language <lang> -program <prog> [-powercap <W>] [-variance <V>] [-sleep-secs <sec>] [-calib-file <path>] [-output <path>]\n", bin_name);
+    printf("      Samples every metric continuously in memory and dumps them to a CSV when the command ends.\n\n");
     printf("  %s --csv-header | --overtime-csv-header\n", bin_name);
     printf("      Prints the selected backends' CSV header for the requested measurement mode.\n\n");
 }
@@ -1356,7 +1433,7 @@ int main(int argc, char **argv) {
     if (argc >= 2 && (!strcmp(argv[1], "--overtime") || !strcmp(argv[1], "--over-time"))) {
         char command[500] = "", language[128] = "", program[128] = "";
         char ot_csv[512] = "measurements_ot.csv";
-        int interval_ms = 100, powercap = -1, variance = 5, sleep_time = 5;
+        int powercap = -1, variance = 5, sleep_time = 5;
 
         for (int i = 2; i < argc; ++i) {
             if ((!strcmp(argv[i], "-command") || !strcmp(argv[i], "-run_cmd")) && i + 1 < argc) {
@@ -1364,7 +1441,6 @@ int main(int argc, char **argv) {
             }
             else if (!strcmp(argv[i], "-language") && i + 1 < argc) strncpy(language, argv[++i], sizeof(language) - 1);
             else if (!strcmp(argv[i], "-program") && i + 1 < argc) strncpy(program, argv[++i], sizeof(program) - 1);
-            else if (!strcmp(argv[i], "-interval") && i + 1 < argc) interval_ms = atoi(argv[++i]);
             else if (!strcmp(argv[i], "-variance") && i + 1 < argc) variance = atoi(argv[++i]);
             else if (!strcmp(argv[i], "-powercap") && i + 1 < argc) powercap = atoi(argv[++i]);
             else if ((!strcmp(argv[i], "-sleep_time") || !strcmp(argv[i], "-sleep-secs")) && i + 1 < argc) {
@@ -1412,8 +1488,6 @@ int main(int argc, char **argv) {
         }
 
         struct OvertimeThreadCtx ctx = {
-            .run_flag = 1,
-            .interval_ms = interval_ms,
             .workload_pid = -1,
             .language = language,
             .program = program,
@@ -1432,9 +1506,7 @@ int main(int argc, char **argv) {
         }
         ctx.workload_pid = command_pid;
 
-        pthread_t logger_th;
-        if (pthread_create(&logger_th, NULL, overtimeLogger, &ctx) != 0) {
-            perror("[ERROR] Failed to start overtime sampling thread");
+        if (overtimeStartSampling(command_pid, &ctx) != 0) {
             kill(command_pid, SIGTERM);
             waitpid(command_pid, NULL, 0);
             if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap &&
@@ -1446,8 +1518,7 @@ int main(int argc, char **argv) {
 
         int command_status = waitForCommand(command_pid, NULL, NULL);
 
-        ctx.run_flag = 0;
-        pthread_join(logger_th, NULL);
+        if (overtimeStopSampling() != 0) command_status = -1;
 
         if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
             if (active_cpu_backend->destroy_powercap() != 0) {

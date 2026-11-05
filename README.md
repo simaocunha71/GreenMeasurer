@@ -140,12 +140,11 @@ sudo ./main --standard \
 ---
 
 ### 3. Over-Time Dynamic Sampling (`--overtime`)
-Spawns an asynchronous background logger that records cumulative energy and thermal changes using non-drifting absolute monotonic ticks (`clock_nanosleep`).
+Starts one sampler thread per metric that runs for the whole workload and stores values in statically allocated arrays. Nothing is allocated or written while the workload runs; the CSV is written once, after the workload ends. Each array holds 262144 samples per metric (about 7 hours at the fixed internal 100 ms pause); a sampler that reaches this capacity stops recording rather than overwriting data. There is no sampling-interval option.
 
 ```bash
 sudo ./main --overtime \
   -command "<command>" \
-  -interval <ms> \
   -language <lang> \
   -program <prog> \
   [-powercap <W>] \
@@ -156,7 +155,6 @@ sudo ./main --overtime \
 
 #### Parameters:
 * `-command`: Foreground benchmark workload.
-* `-interval`: Sampling step in milliseconds (e.g., `100` for 10 Hz).
 * `-language`: Programming language identifier.
 * `-program`: Program identifier.
 * `-powercap`: Clamping limit in Watts (optional, defaults to `-1`).
@@ -221,20 +219,20 @@ Metric behavior is declared by each backend:
   aggregated across the workload process tree. Polling is every 50 ms, so brief
   allocations may be missed.
 
-In over-time mode, metadata uses `Timestamp_ms` instead of `Time_ms`, and
+In over-time mode `Time_ms` is the total run time of the program (repeated on every row), there is no per-row timestamp, and
 `CPU_Memory_KB` is the current resident set size of the workload process tree.
 It also reports `Cores` (online logical cores), `Workload_Processes` (live
 processes in the workload tree), `System_Running_Processes` (runnable processes
-system-wide) and one `Core<N>_Freq_MHz` column per core. Sampling uses one
-thread per data source (CPU backend, GPU backend, system metrics) writing into
-static arrays. For example:
+system-wide) and one `Core<N>_Freq_MHz` column per core. Each of the memory, core-count, process-count, running-process and core-frequency
+metrics has its own thread, and the CPU and GPU backends have one thread each,
+all storing into static arrays. Every sampler uses the same fixed pause, so row *i* holds the *i*-th sample of each metric. For example:
 
 ```csv
-Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+Language,Program,Powercap,Time_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
 
-Window metrics are accumulated from the start of the workload through each
-timestamp; gauges and process-scoped values are sampled at each tick. Use
+Window metrics (energy) are accumulated in 64-bit sums of short segments, so the 32-bit hardware counters cannot overflow however long the run is. This is also how standard mode measures energy (50 ms segments). They are accumulated from the start of the workload through each
+row; gauges and process-scoped values are the latest sample at each row. Use
 `main --csv-header` or `main --overtime-csv-header` to print the schema selected
 on the current machine.
 

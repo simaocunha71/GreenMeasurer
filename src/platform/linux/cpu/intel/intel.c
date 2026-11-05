@@ -1,4 +1,5 @@
 #include "intel.h"
+#include <pthread.h>
 #include <regex.h>
 
 static int intel_cpu_model = -1;
@@ -205,8 +206,56 @@ static double intel_get_dram_energy(int core) {
     return (double)(uint32_t)(dram_after - dram_before) * energy_units;
 }
 
-static float intel_get_temperature(int core) {
-    (void)core;
+#define INTEL_MAX_TEMP_SENSORS 64
+static int intel_temp_fds[INTEL_MAX_TEMP_SENSORS];
+static int intel_temp_fd_count = 0;
+static pthread_once_t intel_temp_once = PTHREAD_ONCE_INIT;
+
+static int intel_read_small_file(const char *path, char *buffer, size_t size) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    ssize_t n = pread(fd, buffer, size - 1, 0);
+    close(fd);
+    if (n <= 0) return -1;
+    buffer[n] = '\0';
+    return 0;
+}
+
+/* Opens every "Core N" input of the coretemp hwmon device once; later reads are a single pread each. */
+static void intel_temp_discover(void) {
+    for (int hwmon = 0; hwmon < 64 && intel_temp_fd_count < INTEL_MAX_TEMP_SENSORS; hwmon++) {
+        char path[160], text[64];
+        snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/name", hwmon);
+        if (intel_read_small_file(path, text, sizeof(text)) != 0 || strncmp(text, "coretemp", 8) != 0) continue;
+        for (int index = 1; index < 256 && intel_temp_fd_count < INTEL_MAX_TEMP_SENSORS; index++) {
+            snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/temp%d_label", hwmon, index);
+            if (intel_read_small_file(path, text, sizeof(text)) != 0 || strncmp(text, "Core ", 5) != 0) continue;
+            snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/temp%d_input", hwmon, index);
+            int fd = open(path, O_RDONLY);
+            if (fd >= 0) intel_temp_fds[intel_temp_fd_count++] = fd;
+        }
+    }
+}
+
+static float intel_get_temperature_sysfs(void) {
+    pthread_once(&intel_temp_once, intel_temp_discover);
+    double sum = 0.0;
+    int count = 0;
+    for (int i = 0; i < intel_temp_fd_count; i++) {
+        char text[32];
+        ssize_t n = pread(intel_temp_fds[i], text, sizeof(text) - 1, 0);
+        if (n <= 0) continue;
+        text[n] = '\0';
+        long millidegrees = strtol(text, NULL, 10);
+        if (millidegrees > 0) {
+            sum += (double)millidegrees / 1000.0;
+            count++;
+        }
+    }
+    return count > 0 ? (float)(sum / count) : -1.0f;
+}
+
+static float intel_get_temperature_sensors_command(void) {
     FILE *fp = popen("sensors 2>/dev/null", "r");
     if (!fp) return -1.0f;
 
@@ -228,6 +277,12 @@ static float intel_get_temperature(int core) {
     }
     pclose(fp);
     return (count > 0) ? (float)(sum / count) : -1.0f;
+}
+
+static float intel_get_temperature(int core) {
+    (void)core;
+    float temperature = intel_get_temperature_sysfs();
+    return temperature > 0.0f ? temperature : intel_get_temperature_sensors_command();
 }
 
 static const EnergyMetricDescriptor intel_metrics[] = {

@@ -8,7 +8,6 @@ language ?= Python
 program ?= fibonacci
 export n_times
 command ?= python3 fibonacci.py $(input)
-interval ?= 100
 
 compile:
 	python3 -m py_compile fibonacci.py
@@ -19,7 +18,7 @@ standard:
 
 overtime:
 	-modprobe msr 2>/dev/null || true
-	../../../src/main --overtime -command "$(command)" -interval $(interval) -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance)
+	../../../src/main --overtime -command "$(command)" -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance)
 
 run:
 	$(command)

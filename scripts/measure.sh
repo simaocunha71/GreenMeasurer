@@ -53,11 +53,11 @@ is_valid_language() {
 }
 
 show_help() {
-    echo "Usage: $0 [--standard] [--overtime <interval_ms>] <language1> [language2] ... or 'all'"
+    echo "Usage: $0 [--standard] [--overtime] <language1> [language2] ... or 'all'"
     echo
     echo "Options:"
     echo "  --standard               Run in standard measurement mode"
-    echo "  --overtime <interval_ms> Run in overtime mode with sampling interval in ms (e.g. --overtime 100)"
+    echo "  --overtime               Run in overtime mode (metrics are sampled continuously and dumped at the end)"
     echo "  --help, -h               Show this help message"
     echo
     echo "Supported languages: ${VALID_LANGUAGES[*]}"
@@ -66,7 +66,6 @@ show_help() {
 
 STANDARD_MODE=0
 OVERTIME_MODE=0
-INTERVAL=100  
 
 while [[ "$1" == --* ]] || [[ "$1" == -h ]]; do
     case "$1" in
@@ -76,13 +75,7 @@ while [[ "$1" == --* ]] || [[ "$1" == -h ]]; do
             ;;
         --overtime)
             OVERTIME_MODE=1
-            if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
-                INTERVAL="$2"
-                shift 2
-            else
-                echo "Error: --overtime requires a numeric interval in milliseconds (e.g. --overtime 100)"
-                exit 1
-            fi
+            shift
             ;;
         --help|-h)
             show_help
@@ -127,7 +120,7 @@ IDLE_SECONDS=6
 
 # If not running as root, limit powercaps strictly to unconstrained (-1)
 if [[ $IS_ROOT -eq 1 ]]; then
-    POWER_CAPS=(-1 1 2 3 4 5 6 7 8 9 10 11 12)
+    POWER_CAPS=(-1 5 10 15)
 else
     POWER_CAPS=(-1)
     echo "[INFO] Running with unconstrained powercap (-1) only, as power capping requires root."
@@ -186,7 +179,7 @@ for cap in "${POWER_CAPS[@]}"; do
         while read -r program_dir; do
             makefile_path="$program_dir/Makefile"
             if [ -f "$makefile_path" ]; then
-                echo "Processing $program_dir (Powercap: $cap W, Interval: ${INTERVAL}ms)"
+                echo "Processing $program_dir (Powercap: $cap W)"
                 cd "$program_dir" || continue
 
                 rm -f *.csv
@@ -198,7 +191,7 @@ for cap in "${POWER_CAPS[@]}"; do
                 fi
 
                 if [[ $OVERTIME_MODE -eq 1 ]]; then
-                    if ! make overtime interval=$INTERVAL powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE; then
+                    if ! make overtime powercap="$cap" sleep_secs=$IDLE_SECONDS variance=$VARIANCE; then
                         echo "[ERROR] Overtime measurement failed in $program_dir."
                         make clean
                         exit 1
