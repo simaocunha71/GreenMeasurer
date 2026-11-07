@@ -1,0 +1,22 @@
+[measurement]
+mode = "overtime"
+command = "sleep 1"
+language = "Shell"
+program = "external-source"
+interval_us = 10000
+sleep_seconds = 0
+output = "external-source.csv"
+
+[metrics]
+select = ["system.cores", "external.processes.get_number_of_running_processes"]
+
+[[external_metrics]]
+name = "processes"
+metric = "RunningProcesses"
+unit = "count"
+function = "get_number_of_running_processes"
+header = "../custom_metric/processes.h"
+sources = ["../custom_metric/processes.c"]
+return_type = "int"
+arguments = []
+error_value = -1

@@ -302,24 +302,29 @@ static float intel_get_temperature(int core) {
     return temperature > 0.0f ? temperature : intel_get_temperature_sensors_command();
 }
 
-static const EnergyMetricDescriptor intel_metrics[] = {
-    {"Package", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"Core", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"DRAM", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE,
-     ENERGY_METRIC_FLAG_CPU_TEMPERATURE}
-};
-
-static double intel_get_metric(size_t metric_index, int core, pid_t process_id) {
-    (void)process_id;
-    switch (metric_index) {
-        case 0: return intel_get_package_energy(core);
-        case 1: return intel_get_core_energy(core);
-        case 2: return intel_get_dram_energy(core);
-        case 3: return (double)intel_get_temperature(core);
-        default: return METRIC_NOT_SUPPORTED;
-    }
+static double intel_metric_package(int core, pid_t pid) {
+    (void)pid;
+    return intel_get_package_energy(core);
 }
+static double intel_metric_core(int core, pid_t pid) {
+    (void)pid;
+    return intel_get_core_energy(core);
+}
+static double intel_metric_dram(int core, pid_t pid) {
+    (void)pid;
+    return intel_get_dram_energy(core);
+}
+static double intel_metric_temperature(int core, pid_t pid) {
+    (void)pid;
+    return intel_get_temperature(core);
+}
+
+#define INTEL_METRICS(X) \
+    X("Package", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, intel_metric_package, "CPU package energy", "Intel RAPL package MSR") \
+    X("Core", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, intel_metric_core, "CPU cores energy", "Intel RAPL PP0 MSR") \
+    X("DRAM", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, intel_metric_dram, "DRAM energy", "Intel RAPL DRAM MSR") \
+    X("Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_CPU_TEMPERATURE, intel_metric_temperature, "Average CPU core temperature", "Linux coretemp hwmon or sensors")
+ENERGY_DEFINE_METRICS(intel, INTEL_METRICS)
 
 static int intel_destroy_powercap(void);
 

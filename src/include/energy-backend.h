@@ -35,6 +35,57 @@ typedef struct energy_metric_descriptor {
     unsigned int flags;
 } EnergyMetricDescriptor;
 
+typedef struct energy_metric_function {
+    const char *name;
+    double (*read)(int device, pid_t process_id);
+} EnergyMetricFunction;
+
+typedef struct energy_metric_function_map {
+    uint32_t version;
+    size_t count;
+    const EnergyMetricFunction *functions;
+} EnergyMetricFunctionMap;
+
+#define ENERGY_METRIC_FUNCTION_MAP_VERSION 1u
+#define ENERGY_METRIC_FUNCTION_MAP_SYMBOL "energy_metric_function_map"
+#define ENERGY_METRIC_FUNCTION(function) {#function, function}
+
+typedef struct energy_metric_info {
+    const char *description;
+    const char *origin;
+} EnergyMetricInfo;
+
+typedef struct energy_metric_info_map {
+    uint32_t version;
+    size_t count;
+    const EnergyMetricInfo *entries;
+} EnergyMetricInfoMap;
+
+#define ENERGY_METRIC_INFO_MAP_VERSION 1u
+#define ENERGY_METRIC_INFO_MAP_SYMBOL "energy_metric_info_map"
+#define ENERGY_METRIC_DESCRIPTOR_ENTRY(name, unit, kind, scope, flags, function, description, origin) \
+    {name, unit, kind, scope, flags},
+#define ENERGY_METRIC_FUNCTION_ENTRY(name, unit, kind, scope, flags, function, description, origin) \
+    {#function, function},
+#define ENERGY_METRIC_INFO_ENTRY(name, unit, kind, scope, flags, function, description, origin) \
+    {description, origin},
+#define ENERGY_DEFINE_METRICS(prefix, list) \
+    static const EnergyMetricDescriptor prefix##_metrics[] = { list(ENERGY_METRIC_DESCRIPTOR_ENTRY) }; \
+    static const EnergyMetricFunction prefix##_metric_functions[] = { list(ENERGY_METRIC_FUNCTION_ENTRY) }; \
+    static const EnergyMetricInfo prefix##_metric_info[] = { list(ENERGY_METRIC_INFO_ENTRY) }; \
+    const EnergyMetricFunctionMap energy_metric_function_map = { \
+        ENERGY_METRIC_FUNCTION_MAP_VERSION, \
+        sizeof(prefix##_metric_functions) / sizeof(prefix##_metric_functions[0]), prefix##_metric_functions \
+    }; \
+    const EnergyMetricInfoMap energy_metric_info_map = { \
+        ENERGY_METRIC_INFO_MAP_VERSION, \
+        sizeof(prefix##_metric_info) / sizeof(prefix##_metric_info[0]), prefix##_metric_info \
+    }; \
+    static double prefix##_get_metric(size_t index, int device, pid_t pid) { \
+        return index < energy_metric_function_map.count \
+            ? prefix##_metric_functions[index].read(device, pid) : METRIC_NOT_SUPPORTED; \
+    }
+
 /* =========================================================================
    CPU BACKEND INTERFACE (vtable pattern)
    ========================================================================= */

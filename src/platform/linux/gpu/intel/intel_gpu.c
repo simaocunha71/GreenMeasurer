@@ -202,21 +202,18 @@ static float intel_gpu_get_temperature(int device_idx) {
     return intel_gpu_read_hwmon_temperature();
 }
 
-static const EnergyMetricDescriptor intel_gpu_metrics[] = {
-    {"GPU", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE,
-     ENERGY_METRIC_FLAG_GPU_TEMPERATURE}
-};
-
-static double intel_gpu_get_metric(size_t metric_index, int device_idx,
-                                   pid_t process_id) {
-    (void)process_id;
-    switch (metric_index) {
-        case 0: return intel_gpu_get_energy(device_idx);
-        case 1: return (double)intel_gpu_get_temperature(device_idx);
-        default: return METRIC_NOT_SUPPORTED;
-    }
+static double intel_gpu_metric_energy(int device, pid_t pid) {
+    (void)pid;
+    return intel_gpu_get_energy(device);
 }
+static double intel_gpu_metric_temperature(int device, pid_t pid) {
+    (void)pid;
+    return intel_gpu_get_temperature(device);
+}
+#define INTEL_GPU_METRICS(X) \
+    X("GPU", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, intel_gpu_metric_energy, "Integrated GPU energy", "Intel RAPL PP1 MSR") \
+    X("Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_GPU_TEMPERATURE, intel_gpu_metric_temperature, "Integrated GPU temperature", "Linux GPU hwmon")
+ENERGY_DEFINE_METRICS(intel_gpu, INTEL_GPU_METRICS)
 
 static void intel_gpu_cleanup(void) {}
 

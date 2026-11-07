@@ -1,0 +1,15 @@
+[measurement]
+mode = "overtime"
+command = "sleep 1"
+language = "Shell"
+program = "example"
+interval_us = 10000
+sleep_seconds = 0
+output = "custom_metric_overtime.csv"
+
+[metrics]
+select = ["system.running_processes", "external.processes.RunningProcesses"]
+
+[[adapters]]
+name = "processes"
+path = "adapter.so"

@@ -1,0 +1,14 @@
+# Syntax example only: configured CPU/GPU metric execution is not implemented yet.
+[measurement]
+mode = "overtime"
+command = "sleep 1"
+language = "Shell"
+program = "example"
+interval_us = 1000
+powercap = -1
+variance = 5
+sleep_seconds = 5
+output = "measurements_ot.csv"
+
+[metrics]
+select = ["cpu.Package", "cpu.DRAM", "system.running_processes"]

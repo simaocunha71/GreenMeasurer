@@ -1,5 +1,15 @@
 # GreenMeasurer: Design, Implementation and Validation of a Vendor-Agnostic Energy Measurement Framework
 
+> **Historical interface notice:** CLI examples in this document predate the
+> TOML-only interface and must not be used. For current generation, execution,
+> batch and calibration instructions, see the [README](../README.md) and
+> [scripts guide](../scripts/README.md).
+
+Current selection semantics: `metrics.select = "all"` selects all system
+metrics, all metrics of the CPU and GPU backends selected at runtime, all
+metrics in declared adapters, and all declared source-based external metrics.
+Availability checks and failure handling are the same as for explicit selection.
+
 This document describes the architecture and engineering decisions of GreenMeasurer in enough detail to serve as the technical basis of a scientific paper. It covers the design goals, the plugin-based backend API, measurement semantics, build system, diagnostics, testing, limitations and threats to validity.
 
 ---
@@ -70,6 +80,15 @@ The category (`cpu` or `gpu`) determines which interface the plugin must impleme
 ## 3. The Backend API
 
 Defined in `src/include/energy-backend.h`. Two vtable-style structs, `CpuBackend` and `GpuBackend`, plus a descriptor each plugin exports.
+
+The current built-in backends use `ENERGY_DEFINE_METRICS` to generate their
+descriptors, function map, indexed callback and description/origin metadata
+from one list. To add a backend, start with the
+[CPU or GPU template](../examples/backend_template/) and follow the concise
+[backend guide](../README.md#adding-a-backend). The public
+`./src/main --list-metrics [cpu|gpu [directory]]` command lists compiled plugins
+without detecting hardware or running workloads. Loading a plugin may execute
+its native constructors, so inspect only trusted libraries.
 
 ### 3.1 CPU interface
 
@@ -204,12 +223,9 @@ Previously, when no GPU sensor existed, the CPU temperature was copied into the 
 - `detect()` for the integrated GPU backend returns 1 if either the PP1 energy counter or a GPU temperature sensor is accessible.
 
 ### 6.5 Memory semantics
-The standard CSV reports `CPU_Memory_KB`, the maximum resident set size in KiB measured with `wait4()` (`ru_maxrss`). This is a separate command execution used to estimate workload memory, rather than a measurement made during each energy-sampling run.
-
-The framework metadata column `CPU_Memory_KB` reports maximum resident set size in KiB
-measured with `wait4()` (`ru_maxrss`). This is a separate command execution used to
-estimate workload memory, rather than a measurement made during each
-energy-sampling run.
+The standard CSV reports `CPU_Memory_KB`, the maximum resident set size in KiB
+reported by `wait4()` (`ru_maxrss`) for each measured run. This value is not a
+sum of simultaneous RSS across the workload's process tree.
 
 A backend may declare a process-scoped metric such as `VRAM` with unit `MiB`.
 The NVIDIA backend queries NVML process lists for the workload process and its
@@ -258,24 +274,24 @@ Detection is based on NVML initialisation and device count (`nvmlInit`, `nvmlDev
 | Backend | Category | Energy source | Powercap | Temperature |
 |---|---|---|---|---|
 | Intel RAPL CPU | cpu | MSR (package, cores, DRAM) | yes (raplcap/powercap) | CPU sensors |
-| AMD Zen RAPL CPU | cpu | MSR (package, cores) | no | CPU sensors |
 | Intel Integrated GPU | gpu | MSR PP1 | n/a | hwmon `GPU` label, if present |
 | NVIDIA NVML GPU | gpu | NVML total energy (priority 100) | n/a | NVML |
 
-Only the Intel CPU backend implements power capping; AMD sets the powercap callbacks to `NULL`, and the GPU interface has no powercap callbacks.
+Only the Intel CPU backend implements power capping, and the GPU interface has no powercap callbacks. AMD and macOS backends are not currently provided.
 
-Known hardware constraints: AMD Zen exposes no independent DRAM energy (reported as `NOT_SUPPORTED`); MSR access requires root and the `msr` kernel module (`/dev/cpu/N/msr`).
+Known hardware constraints: MSR access requires root and the `msr` kernel module (`/dev/cpu/N/msr`).
 
 ---
 
 ## 8. Diagnostics and User Experience
 
-A vendor-neutral table is printed at startup, with one row per backend folder:
+A vendor-neutral table is printed at startup. By default it shows selected
+backends and plugin load or descriptor errors; other entries are hidden.
+Set `GREENMEASURER_VERBOSE_BACKENDS=1` to see every backend folder, for example:
 
 ```
 [INFO] Energy backends (<root>)
   TYPE  BACKEND               STATUS        DETAILS
-  cpu   AMD Zen RAPL CPU      not detected  CPU is not a supported AMD Zen model
   cpu   Intel RAPL CPU        selected
   gpu   Intel Integrated GPU  not detected  no read access to /dev/cpu/0/msr (run with sudo)
   gpu   nvidia                not built     backend.so missing (skipped or failed at build time)
@@ -290,7 +306,13 @@ A vendor-neutral table is printed at startup, with one row per backend folder:
 | `load failed` | `dlopen` error (message from `dlerror`) |
 | `invalid` | Missing descriptor symbol, wrong type, or missing required callbacks |
 
-When a category has no active backend a warning states that the corresponding metrics will be reported as `NOT_SUPPORTED`; if neither category has one, the program exits with an error. Wrapper scripts (`scripts/measure.sh`) and Makefile messages were also made vendor-neutral. Vendor-specific logic remains only where it is inherently vendor-specific (the dependency installer `scripts/install.sh`, backend sources and their `backend.mk`).
+When a category has no active backend a warning states that its backend metrics
+are unavailable and points to verbose diagnostics, which may explain a
+permission failure. The legacy runner exits if neither category is active;
+configured system/external overtime can run without either. Wrapper scripts
+(`scripts/measure.sh`) and Makefile messages were also made vendor-neutral.
+Vendor-specific logic remains only where it is inherently vendor-specific
+(the dependency installer `scripts/install.sh`, backend sources and their `backend.mk`).
 
 ---
 

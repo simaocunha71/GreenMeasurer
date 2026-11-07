@@ -1,0 +1,13 @@
+[measurement]
+mode = "overtime"
+command = "./fibonacci-demo/fibonacci 35"
+language = "C"
+program = "recursive-fibonacci-35"
+output = "fibonacci-overtime.csv"
+interval_us = 10000
+sleep_seconds = 0
+powercap = -1
+calibration_file = "fibonacci-demo/temperature.txt"
+
+[metrics]
+select = ["system.cores", "cpu.Package"]

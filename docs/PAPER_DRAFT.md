@@ -1,12 +1,20 @@
 # GreenMeasurer: A Non-Intrusive Framework to Measure the Energy Consumption of Software Systems
 
+> **Historical interface notice:** Commands and workflow descriptions in this
+> draft predate the TOML-only interface. For current usage, see the
+> [README](../README.md) and [scripts guide](../scripts/README.md).
+
+Current configuration note: `metrics.select = "all"` selects all system
+metrics, metrics of the runtime-selected CPU/GPU backends, and metrics in
+declared external adapters and source definitions, subject to availability.
+
 > **Draft status.** This document follows the section structure of `GreenMeasurer.pdf` while documenting only capabilities present in the current repository. It is an engineering and paper-writing draft, not a completed scientific evaluation. Quantitative accuracy, measurement overhead and broad hardware compatibility still require controlled experiments.
 
 ## Abstract
 
-GreenMeasurer is a Linux and macOS framework for measuring the energy consumption and execution time of software without modifying the target program. It combines a C measurement executable, hardware-specific energy backends, shell scripts and workload Makefiles. The executable provides standard repeated measurements and time-series energy sampling, as well as temperature and power-cap calibration workflows. A shared CPU/GPU backend interface and runtime plugin discovery separate measurement orchestration from hardware-specific counter access. The framework records energy, execution time, temperatures and memory-use data in CSV files, while reporting unsupported metrics explicitly rather than substituting unrelated values. This document describes the current architecture, operating requirements, measurement procedures, implementation status and validation needs.
+GreenMeasurer is a Linux framework for measuring the energy consumption and execution time of software without modifying the target program. It combines a C measurement executable, hardware-specific energy backends, shell scripts and workload Makefiles. The executable provides standard repeated measurements and time-series energy sampling, as well as temperature and power-cap calibration workflows. A shared CPU/GPU backend interface and runtime plugin discovery separate measurement orchestration from hardware-specific counter access. The framework records energy, execution time, temperatures and memory-use data in CSV files, while reporting unsupported metrics explicitly rather than substituting unrelated values. This draft contains historical workflow examples; consult the README for current implementation details.
 
-**Index Terms—** software energy measurement, energy efficiency, RAPL, hardware telemetry, power capping, Linux, macOS.
+**Index Terms—** software energy measurement, energy efficiency, RAPL, hardware telemetry, power capping, Linux.
 
 ## I. Introduction
 
@@ -46,7 +54,7 @@ Additional advantages, each with its justification:
 - **Self-describing, always-consistent output.** Each backend declares its metrics (name, unit, kind and scope), and the CSV header is generated from the selected backends. `--csv-header` and `--overtime-csv-header` print the columns for a machine without running a workload. *Justification:* the output cannot drift from what the hardware provides, and a new metric needs no change to the core. A missing reading is `NOT_SUPPORTED`, never zero, so downstream analysis cannot mistake absent data for a measured value.
 - **Controlled experimental conditions.** The temperature calibration and variance threshold delay a run until the CPU is near an idle baseline, and the scripts disable Wi-Fi during runs and restore it afterwards. *Justification:* temperature and background network activity are known sources of variation in energy measurements, and handling them in the tool makes experiments easier to repeat. Whether this reduces variance must be shown experimentally (see the evaluation plan).
 - **Batch experiments across languages.** Workloads are directories with a Makefile exposing `compile`, `standard` and `overtime`, and `scripts/measure.sh` runs them for several languages and collects the results in one CSV. *Justification:* adding a language or program is a new directory, which supports comparing implementations of the same algorithm under identical conditions.
-- **Independent CPU and GPU selection, with explicit diagnostics.** At startup the tool prints each backend's state (`selected`, `available`, `not detected`, `not built`, `load failed`, `invalid`) and a hint on why. *Justification:* the user can see immediately why a metric is missing, instead of finding out from a silently empty result.
+- **Independent CPU and GPU selection, with explicit diagnostics.** At startup the tool reports selected backends and plugin errors, and warns when a CPU or GPU backend is missing. Verbose mode shows every backend's state (`selected`, `available`, `not detected`, `not built`, `load failed`, `invalid`) and its diagnostic hint. *Justification:* users can investigate missing metrics without always seeing irrelevant backends.
 - **Small dependency footprint.** The core is C with `dlopen`; optional dependencies (powercap/raplcap, NVML) only affect the backend that needs them, and a missing one skips that backend rather than failing the build. *Justification:* the tool builds on machines that lack some libraries, which supports the portability goal.
 
 The bracketed reference numbers above are retained from the supplied PDF and have not been re-verified.
@@ -156,17 +164,14 @@ The current backend implementations are:
 | Category | Implementation | Energy source | Additional capabilities |
 |---|---|---|---|
 | CPU | Intel | RAPL MSRs | CPU energy domains, temperature integration and power capping |
-| CPU | AMD Zen | MSRs | Experimental, not yet validated on hardware; planned future work. Independent DRAM energy is unsupported |
 | GPU | Intel integrated GPU | RAPL PP1 MSR when available | Direct GPU hwmon temperature when exposed |
 | GPU | NVIDIA | NVML total-energy counter | NVML telemetry; optional plugin depending on build-time dependencies |
-| CPU | Apple Silicon (macOS) | `powermetrics` "CPU Power" and "ANE Power" | Implemented, not yet validated on hardware. No power capping and no temperature |
-| GPU | Apple Silicon (macOS) | `powermetrics` "GPU Power" | Implemented, not yet validated on hardware |
 
 These are the implementations currently present in the repository, not a promise that every model exposes every counter. For example, MSR access requires the `msr` kernel module and sufficient privileges. GPU temperature is never inferred from CPU/package temperature.
 
 ### B. System Requirements
 
-The implementation targets Linux and macOS (Apple Silicon). The Makefile selects `platform/linux` or `platform/macos` according to the operating system, and the core uses the corresponding backend directory at run time. On macOS there are no RAPL or MSR counters, so the Apple backends run `powermetrics` (root required) in the background, write its output to a temporary file and integrate the average power it reports for each sampling interval (100 ms by default) into energy. Energy on macOS is thus known only to within one sampling interval. The helper scripts that control Wi-Fi are Linux-only; on macOS the executable or the workload Makefiles are used directly. The build requires a C compiler, GNU Make and the dynamic-loader library. Specific plugins may need additional libraries or headers. The Intel CPU power-capping backend uses the configured `raplcap` and `powercap` libraries; the NVIDIA plugin is built only when the NVML header and library are found. Missing optional dependencies skip that plugin rather than preventing the core from building.
+The implementation targets Linux. The build requires a C compiler, GNU Make and the dynamic-loader library. Specific plugins may need additional libraries or headers. The Intel CPU power-capping backend uses the configured `raplcap` and `powercap` libraries; the NVIDIA plugin is built only when the NVML header and library are found. Missing optional dependencies skip that plugin rather than preventing the core from building.
 
 Energy-counter access through MSRs commonly requires root privileges and the `msr` kernel module:
 
@@ -272,7 +277,8 @@ Language,Program,Powercap,Time_ms,CPU_Memory_KB
 
 The selected backend metrics follow as `<category>.<name>_<unit>` columns.
 `Time_ms` is execution duration in milliseconds, `CPU_Memory_KB` is maximum RSS in KiB
-from a separate command run measured with `wait4()` (`ru_maxrss`), and each metric follows its
+reported by `wait4()` (`ru_maxrss`) for that execution, not a simultaneous process-tree sum,
+and each metric follows its
 backend-declared sampling semantics. Standard-mode peak metrics are polled every
 50 ms, so shorter-lived values may be missed. Package energy is a
 hardware-domain measurement and must not be interpreted as process-attributed
@@ -281,7 +287,7 @@ domains may overlap. The NVIDIA implementation uses per-process NVML data; if
 that is unavailable, the CSV contains `NOT_SUPPORTED` rather than whole-device
 usage that could include other Slurm jobs.
 
-At startup the executable prints a backend table (by default only the selected backends, plus diagnostics for categories with no selected backend; `GREENMEASURER_VERBOSE_BACKENDS=1` lists all) with the selected implementation and diagnostic states such as `available`, `not detected`, `not built`, `load failed` and `invalid`. If a category has no selected backend, it warns that the corresponding energy metrics will be unsupported. If neither category is usable, it exits with an error.
+At startup the executable prints a backend table (by default selected backends and plugin load/descriptor errors; `GREENMEASURER_VERBOSE_BACKENDS=1` lists all) with diagnostic states such as `available`, `not detected`, `not built`, `load failed` and `invalid`. If a category has no selected backend, it warns that the corresponding backend metrics are unavailable. The legacy runner exits if neither category is usable; configured system/external overtime measurements can run without either.
 
 The fake-backend tests can be run with:
 
@@ -359,7 +365,7 @@ Several limitations must be considered when interpreting measurements. Hardware 
 
 Future work includes:
 
-1. Adding validated AMD CPU support (the AMD backend exists but has not been tested on hardware).
+1. Adding and validating an AMD CPU backend.
 2. Comparing measurements against an external power meter and reporting uncertainty.
 3. Evaluating repeatability across workloads, hardware models and operating-system versions.
 4. Validating optional backends on their target hardware, including the NVML plugin.
@@ -388,7 +394,13 @@ All modes accept `-command` (alias `-run_cmd`) with the command to run through `
 | `-range` | `min-max`, W | power-cap calibration | Range of limits to test; minimum at least 1 W |
 | `-compile_cmd` | text | power-cap calibration | Optional command run once before the sweep |
 
-Other entry points: `--csv-header` and `--overtime-csv-header` print the CSV header for the current machine; `--help` shows the built-in help. `GREENMEASURER_BACKEND_DIR` overrides the backend directory; `GREENMEASURER_VERBOSE_BACKENDS=1` lists every backend at startup; `GREENMEASURER_POWERMETRICS` and `GREENMEASURER_POWERMETRICS_INTERVAL_MS` set the `powermetrics` executable and its interval on macOS.
+For the current interface, `./src/main --list-metrics [cpu|gpu [directory]]`
+lists metrics, functions, descriptions and origins from compiled backend
+plugins without hardware detection. Built-in backend metrics are declared in a
+single registry; see the [README](../README.md#adding-a-backend) for the
+templates and extension guide. `GREENMEASURER_BACKEND_DIR` overrides the plugin
+directory, and `GREENMEASURER_VERBOSE_BACKENDS=1` shows backend states at
+measurement startup. Load only trusted plugins.
 
 ## Appendix B. Output columns
 
@@ -398,14 +410,12 @@ Other entry points: `--csv-header` and `--overtime-csv-header` print the CSV hea
 | `Powercap` | W | core | option | Cap used, or `-1` |
 | `Time_ms` | ms | core, standard | wall clock | Duration of the run |
 | `Timestamp_ms` | ms | core, over-time | monotonic clock | Elapsed time at the start of each sample's backend reads |
-| `CPU_Memory_KB` | KiB | core, standard | `wait4()` / `ru_maxrss` | Peak resident memory of the command (separate run) |
-| `cpu.Package_J` | J | window | Intel, AMD | Energy of the CPU package |
-| `cpu.Core_J` | J | window | Intel, AMD | Energy of the cores (part of the package) |
-| `cpu.DRAM_J` | J | window | Intel | Energy of the memory; `NOT_SUPPORTED` on AMD |
-| `cpu.Temperature_C` | °C | gauge | Intel, AMD | Average core temperature |
-| `cpu.CPU_J` | J | window | Apple Silicon | CPU energy from `powermetrics` |
-| `cpu.ANE_J` | J | window | Apple Silicon | Neural Engine energy from `powermetrics` |
-| `gpu.GPU_J` | J | window | NVIDIA, Intel, Apple Silicon | GPU energy |
+| `CPU_Memory_KB` | KiB | core, standard | `wait4()` / `ru_maxrss` | Maximum RSS reported for the measured run, not a simultaneous process-tree sum |
+| `cpu.Package_J` | J | window | Intel | Energy of the CPU package |
+| `cpu.Core_J` | J | window | Intel | Energy of the cores (part of the package) |
+| `cpu.DRAM_J` | J | window | Intel | Energy of the memory |
+| `cpu.Temperature_C` | °C | gauge | Intel | Average core temperature |
+| `gpu.GPU_J` | J | window | NVIDIA, Intel | GPU energy |
 | `gpu.Power_W` | W | gauge | NVIDIA | Instantaneous GPU power |
 | `gpu.Temperature_C` | °C | gauge | NVIDIA, Intel | GPU temperature |
 | `gpu.Utilization_%` | % | gauge | NVIDIA | GPU utilization |

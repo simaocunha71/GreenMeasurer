@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <time.h>
 
-#include "../../../../src/include/energy-backend.h"
+#include "energy-backend.h"
 
 #define TOY_GPU_WATTS 5.0
 
@@ -82,29 +82,25 @@ static double process_memory_mib(pid_t process_id) {
     return result;
 }
 
-/* PROCESS scope: the core calls get_metric with a real process_id and
-   combines the process tree. PEAK: the highest value seen is kept. */
-static const EnergyMetricDescriptor toy_gpu_metrics[] = {
-    {"Energy", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"Power", "W", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"Memory", "MiB", ENERGY_METRIC_PEAK, ENERGY_METRIC_PROCESS, ENERGY_METRIC_FLAG_NONE}
-};
-
-static double toy_gpu_get_metric(size_t metric_index, int device, pid_t process_id) {
+static double toy_gpu_metric_energy(int device, pid_t pid) {
     (void)device;
-    switch (metric_index) {
-        case 0:
-            if (!window_valid) return METRIC_NOT_SUPPORTED;
-            return TOY_GPU_WATTS * window_seconds;
-        case 1:
-            return TOY_GPU_WATTS;
-        case 2:
-            if (process_id <= 0) return METRIC_NOT_SUPPORTED;
-            return process_memory_mib(process_id);
-        default:
-            return METRIC_NOT_SUPPORTED;
-    }
+    (void)pid;
+    return window_valid ? TOY_GPU_WATTS * window_seconds : METRIC_NOT_SUPPORTED;
 }
+static double toy_gpu_metric_power(int device, pid_t pid) {
+    (void)device;
+    (void)pid;
+    return TOY_GPU_WATTS;
+}
+static double toy_gpu_metric_memory(int device, pid_t pid) {
+    (void)device;
+    return pid > 0 ? process_memory_mib(pid) : METRIC_NOT_SUPPORTED;
+}
+#define TOY_GPU_METRICS(X) \
+    X("Energy", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, toy_gpu_metric_energy, "Simulated GPU energy", "Elapsed time multiplied by simulated 5 W") \
+    X("Power", "W", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, toy_gpu_metric_power, "Simulated GPU power", "Constant simulated 5 W") \
+    X("Memory", "MiB", ENERGY_METRIC_PEAK, ENERGY_METRIC_PROCESS, ENERGY_METRIC_FLAG_NONE, toy_gpu_metric_memory, "Simulated GPU memory from process RSS", "Linux /proc/<pid>/status VmRSS")
+ENERGY_DEFINE_METRICS(toy_gpu, TOY_GPU_METRICS)
 
 GpuBackend toy_gpu_backend = {
     .name = "TOY_GPU",

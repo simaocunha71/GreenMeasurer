@@ -161,27 +161,32 @@ static double nvidia_get_memory_usage(int device_idx, int process_id) {
     return compute_memory > graphics_memory ? compute_memory : graphics_memory;
 }
 
-static const EnergyMetricDescriptor nvidia_metrics[] = {
-    {"GPU", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"Power", "W", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE,
-     ENERGY_METRIC_FLAG_GPU_TEMPERATURE},
-    {"Utilization", "%", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE,
-     ENERGY_METRIC_FLAG_NONE},
-    {"VRAM", "MiB", ENERGY_METRIC_PEAK, ENERGY_METRIC_PROCESS, ENERGY_METRIC_FLAG_NONE}
-};
-
-static double nvidia_get_metric(size_t metric_index, int device_idx,
-                                pid_t process_id) {
-    switch (metric_index) {
-        case 0: return nvidia_get_energy(device_idx);
-        case 1: return nvidia_get_power_draw(device_idx);
-        case 2: return (double)nvidia_get_temperature(device_idx);
-        case 3: return nvidia_get_utilization(device_idx);
-        case 4: return nvidia_get_memory_usage(device_idx, (int)process_id);
-        default: return METRIC_NOT_SUPPORTED;
-    }
+static double nvidia_metric_energy(int device, pid_t pid) {
+    (void)pid;
+    return nvidia_get_energy(device);
 }
+static double nvidia_metric_power(int device, pid_t pid) {
+    (void)pid;
+    return nvidia_get_power_draw(device);
+}
+static double nvidia_metric_temperature(int device, pid_t pid) {
+    (void)pid;
+    return nvidia_get_temperature(device);
+}
+static double nvidia_metric_utilization(int device, pid_t pid) {
+    (void)pid;
+    return nvidia_get_utilization(device);
+}
+static double nvidia_metric_vram(int device, pid_t pid) {
+    return nvidia_get_memory_usage(device, (int)pid);
+}
+#define NVIDIA_METRICS(X) \
+    X("GPU", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, nvidia_metric_energy, "GPU energy over the measurement window", "NVML total energy counter") \
+    X("Power", "W", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, nvidia_metric_power, "GPU power draw", "NVML power usage") \
+    X("Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_GPU_TEMPERATURE, nvidia_metric_temperature, "GPU temperature", "NVML GPU temperature sensor") \
+    X("Utilization", "%", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, nvidia_metric_utilization, "GPU utilization", "NVML utilization rates") \
+    X("VRAM", "MiB", ENERGY_METRIC_PEAK, ENERGY_METRIC_PROCESS, ENERGY_METRIC_FLAG_NONE, nvidia_metric_vram, "Workload GPU memory usage", "NVML compute and graphics process lists")
+ENERGY_DEFINE_METRICS(nvidia, NVIDIA_METRICS)
 
 static void nvidia_cleanup(void) {
     if (nvml_initialized) {

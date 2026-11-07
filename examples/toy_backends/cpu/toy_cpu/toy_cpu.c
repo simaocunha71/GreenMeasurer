@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "../../../../src/include/energy-backend.h"
+#include "energy-backend.h"
 
 #define TOY_CPU_WATTS 10.0
 
@@ -65,29 +65,23 @@ int energy_backend_sample_next(int core) {
     return result;
 }
 
-/* Name + unit become the CSV column: <category>.<name>_<unit>. */
-static const EnergyMetricDescriptor toy_cpu_metrics[] = {
-    {"Energy", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE},
-    {"LoadAvg", "1m", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE}
-};
-
-/* metric_index is the position in toy_cpu_metrics. */
-static double toy_cpu_get_metric(size_t metric_index, int core, pid_t process_id) {
+static double toy_cpu_metric_energy(int core, pid_t pid) {
     (void)core;
-    (void)process_id;
-    switch (metric_index) {
-        case 0:
-            if (!window_valid) return METRIC_NOT_SUPPORTED;
-            return TOY_CPU_WATTS * window_seconds;
-        case 1: {
-            double load[1];
-            if (getloadavg(load, 1) != 1) return METRIC_NOT_SUPPORTED;
-            return load[0];
-        }
-        default:
-            return METRIC_NOT_SUPPORTED;
-    }
+    (void)pid;
+    return window_valid ? TOY_CPU_WATTS * window_seconds : METRIC_NOT_SUPPORTED;
 }
+
+static double toy_cpu_metric_load(int core, pid_t pid) {
+    (void)core;
+    (void)pid;
+    double load[1];
+    return getloadavg(load, 1) == 1 ? load[0] : METRIC_NOT_SUPPORTED;
+}
+
+#define TOY_CPU_METRICS(X) \
+    X("Energy", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, toy_cpu_metric_energy, "Simulated CPU energy", "Elapsed time multiplied by simulated 10 W") \
+    X("LoadAvg", "1m", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, toy_cpu_metric_load, "One-minute system load average", "getloadavg")
+ENERGY_DEFINE_METRICS(toy_cpu, TOY_CPU_METRICS)
 
 CpuBackend toy_cpu_backend = {
     .name = "TOY_CPU",

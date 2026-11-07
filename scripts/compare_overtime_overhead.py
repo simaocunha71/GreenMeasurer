@@ -2,7 +2,6 @@
 """Compare workload elapsed time with and without overtime sampling."""
 
 import argparse
-import os
 from pathlib import Path
 import random
 import statistics
@@ -12,6 +11,8 @@ import tempfile
 import time
 
 from analyze_overtime import read_runs
+from generate_config import generate_configured
+from validate_config import tomllib, validate_config
 
 
 def positive_int(value):
@@ -43,60 +44,67 @@ def run_timed(command):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--command", required=True, help="Foreground shell command; executed repeatedly")
-    parser.add_argument("--main", type=Path, default=Path("src/main"), help="GreenMeasurer executable")
-    parser.add_argument("--calib-file", type=Path, required=True, help="Existing temperature calibration file")
+    parser.add_argument("--config", type=Path, required=True,
+                        help="TOML configuration for an overtime measurement")
     parser.add_argument("--runs", type=positive_int, default=5, help="Pairs of runs (default: 5)")
-    parser.add_argument("--interval-us", type=positive_int, default=1000, help="Overtime pause in microseconds")
-    parser.add_argument("--variance", type=int, default=100, help="Temperature threshold variance (default: 100)")
     parser.add_argument("--seed", type=int, default=0, help="Seed for randomized order (default: 0)")
     args = parser.parse_args()
-    if not args.command.strip():
-        parser.error("--command must not be empty")
-    if args.variance < 0:
-        parser.error("--variance must be non-negative")
-    executable = args.main.resolve()
-    calibration = args.calib_file.resolve()
-    if not executable.is_file() or not os.access(executable, os.X_OK):
-        parser.error(f"not an executable: {executable}")
-    if not calibration.is_file():
-        parser.error(f"calibration file does not exist: {calibration}")
+    if tomllib is None:
+        parser.error("Python 3.11+ or the 'tomli' package is required for TOML parsing")
+    try:
+        config_path = args.config.resolve()
+        with config_path.open("rb") as source:
+            config = tomllib.load(source)
+        validate_config(config, config_path)
+        measurement = config["measurement"]
+        if measurement["mode"] != "overtime":
+            raise ValueError("measurement.mode must be 'overtime' for this comparison")
+        if "command" not in measurement:
+            raise ValueError("measurement.command is required")
+        if measurement.get("powercap", -1) != -1:
+            raise ValueError("measurement.powercap must be -1; "
+                             "the baseline cannot apply a GreenMeasurer power cap")
+        calibration = Path(measurement.get("calibration_file", "/tmp/cores_temperatures.txt"))
+        if not calibration.is_file():
+            raise ValueError(f"calibration file does not exist: {calibration}")
+    except (OSError, ValueError, UnicodeError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
 
     baseline = []
     measured = []
     rng = random.Random(args.seed)
-    print(f"Command: {args.command}\nPairs: {args.runs}; seed: {args.seed}; interval: {args.interval_us} us")
+    command = measurement["command"]
+    print(f"Command: {command}\nPairs: {args.runs}; seed: {args.seed}; "
+          f"interval: {measurement.get('interval_us', 1000)} us")
     print("order,pair,mode,workload_ms,wrapper_ms")
     order = 0
     try:
         with tempfile.TemporaryDirectory(prefix="greenmeasurer-overhead-") as directory:
             output = Path(directory) / "overtime.csv"
+            measurement["output"] = str(output)
+            executable = generate_configured(config, config_path, Path(directory) / "generated",
+                                             log=sys.stderr)
             for pair in range(1, args.runs + 1):
                 modes = ["baseline", "overtime"]
                 rng.shuffle(modes)
                 for mode in modes:
                     order += 1
                     if mode == "baseline":
-                        elapsed = run_timed(["/bin/sh", "-c", args.command])
+                        elapsed = run_timed(["/bin/sh", "-c", command])
                         baseline.append(elapsed)
                         print(f"{order},{pair},baseline,{elapsed:.6f},")
                     else:
                         if output.exists():
                             output.unlink()
-                        elapsed = run_timed([
-                            str(executable), "--overtime", "-command", args.command,
-                            "-language", "benchmark", "-program", "overhead",
-                            "-powercap", "-1", "-variance", str(args.variance),
-                            "-sleep-secs", "0", "-interval-us", str(args.interval_us),
-                            "-calib-file", str(calibration), "-output", str(output),
-                        ])
+                        elapsed = run_timed([str(executable)])
                         runs = read_runs(output)
                         if len(runs) != 1:
                             raise ValueError("expected exactly one overtime run in generated CSV")
                         workload_ms = runs[0][1][-1]
                         measured.append(workload_ms)
                         print(f"{order},{pair},overtime,{workload_ms:.6f},{elapsed:.6f}")
-    except (OSError, ValueError, RuntimeError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 

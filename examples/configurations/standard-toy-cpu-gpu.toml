@@ -1,0 +1,12 @@
+[measurement]
+mode = "standard"
+command = "sleep 1"
+language = "Shell"
+program = "toy"
+output = "standard-toy-cpu-gpu.csv"
+repetitions = 2
+timeout_hours = 1
+sleep_seconds = 0
+
+[metrics]
+select = ["system.cores", "cpu.Energy", "gpu.Energy", "gpu.Power"]

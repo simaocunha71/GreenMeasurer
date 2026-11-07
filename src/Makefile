@@ -14,7 +14,7 @@ else
     $(error [BUILD] Unsupported operating system: $(UNAME_S))
 endif
 
-SRCS = main.c utils/memory.c metrics/system_metrics.c
+SRCS = main.c utils/memory.c metrics/system_metrics.c metrics/metric_adapter_loader.c
 OBJS = $(SRCS:.c=.o)
 TARGET = main
 BACKEND_DIRS := $(shell find platform/$(PLATFORM) -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
@@ -43,23 +43,38 @@ endef
 
 $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call backend_available,$(dir))),$(eval $(call backend_rule,$(dir)))))
 
-all: $(TARGET)
+all: $(TARGET) metric-adapter-check list-metrics
 
-$(TARGET): $(OBJS) $(BACKEND_TARGETS)
-	$(CC) $(CFLAGS) $(HOST_EXPORT_FLAGS) -o $@ $(OBJS) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) $(DL_LIBS)
+$(TARGET): launcher.o list-metrics $(BACKEND_TARGETS)
+	$(CC) $(CFLAGS) -o $@ launcher.o
 
-main.o: overtime.inc include/energy-backend.h metrics/system_metrics.h
+main.o: overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h metrics/system_metrics.h metrics/metric_adapter_loader.h
+
+tests/legacy-engine.o: main.c overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h metrics/system_metrics.h metrics/metric_adapter_loader.h
+	$(CC) $(CFLAGS) -DGREENMEASURER_TEST_ENGINE -c main.c -o $@
+
+tests/legacy-engine: tests/legacy-engine.o $(filter-out main.o,$(OBJS)) $(BACKEND_TARGETS)
+	$(CC) $(CFLAGS) $(HOST_EXPORT_FLAGS) -o $@ tests/legacy-engine.o $(filter-out main.o,$(OBJS)) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) $(DL_LIBS)
+
+list-metrics: list_metrics.c main.c overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h metrics/system_metrics.h metrics/metric_adapter_loader.h $(filter-out main.o,$(OBJS)) $(BACKEND_TARGETS)
+	$(CC) $(CFLAGS) $(HOST_EXPORT_FLAGS) -o $@ list_metrics.c $(filter-out main.o,$(OBJS)) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) $(DL_LIBS)
+
+metric-adapter-check: metrics/metric_adapter_check.c metrics/metric_adapter_loader.c metrics/metric_adapter_loader.h include/metric-adapter.h include/metric-guidance.h
+	$(CC) $(CFLAGS) -o $@ metrics/metric_adapter_check.c metrics/metric_adapter_loader.c $(LDFLAGS) $(DL_LIBS)
+
+print-configured-host-libs:
+	@printf '%s\n' '$(BACKEND_HOST_LDLIBS)'
 
 %.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET) $(OBJS) $(ALL_BACKEND_TARGETS)
+	rm -f $(TARGET) list-metrics metric-adapter-check $(OBJS) launcher.o tests/legacy-engine.o tests/legacy-engine $(ALL_BACKEND_TARGETS)
 	find platform/ utils/ -name "*.o" -delete 2>/dev/null || true
 
-test: all
+test: all tests/legacy-engine
 	@bash tests/run_tests.sh
-	@python3 -m unittest discover -s tests -p test_overtime_scripts.py -v
+	@python3 -m unittest discover -s tests -p 'test_*.py' -v
 
-.PHONY: all clean test
+.PHONY: all clean test print-configured-host-libs

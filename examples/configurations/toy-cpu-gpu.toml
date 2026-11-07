@@ -1,0 +1,11 @@
+[measurement]
+mode = "overtime"
+command = "sleep 1"
+language = "Shell"
+program = "toy"
+output = "toy-configured.csv"
+interval_us = 10000
+sleep_seconds = 0
+
+[metrics]
+select = ["cpu.Energy", "gpu.Energy", "gpu.Power", "system.cores"]

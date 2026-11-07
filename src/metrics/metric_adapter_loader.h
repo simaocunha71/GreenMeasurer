@@ -1,0 +1,15 @@
+#ifndef GREENMEASURER_METRIC_ADAPTER_LOADER_H
+#define GREENMEASURER_METRIC_ADAPTER_LOADER_H
+
+#include "../include/metric-adapter.h"
+
+typedef struct {
+    void *handle;
+    const GreenMetricAdapter *adapter;
+} GreenMetricAdapterHandle;
+
+int green_metric_adapter_open(GreenMetricAdapterHandle *handle, const char *path);
+int green_metric_adapter_read(const GreenMetricAdapterHandle *handle, size_t index, double *value);
+void green_metric_adapter_close(GreenMetricAdapterHandle *handle);
+
+#endif

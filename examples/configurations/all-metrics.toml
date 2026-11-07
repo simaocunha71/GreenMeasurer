@@ -1,0 +1,11 @@
+[measurement]
+mode = "overtime"
+command = "sleep 1"
+language = "Shell"
+program = "example"
+output = "all-metrics.csv"
+sleep_seconds = 0
+interval_us = 10000
+
+[metrics]
+select = "all"

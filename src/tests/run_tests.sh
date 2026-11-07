@@ -4,7 +4,7 @@
 set -u
 export LC_ALL=C
 cd "$(dirname "$0")" || exit 1
-MAIN="../main"
+MAIN="./legacy-engine"
 [[ -x "$MAIN" ]] || { echo "[ERROR] Build $MAIN first (run 'make')."; exit 1; }
 
 WORK=$(mktemp -d)
@@ -213,9 +213,9 @@ fi
 
 echo "[TEST] Contiguous overtime windows"
 mkdir -p "$WORK/toy/cpu/toy" "$WORK/toy/gpu/toy"
-if cc -O2 -Wall -Wextra -fPIC -shared -o "$WORK/toy/cpu/toy/backend.so" \
+if cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/cpu/toy/backend.so" \
     ../../examples/toy_backends/cpu/toy_cpu/toy_cpu.c &&
-   cc -O2 -Wall -Wextra -fPIC -shared -o "$WORK/toy/gpu/toy/backend.so" \
+   cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/gpu/toy/backend.so" \
     ../../examples/toy_backends/gpu/toy_gpu/toy_gpu.c; then
     GREENMEASURER_BACKEND_DIR="$WORK/toy" "$MAIN" --overtime \
         -command "sleep 0.32" -language C -program t -interval-us 50000 \
@@ -248,8 +248,8 @@ expect "legacy backend reports gaps" "CPU backend does not support contiguous ov
     FAIL=$((FAIL+1)); echo "  FAIL - legacy backend measurement failed";
 }
 build_fake cpu high "Fake CPU High" 10 1 -DFAKE_POWER_CAP_FAILURE
-if cc -O2 -Wall -Wextra -pthread -I../include -DOT_MAX_SAMPLES=2 -rdynamic \
-    ../main.c ../utils/memory.c ../metrics/system_metrics.c -o "$WORK/main-small" \
+if cc -O2 -Wall -Wextra -pthread -I../include -DGREENMEASURER_TEST_ENGINE -DOT_MAX_SAMPLES=2 -rdynamic \
+    ../main.c ../utils/memory.c ../metrics/system_metrics.c ../metrics/metric_adapter_loader.c -o "$WORK/main-small" \
     -pthread -lm -ldl; then
     GREENMEASURER_BACKEND_DIR="$ROOT" "$WORK/main-small" --overtime \
         -command "sleep 1; touch '$WORK/finished'" -language C -program t \
@@ -269,19 +269,87 @@ fi
 
 echo "[TEST] No GPU backend available"
 rm -rf "$ROOT/gpu"
+build_fake gpu off "Fake GPU Off" 0 0 -DFAKE_GPU
+mkdir -p "$ROOT/gpu/unbuilt"
+VERBOSE_BACKENDS=0 run_main
+expect "GPU absence warns in default output" "No GPU energy backend active"
+expect "verbose diagnostics hint is shown" "GREENMEASURER_VERBOSE_BACKENDS=1"
+if grep -Eq "Fake GPU Off|unbuilt" "$WORK/all.txt"; then
+    FAIL=$((FAIL+1)); echo "  FAIL - default output lists undetected or unbuilt GPU"
+else PASS=$((PASS+1)); echo "  ok   - default output hides undetected and unbuilt GPU"; fi
 run_main
+expect "verbose output shows undetected GPU reason" "Fake GPU Off +not detected +fake backend is disabled"
+expect "verbose output shows unbuilt GPU" "unbuilt +not built"
 expect "GPU absence warns"                    "No GPU energy backend active"
 expect "CPU still selected"                   "Fake CPU High +selected"
+VERBOSE_BACKENDS=0 run_overtime
+expect "overtime GPU absence warns" "No GPU energy backend active"
+if grep -Eq "Fake GPU Off|unbuilt" "$WORK/all.txt"; then
+    FAIL=$((FAIL+1)); echo "  FAIL - overtime lists undetected or unbuilt GPU"
+else PASS=$((PASS+1)); echo "  ok   - overtime hides undetected and unbuilt GPU"; fi
+GREENMEASURER_BACKEND_DIR="$ROOT" GREENMEASURER_VERBOSE_BACKENDS=0 \
+    "$MAIN" --config ../../examples/configurations/system-cores.toml \
+    -command "sleep 0.05" -sleep-secs 0 -calib-file "$WORK/calib.txt" \
+    -output "$WORK/configured.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
+RC=$?
+cat "$WORK/stdout.txt" "$WORK/stderr.txt" > "$WORK/all.txt"
+expect "configured overtime GPU absence warns" "No GPU energy backend active"
+if [[ $RC -eq 0 ]] && ! grep -Eq "Fake GPU Off|unbuilt" "$WORK/all.txt"; then
+    PASS=$((PASS+1)); echo "  ok   - configured overtime hides undetected and unbuilt GPU"
+else FAIL=$((FAIL+1)); echo "  FAIL - configured overtime output or exit status"; fi
+
+echo "[TEST] Detected backends with failed initialization"
+build_fake cpu high "Fake CPU High" 10 1 -DFAKE_INIT_FAILURE
+build_fake gpu good "Fake GPU" 0 1 -DFAKE_GPU -DFAKE_INIT_FAILURE
+run_main
+expect "standard CPU initialization warns" "CPU backend initialization or sampling failed"
+expect "standard GPU initialization warns" "GPU backend initialization or sampling failed"
+run_overtime
+expect "overtime CPU initialization warns" "Failed to start overtime CPU backend window"
+expect "overtime GPU initialization warns" "Failed to start overtime GPU backend window"
+
+echo "[TEST] No CPU backend available"
+rm -rf "$ROOT/cpu"
+build_fake gpu good "Fake GPU" 0 1 -DFAKE_GPU
+run_main
+expect "CPU absence warns"                    "No CPU energy backend active"
+expect "GPU still selected"                   "Fake GPU +selected"
+[[ $RC -eq 0 ]] && { PASS=$((PASS+1)); echo "  ok   - GPU-only measurement succeeds"; } || {
+    FAIL=$((FAIL+1)); echo "  FAIL - GPU-only measurement exits non-zero";
+}
 
 echo "[TEST] No backend at all"
 rm -rf "$ROOT"; mkdir -p "$ROOT/cpu" "$ROOT/gpu"
-run_main
+mkdir -p "$ROOT/cpu/unbuilt" "$ROOT/gpu/unbuilt"
+VERBOSE_BACKENDS=0 run_main
 expect "fails clearly"                        "No usable CPU or GPU energy backend"
+expect "both absent warns for CPU"            "No CPU energy backend active"
+expect "both absent warns for GPU"            "No GPU energy backend active"
+expect "missing backends mention verbose mode" "GREENMEASURER_VERBOSE_BACKENDS=1"
+if grep -Eq "unbuilt +not built" "$WORK/all.txt"; then
+    FAIL=$((FAIL+1)); echo "  FAIL - default output lists unbuilt CPU or GPU"
+else PASS=$((PASS+1)); echo "  ok   - default output hides unbuilt CPU and GPU"; fi
 [[ $RC -ne 0 ]] && { PASS=$((PASS+1)); echo "  ok   - non-zero exit code"; } || { FAIL=$((FAIL+1)); echo "  FAIL - expected non-zero exit"; }
 
 echo "[TEST] Invalid backend directory override"
 BACKEND_DIR="$WORK/does-not-exist" run_main
 expect "override error is reported"           "GREENMEASURER_BACKEND_DIR is not a usable directory"
+
+echo "[TEST] External metric adapter"
+if cc -O2 -Wall -Wextra -fPIC -shared \
+    ../../examples/custom_metric/adapter.c ../../examples/custom_metric/processes.c \
+    -o "$WORK/metric-adapter.so" &&
+   cc -O2 -Wall -Wextra metric_adapter_test.c ../metrics/metric_adapter_loader.c \
+    -o "$WORK/metric-adapter-test" -ldl -lm &&
+   cc -O2 -Wall -Wextra -fPIC -shared invalid_metric_adapter.c \
+    -o "$WORK/invalid-metric-adapter.so" &&
+   "$WORK/metric-adapter-test" "$WORK/metric-adapter.so" "$WORK/invalid-metric-adapter.so" \
+    > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"; then
+    PASS=$((PASS+1)); echo "  ok   - external gauge adapter loads and reads"
+else
+    FAIL=$((FAIL+1)); echo "  FAIL - external gauge adapter"
+    cat "$WORK/stdout.txt" "$WORK/stderr.txt"
+fi
 
 echo
 echo "[RESULT] $PASS passed, $FAIL failed"

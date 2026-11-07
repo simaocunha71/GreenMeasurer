@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="GreenMeasurer: a Linux framework for software energy measurement with extensible CPU and GPU backends.">
+  <title>GreenMeasurer: A Non-Intrusive Framework to Measure the Energy Consumption of Software Systems</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#top"><img src="favicon.svg" alt="" width="30" height="30">GreenMeasurer</a>
+    <nav aria-label="Main navigation">
+      <a href="#usage">Get started</a>
+      <a href="#choose-mode">Modes</a>
+      <a href="#fibonacci-example">Example</a>
+      <a href="#configuration">Reference</a>
+      <a href="#install">Install</a>
+      <a href="#extend">Extend</a>
+      <a class="gh" href="https://github.com/simaocunha71/GreenMeasurer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero" id="top">
+  <div class="wrap">
+    <p class="eyebrow">Software energy measurement · Linux</p>
+    <h1>Understand the energy behind your code.</h1>
+    <p class="lead">
+      Run your program, collect the metrics your hardware supports, and explore
+      the results in CSV. No instrumentation required.
+    </p>
+    <div class="actions">
+      <a class="btn primary" href="#usage">Measure your program <span aria-hidden="true">→</span></a>
+      <a class="btn" href="#fibonacci-example">See a complete example</a>
+    </div>
+    <div class="workflow" aria-label="Measurement workflow">
+      <div><span>01</span> Choose metrics</div>
+      <div><span>02</span> Generate</div>
+      <div><span>03</span> Run</div>
+      <div><span>04</span> Explore CSV</div>
+    </div>
+  </div>
+</section>
+
+<main class="wrap">
+<section id="choose-mode" class="mode-section">
+  <p class="eyebrow">Find your starting point</p>
+  <h2>What would you like to measure?</h2>
+  <div class="mode-grid">
+    <a class="mode-card" href="#mode-standard"><span class="mode-tag">One row per run</span><h3>Standard</h3><p>Compare complete executions with repeated measurements.</p><span class="card-link">Configure standard →</span></a>
+    <a class="mode-card" href="#mode-overtime"><span class="mode-tag">A series of samples</span><h3>Overtime</h3><p>See how metrics change while the program is running.</p><span class="card-link">Configure overtime →</span></a>
+    <a class="mode-card" href="#mode-calibration"><span class="mode-tag">Optional setup</span><h3>Calibration</h3><p>Establish a temperature baseline or explore power limits.</p><span class="card-link">Explore calibration →</span></a>
+  </div>
+</section>
+
+<section id="usage" class="quickstart">
+  <p class="eyebrow">Get started</p>
+  <h2>Measure your own program</h2>
+  <p class="section-intro">Choose a foreground command, select metrics, generate
+    a measurement executable and run it. GreenMeasurer can measure a program in
+    any language without modifying its source.</p>
+  <div class="callout">
+    <strong>Before you begin</strong>
+    <p>Run the following from the repository root on Linux after installing the
+      <a href="#install">prerequisites</a>. Python 3.11+ (or <code>tomli</code>)
+      is required. Build GreenMeasurer and discover compiled backend metrics:</p>
+<pre><code>make -C src
+./src/main --list-metrics</code></pre>
+    <p>Metric availability depends on hardware and permissions. Package energy
+      covers the hardware domain, including background activity.</p>
+  </div>
+  <h3 id="mode-standard">1. Choose a measurement mode and configure it</h3>
+  <p>Create a file named <code>my-measurement.toml</code>. This standard-mode
+    example uses <code>sleep 1</code> as a placeholder: replace it with your
+    program's command and adjust the labels and metrics as needed.</p>
+  <div class="code-label">my-measurement.toml <span>standard</span></div>
+<pre><code>[measurement]
+mode = "standard"
+command = "sleep 1"
+language = "Shell"
+program = "my-program"
+output = "measurements.csv"
+repetitions = 3
+sleep_seconds = 0
+powercap = -1
+
+[metrics]
+select = ["system.cores"]</code></pre>
+  <p>Standard mode writes one row per measured run. Add supported backend metrics
+    such as <code>cpu.Package</code>, or use <code>select = "all"</code> to
+    select all available system, active backend and declared external metrics.
+    See <a href="#configuration">configuration</a> for details.</p>
+  <h3 id="mode-overtime">Prefer samples over time?</h3>
+  <p>Use this configuration instead for overtime mode. It runs the command once,
+    writes a row for each sampling window and uses a 10 ms pause after each
+    sampling cycle, not a guaranteed sampling period.</p>
+  <div class="code-label">my-measurement.toml <span>overtime</span></div>
+<pre><code>[measurement]
+mode = "overtime"
+command = "sleep 1"
+language = "Shell"
+program = "my-program"
+output = "measurements-overtime.csv"
+interval_us = 10000
+sleep_seconds = 0
+powercap = -1
+
+[metrics]
+select = ["system.cores"]</code></pre>
+  <h3>2. Generate, run and inspect</h3>
+  <p>Generate in a directory that does not already exist. Generation compiles
+    the executable but does not run your workload:</p>
+  <div class="code-label">Terminal <span>repository root</span></div>
+<pre><code>./src/main --config my-measurement.toml --directory my-measurement-build
+./my-measurement-build/greenmeasurer</code></pre>
+  <p>Open the CSV named by <code>output</code>. Running replaces that file.
+    The executable embeds the configuration and accepts no overrides; after
+    editing the TOML, regenerate in a new directory. If no temperature baseline
+    exists, one is created automatically. For a complete walkthrough, including
+    example CSVs, see the <a href="#fibonacci-example">C example</a>.</p>
+  <h3 id="mode-calibration">Optional calibration</h3>
+  <p>Temperature calibration records a baseline in a text file. Power-cap
+    calibration runs a workload at a range of watt limits and produces a CSV.
+    Power caps require supported hardware and permissions and may persist after
+    the run. Review your hardware's limits before using them. See the
+    <a href="#reference">calibration reference</a> or the
+    <a href="#fibonacci-calibration">worked example</a>.</p>
+  <h3>Run a batch</h3>
+  <p>Provide one TOML file per run with distinct output paths:</p>
+<pre><code>bash scripts/measure.sh generate generated-batch first.toml second.toml
+bash scripts/measure.sh run generated-batch</code></pre>
+  <p>The script does not change Wi-Fi, build workloads, or delete CSV files.</p>
+</section>
+
+<section id="fibonacci-example">
+  <p class="eyebrow">Worked example · C</p>
+  <h2>From source code to results</h2>
+  <p class="section-intro">To illustrate the workflow, we'll measure a small
+    recursive Fibonacci program. Apply the same steps to your own command:
+    prepare it, configure the mode, generate, run and inspect the results.</p>
+  <nav class="step-nav" aria-label="Fibonacci guide steps">
+    <a href="#fibonacci-source">1. Source &amp; build</a>
+    <a href="#fibonacci-standard">2. Standard</a>
+    <a href="#fibonacci-overtime">3. Overtime</a>
+    <a href="#fibonacci-calibration">4. Calibration</a>
+  </nav>
+  <div class="callout">
+    <strong>Before you begin</strong>
+    <p>Use Linux, install the <a href="#install">prerequisites</a>, and run all
+      commands below from the repository root. Python 3.11+ (or <code>tomli</code>)
+      is required. Generated build directories must not already exist. Runs replace
+      the configured output files.</p>
+  </div>
+
+  <article class="guide-step" id="fibonacci-source">
+    <div class="step-heading"><span class="step-number">01</span><div><p class="eyebrow">Prepare</p><h3>Meet and build the program</h3></div></div>
+    <p>The repository already contains this recursive implementation at
+      <code>Languages/C/Fibonacci/fibonacci.c</code>:</p>
+    <div class="code-label">fibonacci.c <span>C</span></div>
+<pre><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+long fib(int n) {
+    if (n &lt;= 1)
+        return n;
+    else
+        return fib(n - 1) + fib(n - 2);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s &lt;number&gt;\n", argv[0]);
+        return 1;
+    }
+
+    int n = atoi(argv[1]);
+    long r = fib(n);
+    return 0;
+}</code></pre>
+    <p>Compile the workload and GreenMeasurer. The workload takes an integer
+      argument and does not print its result. <code>-O0</code> prevents the
+      unused computation from being optimized away.</p>
+    <div class="code-label">Terminal <span>repository root</span></div>
+<pre><code>mkdir fibonacci-demo
+cc -O0 Languages/C/Fibonacci/fibonacci.c -o fibonacci-demo/fibonacci
+make -C src
+./fibonacci-demo/fibonacci 35</code></pre>
+    <p>A successful run produces no program output. The following configurations
+      select the system core count and CPU package energy. If package energy is
+      unavailable, GreenMeasurer warns and skips it; the core count still allows
+      the example to run. Use <code>./src/main --list-metrics</code> to inspect
+      compiled backend metrics.</p>
+  </article>
+
+  <article class="guide-step" id="fibonacci-standard">
+    <div class="step-heading"><span class="step-number">02</span><div><p class="eyebrow">Aggregate measurements</p><h3>Run standard mode</h3></div></div>
+    <p>Each of the three measured runs produces one row. The supplied
+      <code>examples/configurations/fibonacci-standard.toml</code> contains:</p>
+    <div class="code-label">fibonacci-standard.toml <span>TOML</span></div>
+<pre><code>[measurement]
+mode = "standard"
+command = "./fibonacci-demo/fibonacci 35"
+language = "C"
+program = "recursive-fibonacci-35"
+output = "fibonacci-standard.csv"
+repetitions = 3
+timeout_hours = 1
+sleep_seconds = 0
+variance = 5
+powercap = -1
+calibration_file = "fibonacci-demo/temperature.txt"
+
+[metrics]
+select = ["system.cores", "cpu.Package"]</code></pre>
+    <p>Generate the executable, then run it. The configuration is embedded at
+      generation time; regenerate in a new directory after editing the TOML.
+      A run may wait until CPU temperature is within 5 °C of the baseline.</p>
+    <div class="code-label">Terminal <span>generate → run → inspect</span></div>
+<pre><code>./src/main --config examples/configurations/fibonacci-standard.toml --directory fibonacci-standard-build
+./fibonacci-standard-build/greenmeasurer
+cat fibonacci-standard.csv</code></pre>
+    <div class="result-box">
+      <h4>Example result <span>fibonacci-standard.csv</span></h4>
+      <p>Illustrative values on a machine with 8 cores and a readable Intel package counter:</p>
+<pre><code>Language,Program,Powercap,Time_ms,Cores,cpu.Package_J
+C, recursive-fibonacci-35, -1, 352.612000, 8, 4.210000000000000000
+C, recursive-fibonacci-35, -1, 349.198000, 8, 4.170000000000000000
+C, recursive-fibonacci-35, -1, 351.480000, 8, 4.190000000000000000</code></pre>
+      <p><code>Time_ms</code> is the duration of a run; <code>cpu.Package_J</code>
+        is energy over that whole run. <code>-1</code> means no GreenMeasurer power cap.</p>
+    </div>
+  </article>
+
+  <article class="guide-step" id="fibonacci-overtime">
+    <div class="step-heading"><span class="step-number">03</span><div><p class="eyebrow">Time-series measurements</p><h3>Run overtime mode</h3></div></div>
+    <p>The supplied <code>examples/configurations/fibonacci-overtime.toml</code>
+      runs Fibonacci once and samples during execution:</p>
+    <div class="code-label">fibonacci-overtime.toml <span>TOML</span></div>
+<pre><code>[measurement]
+mode = "overtime"
+command = "./fibonacci-demo/fibonacci 35"
+language = "C"
+program = "recursive-fibonacci-35"
+output = "fibonacci-overtime.csv"
+interval_us = 10000
+sleep_seconds = 0
+powercap = -1
+calibration_file = "fibonacci-demo/temperature.txt"
+
+[metrics]
+select = ["system.cores", "cpu.Package"]</code></pre>
+    <div class="code-label">Terminal <span>generate → run → inspect</span></div>
+<pre><code>./src/main --config examples/configurations/fibonacci-overtime.toml --directory fibonacci-overtime-build
+./fibonacci-overtime-build/greenmeasurer
+cat fibonacci-overtime.csv</code></pre>
+    <div class="result-box">
+      <h4>Example result <span>fibonacci-overtime.csv</span></h4>
+      <p>Illustrative first three rows on the same kind of machine; a real run may have many more:</p>
+<pre><code>Language,Program,Powercap,Timestamp_ms,Cores,cpu.Package_J
+C, recursive-fibonacci-35, -1, 10.245000, 8.000000000000000000, 0.110000000000000000
+C, recursive-fibonacci-35, -1, 20.591000, 8.000000000000000000, 0.120000000000000000
+C, recursive-fibonacci-35, -1, 30.935000, 8.000000000000000000, 0.115000000000000000</code></pre>
+      <p><code>Timestamp_ms</code> is elapsed time; package energy is for each
+        sampling window, not a cumulative total. The 10 ms setting is a pause after
+        sampling, not a guaranteed hardware sampling period. The CSV is written
+        after the workload finishes, including a final partial window.</p>
+    </div>
+  </article>
+
+  <article class="guide-step" id="fibonacci-calibration">
+    <div class="step-heading"><span class="step-number">04</span><div><p class="eyebrow">Optional</p><h3>Explore the calibration modes</h3></div></div>
+    <p>Calibration modes do not use a <code>[metrics]</code> table. They serve
+      different purposes from the two measurement modes above.</p>
+    <h4>Temperature calibration</h4>
+    <p>The example below records an idle temperature baseline. It does not run
+      Fibonacci and produces a text file, <strong>not a CSV</strong>. It requires
+      an available CPU or GPU backend; if CPU temperature is unreadable, a
+      warning is issued and the baseline falls back to 40 °C.</p>
+    <div class="code-label">examples/configurations/fibonacci-temperature.toml <span>TOML</span></div>
+<pre><code>[measurement]
+mode = "temperature-calibration"
+sleep_seconds = 20
+calibration_file = "fibonacci-demo/temperature.txt"</code></pre>
+    <div class="code-label">Terminal <span>optional baseline</span></div>
+<pre><code>./src/main --config examples/configurations/fibonacci-temperature.toml --directory fibonacci-temperature-build
+./fibonacci-temperature-build/greenmeasurer
+cat fibonacci-demo/temperature.txt</code></pre>
+    <div class="result-box"><h4>Example result <span>temperature.txt · final line</span></h4>
+      <p>The file can also contain a sensor snapshot before this line:</p>
+<pre><code>Average temperature: 40.0°C</code></pre></div>
+    <p>If this file does not exist when a measurement starts, GreenMeasurer
+      creates a baseline automatically using that configuration's
+      <code>sleep_seconds</code>. Run temperature calibration first to use its
+      20-second settling period; doing it afterward replaces the baseline.</p>
+    <h4>Power-cap calibration</h4>
+    <div class="warning"><strong>Review before running.</strong> This mode changes
+      hardware power limits; they may persist afterward. It requires a supported
+      Intel CPU backend, appropriate permissions, and a watt range suitable for
+      your hardware. The 15–16 W range below is illustrative, not a recommendation.</div>
+    <p>Edit <code>examples/configurations/fibonacci-powercap.toml</code> to choose
+      a safe range before generating. Each integer watt limit is tested three
+      times; an initial workload pre-check also runs at each limit.</p>
+    <div class="code-label">fibonacci-powercap.toml <span>TOML</span></div>
+<pre><code>[measurement]
+mode = "powercap-calibration"
+command = "./fibonacci-demo/fibonacci 35"
+language = "C"
+program = "recursive-fibonacci-35"
+powercap_min = 15
+powercap_max = 16
+repetitions = 3
+timeout_hours = 1
+variance = 5
+sleep_seconds = 3
+calibration_file = "fibonacci-demo/temperature.txt"
+output = "fibonacci-powercap.csv"</code></pre>
+    <div class="code-label">Terminal <span>only after reviewing the range</span></div>
+<pre><code>./src/main --config examples/configurations/fibonacci-powercap.toml --directory fibonacci-powercap-build
+sudo ./fibonacci-powercap-build/greenmeasurer
+cat fibonacci-powercap.csv</code></pre>
+    <div class="result-box">
+      <h4>Example result <span>fibonacci-powercap.csv</span></h4>
+      <p>Illustrative header and selected rows for a two-core machine with an
+        Intel CPU backend and no GPU backend. The actual file contains three rows
+        per limit; values and columns vary by machine and chosen range.</p>
+<pre><code>Language,Program,Powercap,Time_ms,CPU_Memory_KB,Cores,Workload_Processes_Peak,System_Running_Processes_Peak,Core0_Avg_Freq_MHz,Core1_Avg_Freq_MHz,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C
+C, recursive-fibonacci-35, 15, 410, 1400, 2, 1.000000000000000000, 2.000000000000000000, 2200.000000000000000000, 2200.000000000000000000, 3.900000000000000000, 2.800000000000000000, NOT_SUPPORTED, 55.000000000000000000
+C, recursive-fibonacci-35, 16, 390, 1400, 2, 1.000000000000000000, 2.000000000000000000, 2300.000000000000000000, 2300.000000000000000000, 4.000000000000000000, 2.900000000000000000, NOT_SUPPORTED, 56.000000000000000000</code></pre>
+      <p>Each row represents one run at the indicated watt limit. The sweep
+        contains no uncapped baseline, so baseline-relative GPS-UP values cannot
+        be calculated from this file alone.</p>
+    </div>
+  </article>
+  <div class="callout">
+    <strong>Reading your results</strong>
+    <p>All values above are illustrative. Columns depend on selected and
+      available metrics: unavailable preflight metrics can be skipped, and later
+      failed reads are recorded as <code>NOT_SUPPORTED</code>. CPU package energy
+      covers the hardware domain, including background activity—not just Fibonacci.</p>
+    <p>To include every available system and selected backend metric instead,
+      change <code>select</code> to <code>"all"</code> and regenerate.</p>
+  </div>
+</section>
+
+<section id="configuration">
+  <h2>TOML configuration</h2>
+  <p>Both standard and overtime modes accept an explicit list of CPU, GPU,
+    system and external metrics, or <code>select = "all"</code>:</p>
+<pre>[measurement]
+mode = "overtime"
+command = "sleep 1"
+interval_us = 10000
+sleep_seconds = 0
+output = "all-metrics.csv"
+
+[metrics]
+select = "all"</pre>
+  <p><code>all</code> selects all system metrics, every metric of the CPU and GPU
+    backends selected at runtime, all metrics in each declared
+    <code>[[adapters]]</code> library, and every declared
+    <code>[[external_metrics]]</code> source metric. Other adapters are not
+    discovered automatically. The schema depends on hardware and availability.</p>
+  <p>The generator builds each selected source metric into its own shared library;
+    built-in metrics remain in their backend library. External functions may be
+    selected by metric or function name. Paths to sources and adapters are relative
+    to the TOML; output and calibration paths are relative to the execution working
+    directory. Only use trusted native code.</p>
+  <p>Unavailable metrics that can be checked before execution are skipped with
+    warnings. Failed readings after the workload starts retain their columns as
+    <code>NOT_SUPPORTED</code>. Process metrics cannot be preflighted. If no
+    metrics remain, the run fails. Overtime supports at most 64 registered
+    backend metrics.</p>
+  <p>Validate syntax with <code>python3 scripts/validate_config.py path/to/config.toml</code>;
+    <code>--check-adapters</code> additionally loads trusted adapters. See the
+    <a href="https://github.com/simaocunha71/GreenMeasurer#executing-a-configuration">README</a>
+    for the complete schema and external function examples. Python 3.11+ or
+    <code>tomli</code> is required.</p>
+</section>
+
+<section id="reference">
+  <h2>TOML reference</h2>
+  <table>
+    <tr><th>Measurement field</th><th>Meaning</th></tr>
+    <tr><td><code>mode</code></td><td><code>standard</code>, <code>overtime</code>, <code>temperature-calibration</code> or <code>powercap-calibration</code>.</td></tr>
+    <tr><td><code>command</code></td><td>Foreground workload command; required except for temperature calibration.</td></tr>
+    <tr><td><code>language</code>, <code>program</code></td><td>CSV metadata labels.</td></tr>
+    <tr><td><code>output</code>, <code>calibration_file</code></td><td>Output CSV and temperature baseline paths.</td></tr>
+    <tr><td><code>variance</code>, <code>sleep_seconds</code></td><td>Temperature threshold and calibration settling time.</td></tr>
+    <tr><td><code>powercap</code></td><td>Watts, or -1 for no GreenMeasurer cap. Limits can persist after the run.</td></tr>
+    <tr><td><code>repetitions</code>, <code>timeout_hours</code></td><td>Standard mode repetitions and timeout per workload.</td></tr>
+    <tr><td><code>interval_us</code></td><td>Overtime pause between sampling cycles, not a guaranteed period.</td></tr>
+  </table>
+  <p>Temperature and powercap calibration use separate TOML modes and the same
+    generate-then-run workflow:</p>
+<pre>./src/main --config examples/configurations/temperature-calibration.toml --directory generated-temperature
+./generated-temperature/greenmeasurer
+./src/main --config examples/configurations/powercap-calibration.toml --directory generated-powercap
+sudo ./generated-powercap/greenmeasurer</pre>
+  <p>Powercap calibration requires a supported CPU backend and permissions.
+    Review the configured watt range for your hardware. Temperature calibration
+    warns and uses 40 °C when CPU temperature is unavailable.</p>
+</section>
+
+<section id="metrics">
+  <h2>Metrics reference</h2>
+  <h3>Columns written by the core</h3>
+  <table>
+    <tr><th>Column</th><th>Unit</th><th>Meaning</th></tr>
+    <tr><td><code>Language</code>, <code>Program</code></td><td>text</td><td>The labels given by the TOML <code>language</code> and <code>program</code> fields.</td></tr>
+    <tr><td><code>Powercap</code></td><td>W</td><td>Power cap used for the run, or <code>-1</code> if none.</td></tr>
+    <tr><td><code>Time_ms</code></td><td>milliseconds</td><td>Standard mode. Wall-clock duration of the run.</td></tr>
+    <tr><td><code>Timestamp_ms</code></td><td>milliseconds</td><td>Over-time mode. Time since the start of the run, at each sample.</td></tr>
+    <tr><td><code>CPU_Memory_KB</code></td><td>KiB</td><td>Standard mode. Maximum RSS from <code>wait4()</code> for the measured run; not a simultaneous process-tree sum.</td></tr>
+  </table>
+
+  <h3>Columns written by the backends</h3>
+  <p>
+    Names follow <code>&lt;category&gt;.&lt;name&gt;_&lt;unit&gt;</code>. The type says how the
+    value is obtained: <b>window</b> values are the difference between a counter read at the start
+    and at the end of a window (in over-time mode they are per interval),
+    <b>gauge</b> values are a single reading at the end of the run (at every sample in over-time mode),
+    and <b>peak</b> values are the highest reading seen while the command ran.
+  </p>
+  <table>
+    <tr><th>Column</th><th>Unit</th><th>Type</th><th>Backend</th><th>Meaning</th></tr>
+    <tr><td><code>cpu.Package_J</code></td><td>joules (J)</td><td>window</td><td>Intel</td><td>Energy of the whole CPU package (cores, caches, memory controller, and so on).</td></tr>
+    <tr><td><code>cpu.Core_J</code></td><td>joules (J)</td><td>window</td><td>Intel</td><td>Energy of the CPU cores only. This is part of the package energy, so do not add the two.</td></tr>
+    <tr><td><code>cpu.DRAM_J</code></td><td>joules (J)</td><td>window</td><td>Intel</td><td>Energy of the memory domain, if exposed by the hardware.</td></tr>
+    <tr><td><code>cpu.Temperature_C</code></td><td>degrees Celsius (°C)</td><td>gauge</td><td>Intel</td><td>Average CPU core temperature.</td></tr>
+    <tr><td><code>gpu.GPU_J</code></td><td>joules (J)</td><td>window</td><td>NVIDIA, Intel</td><td>Energy of the GPU. For Intel it is the integrated-graphics RAPL domain (PP1).</td></tr>
+    <tr><td><code>gpu.Power_W</code></td><td>watts (W)</td><td>gauge</td><td>NVIDIA</td><td>Instantaneous GPU power draw.</td></tr>
+    <tr><td><code>gpu.Temperature_C</code></td><td>degrees Celsius (°C)</td><td>gauge</td><td>NVIDIA, Intel</td><td>GPU temperature. Never copied from the CPU.</td></tr>
+    <tr><td><code>gpu.Utilization_%</code></td><td>percent (%)</td><td>gauge</td><td>NVIDIA</td><td>Share of time the GPU was busy.</td></tr>
+    <tr><td><code>gpu.VRAM_MiB</code></td><td>mebibytes (MiB)</td><td>peak</td><td>NVIDIA</td><td>GPU memory used by the measured process (highest value seen).</td></tr>
+  </table>
+  <p>Selected backend metrics may be written as <code>NOT_SUPPORTED</code> when the hardware cannot provide them.</p>
+</section>
+
+<section id="backends">
+  <h2>Backends</h2>
+  <p>
+    Each backend declares which metrics it provides, so the CSV columns depend on
+    the machine. At startup the normal summary shows selected backends and plugin
+    load or descriptor errors. At most one CPU and one GPU backend are used; if several
+    are detected, the one with the highest priority wins.
+  </p>
+
+  <table>
+    <tr><th>Category</th><th>Backend</th><th>Source</th><th>Status</th></tr>
+    <tr><td>CPU</td><td>Intel</td><td>RAPL (MSR)</td><td>Tested. Supports power capping.</td></tr>
+    <tr><td>GPU</td><td>NVIDIA</td><td>NVML</td><td>Built only if the NVML header and library are found.</td></tr>
+    <tr><td>GPU</td><td>Intel integrated</td><td>RAPL PP1, hwmon</td><td>Energy only if the CPU exposes PP1.</td></tr>
+  </table>
+  <p>
+    Undetected, unbuilt and lower-priority backends are hidden by default. A missing
+    CPU or GPU backend still produces a warning. Enable verbose diagnostics to see
+    all states and hints, including permission problems:
+  </p>
+  <p>Hiding a backend does not prove that the corresponding hardware is absent:
+    an unbuilt plugin cannot detect hardware, and detection can fail because of permissions.</p>
+<pre>./src/main --config examples/configurations/system-cores.toml --directory generated-diagnostics
+GREENMEASURER_VERBOSE_BACKENDS=1 ./generated-diagnostics/greenmeasurer</pre>
+  <p>
+    An inactive backend contributes no columns. System and external measurements
+    can run without a CPU or GPU backend.
+  </p>
+
+  <p>The columns each backend can provide are listed in the <a href="#metrics">metrics reference</a>.</p>
+</section>
+
+<section id="output">
+  <h2>Output</h2>
+  <p>
+    Results are written as CSV. The header is determined at runtime from the
+    selected and available metrics.
+  </p>
+  <p>Headers include metadata, system metrics and the metrics declared by selected backends. Exact columns depend on the machine and mode.</p>
+  <p>
+    Over-time mode has <code>Timestamp_ms</code> instead of <code>Time_ms</code>.
+    Its <code>CPU_Memory_KB</code> is sampled from the workload process tree.
+  </p>
+  <p>
+    A value the hardware cannot provide is written as <code>NOT_SUPPORTED</code>,
+    never as zero.
+  </p>
+  <p>
+    In standard mode, <code>CPU_Memory_KB</code> is peak resident memory measured
+    for each measured run with <code>wait4()</code>; it is not the sum of
+    simultaneous RSS across the process tree.
+  </p>
+</section>
+
+<section id="install">
+  <h2>Installation</h2>
+  <h3>Linux</h3>
+  <p>Debian/Ubuntu example:</p>
+<pre>sudo apt update
+sudo apt install build-essential make git cmake pkg-config \
+  lm-sensors msr-tools python3 python3-venv
+git clone https://github.com/simaocunha71/GreenMeasurer.git
+cd GreenMeasurer
+make -C src
+sudo modprobe msr
+./src/main --config examples/configurations/all-metrics.toml --directory generated
+./generated/greenmeasurer</pre>
+  <p>
+    A backend whose dependencies are missing is skipped; the rest still builds.
+    Run <code>make VERBOSE=1 -C src</code> to see why. The Intel backend needs
+    <code>powercap</code> and <code>raplcap</code>; the NVIDIA backend needs the NVML header and library.
+    <code>scripts/install.sh</code> can install these for you; read it before running it.
+  </p>
+
+</section>
+
+<section id="extend">
+  <h2>Extend GreenMeasurer</h2>
+  <h3>List backend metrics</h3>
+<pre>make -C src
+./src/main --list-metrics
+./src/main --list-metrics cpu intel
+./src/main --list-metrics gpu</pre>
+  <p>Each compiled plugin is listed even if its hardware is not detected. For
+    every metric the output shows its short name, unit, function, description,
+    and origin. This does not read the metric or guarantee availability. Older
+    plugins may not provide descriptions or origins; missing metadata is reported.
+    Listing loads native plugins: use only trusted backend directories.</p>
+  <h3>Add a metric</h3>
+  <p>Write a <code>double (int device, pid_t pid)</code> function and add one
+    row to the backend's metric list:</p>
+<pre>static double read_load(int device, pid_t pid) {
+    (void)device; (void)pid;
+    return METRIC_NOT_SUPPORTED; /* Replace with the hardware read. */
+}
+
+#define BACKEND_METRICS(X) \
+    X("Load", "units", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, \
+      ENERGY_METRIC_FLAG_NONE, read_load, "Device load", "Hardware API")
+ENERGY_DEFINE_METRICS(backend, BACKEND_METRICS)</pre>
+  <p>The macro creates the descriptor, function map, metadata and dispatch from
+    the one list. Existing backends already invoke it; add one row to their list.
+    Select <code>cpu.Load</code> or <code>cpu.read_load</code> in TOML and
+    rebuild. Choose window, gauge or peak semantics and device or process scope
+    to match the real implementation.</p>
+  <h3>Add a backend</h3>
+  <ol>
+    <li>Copy the CPU or GPU template from <code>examples/backend_template/</code>
+      to a new directory under <code>src/platform/linux/cpu/</code> or
+      <code>src/platform/linux/gpu/</code>.</li>
+    <li>Implement hardware detection, initialization, cleanup and sampling
+      windows, and register real metric functions in the single list. The
+      templates deliberately return unsupported values and do not detect hardware.</li>
+    <li>Build with <code>make -C src</code>, list the plugin's metrics and test
+      readings, permissions, units and counter rollover on real hardware. Add
+      <code>backend.mk</code> only when special sources or libraries are needed.</li>
+  </ol>
+  <p>All backends share the lifecycle contract; each declares only metrics it
+    supports. For contiguous energy windows, implement the optional
+    <code>energy_backend_sample_next</code>. The project currently supports Linux
+    only. See the repository's toy backends for complete, simulated examples.</p>
+</section>
+
+<section id="comparison">
+  <h2>Comparison with other tools</h2>
+  <p>
+    GreenMeasurer is evaluated against <a href="https://github.com/mlco2/codecarbon">CodeCarbon</a>
+    and <a href="https://github.com/tdurieux/EnergiBridge">EnergiBridge</a> using the same
+    workload (recursive Fibonacci in Python) in standard and over-time modes. The
+    results will be published with the paper.
+  </p>
+  <p>
+    The main differences are in how the tool is used and extended: GreenMeasurer
+    measures an external command in any language, needs no code changes, and adds
+    hardware support through plugins. See the paper for the details and measurements.
+  </p>
+
+  <h3>Why these choices</h3>
+  <ul>
+    <li><b>Testable hardware support.</b> Backends are plugins, so the tests (<code>make -C src test</code>) use fake ones to check backend selection, missing GPUs, missing backends and powercap failures. Fallback behaviour is verified without needing every hardware combination. These tests check the orchestration, not the accuracy of the counters.</li>
+    <li><b>Output that matches selected metrics.</b> CSV headers reflect runtime selection and availability; later read failures are reported as <code>NOT_SUPPORTED</code>.</li>
+    <li><b>Controlled conditions.</b> A run waits until the CPU is near an idle temperature baseline. Control other sources of variation, including network activity, separately.</li>
+    <li><b>Batch execution.</b> <code>scripts/measure.sh</code> generates and runs a sequence of TOML configurations; each configuration specifies its own output.</li>
+    <li><b>Clear diagnostics.</b> The default summary shows selected plugins and plugin errors, and warns about missing CPU/GPU backends. Verbose mode lists all states and hints.</li>
+    <li><b>Few hard dependencies.</b> The core only needs a C compiler and Make. Libraries such as powercap/raplcap or NVML only matter to the backend that uses them; if one is missing, that backend is skipped and the rest builds.</li>
+  </ul>
+</section>
+
+<section id="limits">
+  <h2>Limitations</h2>
+  <ul>
+    <li><b>Hardware domains, not processes.</b> Background activity is included. Do not add up domains that overlap (package and core, for example).</li>
+    <li><b>Counter wrap-around.</b> 32-bit counters are handled for one wrap between readings. More than one cannot be detected.</li>
+    <li><b>Sampling.</b> Over-time mode pauses for the requested interval after sampling. Reading and scheduling add time; timestamps precede sequential reads, and short peaks can be missed.</li>
+    <li><b>Hardware support varies.</b> A backend can build but not be detected, or be selected and still miss some metrics. Those show as <code>NOT_SUPPORTED</code>.</li>
+    <li><b>VMs and WSL.</b> Hypervisors often expose the MSR device but return zeros. GreenMeasurer detects this and reports <code>NOT_SUPPORTED</code> instead of 0.</li>
+    <li><b>Power caps can persist</b> after a run. Check your system settings afterwards.</li>
+    <li><b>Plugins are loaded with <code>dlopen</code>.</b> Only use backend directories you trust, especially as root.</li>
+    <li><b>Linux only.</b> The current build does not support macOS. Reading MSR counters may require root.</li>
+    <li><b>Dynamic selection.</b> With <code>select = "all"</code>, the CSV schema depends on detected backends and metric availability at runtime.</li>
+  </ul>
+</section>
+</main>
+
+<footer>
+  <p>GreenMeasurer · <a href="https://github.com/simaocunha71/GreenMeasurer">GitHub</a></p>
+</footer>
+</body>
+</html>

@@ -18,6 +18,8 @@ static double ot_backend_values[OT_MAX_METRICS][OT_MAX_SAMPLES];
 static double ot_timestamp_ms[OT_MAX_SAMPLES];
 static size_t ot_count;
 static int ot_core_count;
+static unsigned char ot_scalar_warned[OT_SCALAR_COUNT];
+static unsigned char ot_frequency_warned[SYS_MAX_CORES];
 static int ot_backend_ready[2];
 static int (*ot_sample_next[2])(int);
 static struct timespec ot_start_time;
@@ -48,28 +50,111 @@ static void ot_find_next_callbacks(void) {
 }
 
 static int ot_prepare(void) {
-    if (active_metric_count > OT_MAX_METRICS) {
+    if ((!configured_overtime || configured_backend_name_count || configured_all) && active_metric_count > OT_MAX_METRICS) {
         fprintf(stderr, "[ERROR] Too many metrics for overtime sampling (max %d).\n", OT_MAX_METRICS);
         return -1;
     }
     ot_count = 0;
+    memset(ot_scalar_warned, 0, sizeof(ot_scalar_warned));
+    memset(ot_frequency_warned, 0, sizeof(ot_frequency_warned));
+    if (configured_overtime) probe_configured_system();
     ot_core_count = sys_core_count();
+    if (configured_overtime && configured_system[4]) ot_core_count = configured_frequency_cores;
     if (ot_core_count > SYS_MAX_CORES) ot_core_count = SYS_MAX_CORES;
+    if (configured_overtime) {
+        if (probe_configured_external() != 0) return -1;
+        for (size_t i = 0; i < configured_external_count; i++) {
+            ConfiguredExternalMetric *metric = &configured_external_metrics[i];
+            metric->values = malloc(OT_MAX_SAMPLES * sizeof(*metric->values));
+            if (!metric->values) {
+                fprintf(stderr, "[ERROR] Unable to allocate external metric samples.\n");
+                return -1;
+            }
+        }
+    }
     ot_find_next_callbacks();
     for (int type = 0; type < 2; type++) {
         int present = type == ENERGY_BACKEND_CPU ? active_cpu_backend != NULL : active_gpu_backend != NULL;
+        if (configured_overtime) {
+            int selected = 0;
+            for (size_t i = 0; i < active_metric_count; i++)
+                if (configured_backend_selected && configured_backend_selected[i] &&
+                    (int)active_metrics[i].backend_type == type) selected = 1;
+            if (!selected) continue;
+        }
         if (!present) continue;
         int initialized = type == ENERGY_BACKEND_CPU
             ? active_cpu_backend->init(0) == 0 : active_gpu_backend->init(0) == 0;
         ot_backend_ready[type] = initialized && ot_backend_start((EnergyBackendType)type) == 0;
         if (!ot_backend_ready[type]) {
+            if (configured_overtime) {
+                fprintf(stderr, "[WARNING] Failed to start selected %s backend.\n",
+                        type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+                configured_backend_failure_guidance((EnergyBackendType)type);
+                skip_configured_backend_type((EnergyBackendType)type);
+                continue;
+            }
             fprintf(stderr, "[WARNING] Failed to start overtime %s backend window; "
                     "window metrics are unavailable.\n", type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+        }
+        if (ot_backend_ready[type]) {
+            if (ot_backend_stop((EnergyBackendType)type) != 0) {
+                if (configured_overtime) {
+                    fprintf(stderr, "[WARNING] Failed to probe selected %s backend.\n",
+                            type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+                    configured_backend_failure_guidance((EnergyBackendType)type);
+                    skip_configured_backend_type((EnergyBackendType)type);
+                    ot_backend_ready[type] = 0;
+                    continue;
+                }
+                fprintf(stderr, "[WARNING] Failed to probe overtime %s backend window.\n",
+                        type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+                ot_backend_ready[type] = 0;
+                continue;
+            }
+            for (size_t i = 0; i < active_metric_count; i++) {
+                if (!configured_overtime || !configured_backend_selected[i] ||
+                    (int)active_metrics[i].backend_type != type ||
+                    active_metrics[i].descriptor->scope == ENERGY_METRIC_PROCESS) continue;
+                double value = read_active_metric(i, 0);
+                if (!isfinite(value) || value < 0.0) {
+                    skip_configured_backend_metric(i);
+                }
+            }
+            if (configured_overtime) {
+                int selected = 0;
+                for (size_t i = 0; i < active_metric_count; i++)
+                    if (configured_backend_selected[i] && (int)active_metrics[i].backend_type == type)
+                        selected = 1;
+                if (!selected) {
+                    ot_backend_ready[type] = 0;
+                    continue;
+                }
+            }
         }
         if (ot_backend_ready[type] && !ot_sample_next[type]) {
             fprintf(stderr, "[WARNING] %s backend does not support contiguous overtime windows; "
                     "energy between windows will not be recorded.\n", type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
         }
+    }
+    for (int type = 0; type < 2; type++) {
+        if (ot_backend_ready[type] && ot_backend_start((EnergyBackendType)type) != 0) {
+            if (configured_overtime) {
+                fprintf(stderr, "[WARNING] Failed to restart selected %s backend after probe.\n",
+                        type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+                configured_backend_failure_guidance((EnergyBackendType)type);
+                skip_configured_backend_type((EnergyBackendType)type);
+                ot_backend_ready[type] = 0;
+                continue;
+            }
+            fprintf(stderr, "[WARNING] Failed to restart overtime %s backend after probe.\n",
+                    type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+            ot_backend_ready[type] = 0;
+        }
+    }
+    if (configured_overtime && !configured_has_metrics()) {
+        fprintf(stderr, "[ERROR] No selected metrics are available.\n");
+        return -1;
     }
     return 0;
 }
@@ -94,32 +179,97 @@ static int ot_sample(pid_t workload_pid, int finished) {
                                               : ot_backend_stop((EnergyBackendType)type)) == 0;
     }
 
-    ot_scalar_values[0][slot] = sys_workload_memory_kb(workload_pid);
-    ot_scalar_values[1][slot] = (double)sys_core_count();
-    ot_scalar_values[2][slot] = sys_workload_process_count(workload_pid);
-    ot_scalar_values[3][slot] = sys_running_processes();
-    for (int core = 0; core < ot_core_count; core++) {
-        ot_freq_mhz[slot][core] = (float)sys_core_frequency_mhz(core);
+    if (!configured_overtime || configured_system[0])
+        ot_scalar_values[0][slot] = sys_workload_memory_kb(workload_pid);
+    if (!configured_overtime || configured_system[1])
+        ot_scalar_values[1][slot] = (double)sys_core_count();
+    if (!configured_overtime || configured_system[2])
+        ot_scalar_values[2][slot] = sys_workload_process_count(workload_pid);
+    if (!configured_overtime || configured_system[3])
+        ot_scalar_values[3][slot] = sys_running_processes();
+    if (!configured_overtime || configured_system[4]) {
+        for (int core = 0; core < ot_core_count; core++) {
+            ot_freq_mhz[slot][core] = (float)sys_core_frequency_mhz(core);
+            if (configured_overtime &&
+                (!isfinite(ot_freq_mhz[slot][core]) || ot_freq_mhz[slot][core] < 0.0)) {
+                if (!ot_frequency_warned[core]) {
+                    fprintf(stderr, "[WARNING] Failed to read system.core_frequency for core %d; "
+                            "recording NOT_SUPPORTED for failed samples.\n", core);
+                    ot_frequency_warned[core] = 1;
+                }
+                ot_freq_mhz[slot][core] = SYS_METRIC_NOT_SUPPORTED;
+            }
+        }
+    }
+    if (configured_overtime) {
+        static const char *names[] = {"system.memory", "system.cores",
+            "system.workload_processes", "system.running_processes"};
+        for (int i = 0; i < OT_SCALAR_COUNT; i++) {
+            if (configured_system[i] &&
+                (!isfinite(ot_scalar_values[i][slot]) || ot_scalar_values[i][slot] < 0.0 ||
+                 (i == 1 && ot_scalar_values[i][slot] == 0.0)) &&
+                !(finished && (i == 0 || i == 2))) {
+                if (!ot_scalar_warned[i]) {
+                    fprintf(stderr, "[WARNING] Failed to read %s; recording NOT_SUPPORTED "
+                            "for failed samples.\n", names[i]);
+                    ot_scalar_warned[i] = 1;
+                }
+                ot_scalar_values[i][slot] = SYS_METRIC_NOT_SUPPORTED;
+            }
+        }
+        for (size_t i = 0; i < configured_external_count; i++) {
+            ConfiguredExternalMetric *metric = &configured_external_metrics[i];
+            if (read_configured_external(metric, &metric->values[slot]) != 0) {
+                fprintf(stderr, "[WARNING] Recording NOT_SUPPORTED for the failed external metric sample.\n");
+                metric->values[slot] = NAN;
+            }
+        }
     }
     for (size_t i = 0; i < active_metric_count; i++) {
+        if (configured_overtime && (!configured_backend_selected || !configured_backend_selected[i])) continue;
         const ActiveMetric *metric = &active_metrics[i];
         int type = metric->backend_type;
         ot_backend_values[i][slot] =
-            metric->descriptor->kind == ENERGY_METRIC_WINDOW && !stopped[type]
+            !stopped[type] && (configured_overtime ||
+                               metric->descriptor->kind == ENERGY_METRIC_WINDOW)
                 ? METRIC_NOT_SUPPORTED
                 : metric->descriptor->scope == ENERGY_METRIC_PROCESS
                     ? read_process_tree_metric(i, workload_pid) : read_active_metric(i, 0);
+        double value = ot_backend_values[i][slot];
+        if (configured_overtime && (!isfinite(value) || value < 0.0) &&
+            !(finished && metric->descriptor->scope == ENERGY_METRIC_PROCESS && stopped[type])) {
+            if (ot_backend_ready[type])
+                fprintf(stderr, "[WARNING] Failed to read selected metric '%s.%s'; recording NOT_SUPPORTED.\n",
+                        type == ENERGY_BACKEND_CPU ? "cpu" : "gpu", metric->descriptor->name);
+            ot_backend_values[i][slot] = METRIC_NOT_SUPPORTED;
+        }
     }
     for (int type = 0; type < 2; type++) {
         if (!ot_backend_ready[type]) continue;
         if (!stopped[type]) {
-            fprintf(stderr, "[WARNING] Overtime %s backend sample failed; window metrics are unavailable.\n",
+            if (configured_overtime) {
+                fprintf(stderr, "[WARNING] Selected %s backend sample failed; "
+                        "its metrics are unavailable for the rest of the measurement.\n",
+                        type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+                ot_backend_ready[type] = 0;
+                continue;
+            }
+            fprintf(stderr, "[ERROR] Selected %s backend sample failed.\n",
                     type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
-            ot_backend_ready[type] = 0;
+            if (configured_overtime) configured_backend_failure_guidance((EnergyBackendType)type);
+            return -1;
         } else if (!finished && !ot_sample_next[type] && ot_backend_start((EnergyBackendType)type) != 0) {
-            fprintf(stderr, "[WARNING] Failed to restart overtime %s backend window.\n",
+            if (configured_overtime) {
+                fprintf(stderr, "[WARNING] Failed to restart selected %s backend; "
+                        "its metrics are unavailable for the rest of the measurement.\n",
+                        type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+                ot_backend_ready[type] = 0;
+                continue;
+            }
+            fprintf(stderr, "[ERROR] Failed to restart selected %s backend.\n",
                     type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
-            ot_backend_ready[type] = 0;
+            if (configured_overtime) configured_backend_failure_guidance((EnergyBackendType)type);
+            return -1;
         }
     }
     return 0;
@@ -136,16 +286,22 @@ static int ot_dump(const struct OvertimeContext *ctx) {
         fprintf(fp, "%s, %s, %d, %.6f", ctx->language, ctx->program, ctx->powercap,
                 ot_timestamp_ms[row]);
         for (int i = 0; i < OT_SCALAR_COUNT; i++) {
+            if (configured_overtime && !configured_system[i]) continue;
             fprintf(fp, ", ");
             write_active_metric_value(fp, ot_scalar_values[i][row]);
         }
-        for (int core = 0; core < ot_core_count; core++) {
+        for (int core = 0; (!configured_overtime || configured_system[4]) && core < ot_core_count; core++) {
             fprintf(fp, ", ");
             write_active_metric_value(fp, (double)ot_freq_mhz[row][core]);
         }
         for (size_t i = 0; i < active_metric_count; i++) {
+            if (configured_overtime && (!configured_backend_selected || !configured_backend_selected[i])) continue;
             fprintf(fp, ", ");
             write_active_metric_value(fp, ot_backend_values[i][row]);
+        }
+        for (size_t i = 0; configured_overtime && i < configured_external_count; i++) {
+            fprintf(fp, ", ");
+            write_external_metric_value(fp, configured_external_metrics[i].values[row]);
         }
         fputc('\n', fp);
     }
@@ -239,7 +395,7 @@ static int ot_run(const char *command, const struct OvertimeContext *ctx,
                 pid = -1;
                 result = WIFEXITED(status) ? WEXITSTATUS(status)
                     : WIFSIGNALED(status) ? 128 + WTERMSIG(status) : -1;
-                if (ot_dump(ctx) != 0) result = -1;
+                if (result == 0 && ot_dump(ctx) != 0) result = -1;
                 goto restore_mask;
             }
             if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) {

@@ -10,28 +10,35 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <locale.h>
+#include <math.h>
 #include <errno.h>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <limits.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/resource.h>
 #define BACKEND_PLATFORM_DIR "platform/linux"
 #define BACKEND_INSTALLED_DIR "../lib/greenmeasurer/platform/linux"
 
 #include "include/energy-backend.h"
+#include "include/metric-guidance.h"
+#include "metrics/metric_adapter_loader.h"
 #include "metrics/system_metrics.h"
 
 typedef struct {
     void *handle;
     const EnergyBackendDescriptor *descriptor;
+    const EnergyMetricFunctionMap *function_map;
     int report_index;
+    char *directory;
 } LoadedBackend;
 
 typedef struct {
     const EnergyMetricDescriptor *descriptor;
     EnergyBackendType backend_type;
     size_t backend_metric_index;
+    const EnergyMetricFunction *function;
 } ActiveMetric;
 
 static CpuBackend *active_cpu_backend = NULL;
@@ -42,10 +49,324 @@ static LoadedBackend *loaded_backends = NULL;
 static size_t loaded_backend_count = 0;
 static char backend_root[PATH_MAX];
 static int header_only_mode = 0;
+static int configured_overtime = 0;
+static int configured_standard = 0;
+static int configured_system[5];
+static int configured_frequency_cores;
+static const char **configured_backend_names;
+static size_t configured_backend_name_count;
+static unsigned char *configured_backend_selected;
+static int configured_all;
+
+typedef struct {
+    const char *name;
+    const char *path;
+    GreenMetricAdapterHandle handle;
+} ConfiguredAdapter;
+
+typedef struct {
+    size_t adapter_index;
+    size_t metric_index;
+    double *values;
+} ConfiguredExternalMetric;
+
+static ConfiguredAdapter *configured_adapters;
+static size_t configured_adapter_count;
+static ConfiguredExternalMetric *configured_external_metrics;
+static size_t configured_external_count;
+
+static void cleanup_configured_metrics(void) {
+    for (size_t i = 0; i < configured_external_count; i++)
+        free(configured_external_metrics[i].values);
+    for (size_t i = 0; i < configured_adapter_count; i++)
+        green_metric_adapter_close(&configured_adapters[i].handle);
+    free(configured_external_metrics);
+    free(configured_adapters);
+    free(configured_backend_names);
+    free(configured_backend_selected);
+}
+
+static int add_configured_external(const char *name, const char *path, const char *metric) {
+    size_t adapter_index;
+    for (adapter_index = 0; adapter_index < configured_adapter_count; adapter_index++) {
+        if (strcmp(configured_adapters[adapter_index].name, name) == 0) break;
+        if (strcmp(configured_adapters[adapter_index].path, path) == 0) {
+            fprintf(stderr, "[ERROR] Adapter path '%s' is already used by '%s'.\n",
+                    path, configured_adapters[adapter_index].name);
+            return -1;
+        }
+    }
+    if (adapter_index == configured_adapter_count) {
+        ConfiguredAdapter *new_adapters = realloc(configured_adapters,
+            (configured_adapter_count + 1) * sizeof(*new_adapters));
+        if (!new_adapters) {
+            fprintf(stderr, "[ERROR] Unable to allocate adapter registry.\n");
+            return -1;
+        }
+        configured_adapters = new_adapters;
+        configured_adapters[adapter_index] = (ConfiguredAdapter){.name = name, .path = path};
+        if (green_metric_adapter_open(&configured_adapters[adapter_index].handle, path) != 0) {
+            fprintf(stderr, "[ERROR] Cannot load configured adapter '%s'%s%s.\n",
+                    name, metric ? " for metric " : "", metric ? metric : "");
+            green_metric_extension_guidance();
+            return 1;
+        }
+        configured_adapter_count++;
+    } else if (strcmp(configured_adapters[adapter_index].path, path) != 0) {
+        fprintf(stderr, "[ERROR] Adapter '%s' has conflicting paths.\n", name);
+        return -1;
+    }
+    const GreenMetricAdapter *adapter = configured_adapters[adapter_index].handle.adapter;
+    if (!metric) {
+        for (size_t i = 0; i < adapter->metric_count; i++) {
+            int result = add_configured_external(name, path, adapter->metrics[i].name);
+            if (result != 0) return result;
+        }
+        return 0;
+    }
+    size_t metric_index;
+    for (metric_index = 0; metric_index < adapter->metric_count; metric_index++) {
+        if (strcmp(adapter->metrics[metric_index].name, metric) == 0) break;
+    }
+    if (metric_index == adapter->metric_count) {
+        fprintf(stderr, "[ERROR] Adapter '%s' has no metric '%s'.\n", name, metric);
+        green_metric_extension_guidance();
+        return 1;
+    }
+    for (size_t i = 0; i < configured_external_count; i++) {
+        if (configured_external_metrics[i].adapter_index == adapter_index &&
+            configured_external_metrics[i].metric_index == metric_index) {
+            fprintf(stderr, "[ERROR] Duplicate external metric '%s.%s'.\n", name, metric);
+            return -1;
+        }
+    }
+    ConfiguredExternalMetric *new_metrics = realloc(configured_external_metrics,
+        (configured_external_count + 1) * sizeof(*new_metrics));
+    if (!new_metrics) {
+        fprintf(stderr, "[ERROR] Unable to allocate external metric registry.\n");
+        return -1;
+    }
+    configured_external_metrics = new_metrics;
+    configured_external_metrics[configured_external_count++] = (ConfiguredExternalMetric) {
+        .adapter_index = adapter_index, .metric_index = metric_index
+    };
+    return 0;
+}
+
+static int configure_overtime_metrics(int argc, char **argv) {
+    static const char *names[] = {"system.memory", "system.cores",
+        "system.workload_processes", "system.running_processes", "system.core_frequency"};
+    int unavailable_external = 0;
+    if (atexit(cleanup_configured_metrics) != 0) {
+        fprintf(stderr, "[ERROR] Unable to register adapter cleanup.\n");
+        return -1;
+    }
+    for (int i = 2; i < argc; i++) {
+        if (!strcmp(argv[i], "--configured-all")) {
+            if (configured_all) return fprintf(stderr, "[ERROR] Duplicate all selection.\n"), -1;
+            configured_all = 1;
+            for (size_t j = 0; j < sizeof(names) / sizeof(names[0]); j++) configured_system[j] = 1;
+        } else if (!strcmp(argv[i], "--configured-adapter")) {
+            if (i + 2 >= argc) return fprintf(stderr, "[ERROR] Missing adapter arguments.\n"), -1;
+            int result = add_configured_external(argv[i + 1], argv[i + 2], NULL);
+            if (result < 0) return -1;
+            if (result > 0) {
+                fprintf(stderr, "[WARNING] Skipping unavailable adapter '%s'.\n", argv[i + 1]);
+                unavailable_external = 1;
+            }
+            i += 2;
+        } else if (!strcmp(argv[i], "--configured-system")) {
+            if (++i >= argc) return fprintf(stderr, "[ERROR] Missing system metric.\n"), -1;
+            size_t j;
+            for (j = 0; j < sizeof(names) / sizeof(names[0]); j++)
+                if (!strcmp(argv[i], names[j])) break;
+            if (j == sizeof(names) / sizeof(names[0]) || configured_system[j]) {
+                fprintf(stderr, "[ERROR] Unknown or duplicate system metric '%s'.\n", argv[i]);
+                return -1;
+            }
+            configured_system[j] = 1;
+        } else if (!strcmp(argv[i], "--configured-external")) {
+            if (i + 3 >= argc) return fprintf(stderr, "[ERROR] Missing external metric arguments.\n"), -1;
+            int result = add_configured_external(argv[i + 1], argv[i + 2], argv[i + 3]);
+            if (result < 0) return -1;
+            if (result > 0) {
+                fprintf(stderr, "[WARNING] Skipping unavailable external metric 'external.%s.%s'.\n",
+                        argv[i + 1], argv[i + 3]);
+                unavailable_external = 1;
+            }
+            i += 3;
+        } else if (!strcmp(argv[i], "--configured-backend")) {
+            if (++i >= argc) return fprintf(stderr, "[ERROR] Missing backend metric.\n"), -1;
+            const char **names = realloc(configured_backend_names,
+                (configured_backend_name_count + 1) * sizeof(*names));
+            if (!names) return fprintf(stderr, "[ERROR] Unable to allocate metric selection.\n"), -1;
+            configured_backend_names = names;
+            configured_backend_names[configured_backend_name_count++] = argv[i];
+        } else if (!strcmp(argv[i], "-command") || !strcmp(argv[i], "-language") ||
+                   !strcmp(argv[i], "-program") || !strcmp(argv[i], "-variance") ||
+                   !strcmp(argv[i], "-powercap") || !strcmp(argv[i], "-interval-us") ||
+                   !strcmp(argv[i], "-sleep-secs") || !strcmp(argv[i], "-calib-file") ||
+                   !strcmp(argv[i], "-output") || !strcmp(argv[i], "-n_times") ||
+                   !strcmp(argv[i], "-timeout-seconds")) {
+            if (++i >= argc) return fprintf(stderr, "[ERROR] Missing option value.\n"), -1;
+        } else {
+            fprintf(stderr, "[ERROR] Unknown configured measurement option '%s'.\n", argv[i]);
+            return -1;
+        }
+    }
+    if (!configured_external_count && !configured_backend_name_count &&
+        !configured_system[0] && !configured_system[1] &&
+        !configured_system[2] && !configured_system[3] && !configured_system[4]) {
+        fprintf(stderr, unavailable_external
+                ? "[ERROR] No selected metrics are available.\n"
+                : "[ERROR] No configured metrics were selected.\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int configured_has_metrics(void);
+
+static int select_configured_backend_metrics(void) {
+    if (!configured_backend_name_count && !configured_all) return 0;
+    configured_backend_selected = calloc(active_metric_count, sizeof(*configured_backend_selected));
+    if (active_metric_count && !configured_backend_selected) {
+        fprintf(stderr, "[ERROR] Unable to allocate backend metric selection.\n");
+        return -1;
+    }
+    if (configured_all) {
+        for (size_t i = 0; i < active_metric_count; i++) configured_backend_selected[i] = 1;
+    }
+    for (size_t j = 0; j < configured_backend_name_count; j++) {
+        const char *name = configured_backend_names[j];
+        size_t i;
+        for (i = 0; i < active_metric_count; i++) {
+            const ActiveMetric *metric = &active_metrics[i];
+            const char *prefix = metric->backend_type == ENERGY_BACKEND_CPU ? "cpu." : "gpu.";
+            size_t length = strlen(prefix);
+            if (!strncmp(name, prefix, length) &&
+                (!strcmp(name + length, metric->descriptor->name) ||
+                 (metric->function && !strcmp(name + length, metric->function->name)))) break;
+        }
+        if (i == active_metric_count) {
+            fprintf(stderr, "[WARNING] Backend metric '%s' is not provided by the selected backend "
+                    "(or no backend is active for that category); skipping it.\n", name);
+            green_metric_extension_guidance();
+            continue;
+        }
+        if (configured_backend_selected[i]) {
+            fprintf(stderr, "[ERROR] Backend metric '%s' is duplicated.\n", name);
+            return -1;
+        }
+        configured_backend_selected[i] = 1;
+    }
+    if (!configured_has_metrics()) {
+        fprintf(stderr, "[ERROR] No selected metrics are available.\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int read_configured_external(const ConfiguredExternalMetric *metric, double *value) {
+    ConfiguredAdapter *adapter = &configured_adapters[metric->adapter_index];
+    if (green_metric_adapter_read(&adapter->handle, metric->metric_index, value) == 0) return 0;
+    fprintf(stderr, "[ERROR] Reading configured metric 'external.%s.%s' failed; "
+            "check the adapter, library and runtime permissions.\n",
+            adapter->name, adapter->handle.adapter->metrics[metric->metric_index].name);
+    green_metric_extension_guidance();
+    return -1;
+}
+
+static int configured_has_metrics(void) {
+    if (configured_external_count) return 1;
+    for (size_t i = 0; i < sizeof(configured_system) / sizeof(configured_system[0]); i++)
+        if (configured_system[i]) return 1;
+    for (size_t i = 0; i < active_metric_count; i++)
+        if (configured_backend_selected && configured_backend_selected[i]) return 1;
+    return 0;
+}
+
+static void skip_configured_system_metric(size_t index, const char *name) {
+    fprintf(stderr, "[WARNING] Skipping unavailable system metric '%s' before measurement.\n", name);
+    configured_system[index] = 0;
+}
+
+static void probe_configured_system(void) {
+    int cores = 0;
+    if (configured_system[1] || configured_system[4]) cores = sys_core_count();
+    if (configured_system[1] && cores <= 0)
+        skip_configured_system_metric(1, "system.cores");
+    if (configured_system[3]) {
+        double value = sys_running_processes();
+        if (!isfinite(value) || value < 0)
+            skip_configured_system_metric(3, "system.running_processes");
+    }
+    if (configured_system[4]) {
+        int available = cores > 0 && cores <= SYS_MAX_CORES;
+        for (int core = 0; available && core < cores; core++) {
+            double value = sys_core_frequency_mhz(core);
+            if (!isfinite(value) || value < 0) available = 0;
+        }
+        if (!available) skip_configured_system_metric(4, "system.core_frequency");
+        else configured_frequency_cores = cores;
+    }
+}
+
+static void skip_configured_backend_metric(size_t i) {
+    const ActiveMetric *metric = &active_metrics[i];
+    fprintf(stderr, "[WARNING] Skipping unavailable backend metric '%s.%s' before measurement.\n",
+            metric->backend_type == ENERGY_BACKEND_CPU ? "cpu" : "gpu",
+            metric->descriptor->name);
+    configured_backend_selected[i] = 0;
+}
+
+static void skip_configured_backend_type(EnergyBackendType type) {
+    for (size_t i = 0; i < active_metric_count; i++)
+        if (configured_backend_selected && configured_backend_selected[i] &&
+            active_metrics[i].backend_type == type)
+            skip_configured_backend_metric(i);
+}
+
+static int probe_configured_external(void) {
+    size_t i = 0;
+    while (i < configured_external_count) {
+        double value;
+        if (read_configured_external(&configured_external_metrics[i], &value) == 0) {
+            i++;
+            continue;
+        }
+        fprintf(stderr, "[WARNING] Skipping unavailable external metric before measurement.\n");
+        memmove(&configured_external_metrics[i], &configured_external_metrics[i + 1],
+                (configured_external_count - i - 1) * sizeof(*configured_external_metrics));
+        configured_external_count--;
+    }
+    if (!configured_has_metrics()) {
+        fprintf(stderr, "[ERROR] No selected metrics are available.\n");
+        return -1;
+    }
+    return 0;
+}
+
+static void write_external_metric_value(FILE *fp, double value) {
+    if (isfinite(value)) fprintf(fp, "%.18g", value);
+    else fputs("NOT_SUPPORTED", fp);
+}
+
+static void configured_backend_failure_guidance(EnergyBackendType type) {
+    fprintf(stderr, "[INFO] Check the selected %s backend, hardware support and permissions. "
+            "Affected configured metrics:", type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+    for (size_t i = 0; i < active_metric_count; i++) {
+        if (configured_backend_selected && configured_backend_selected[i] &&
+            active_metrics[i].backend_type == type)
+            fprintf(stderr, " %s.%s", type == ENERGY_BACKEND_CPU ? "cpu" : "gpu",
+                    active_metrics[i].descriptor->name);
+    }
+    fprintf(stderr, "\n");
+    green_metric_extension_guidance();
+}
 
 /* Configurable calibration and measurement files */
 static char calib_file[512] = "/tmp/cores_temperatures.txt";
-static char measurements_file[512] = "measurements.csv";
 
 static volatile sig_atomic_t global_terminate = 0;
 static void sigint_handler(int signum) { 
@@ -57,7 +378,7 @@ static struct { int returnValue; } threadData;
 
 /* Standardized CSV metric formatters */
 static void write_energy_metric(FILE *fp, double val) {
-    if (val < 0.0) {
+    if (!isfinite(val) || val < 0.0) {
         fprintf(fp, "NOT_SUPPORTED");
     } else {
         fprintf(fp, "%.18f", val);
@@ -80,6 +401,11 @@ static double backend_get_metric(EnergyBackendType type, size_t metric_index,
 static double read_active_metric(size_t metric_index, pid_t process_id) {
     if (metric_index >= active_metric_count) return METRIC_NOT_SUPPORTED;
     const ActiveMetric *metric = &active_metrics[metric_index];
+    if (metric->descriptor->scope == ENERGY_METRIC_PROCESS && process_id <= 0)
+        return METRIC_NOT_SUPPORTED;
+    if (metric->function)
+        return metric->function->read(0, metric->descriptor->scope == ENERGY_METRIC_DEVICE
+                                         ? 0 : process_id);
     if (metric->descriptor->scope == ENERGY_METRIC_DEVICE) {
         return backend_get_metric(metric->backend_type,
                                   metric->backend_metric_index, 0);
@@ -126,6 +452,34 @@ static double get_temperature_metric(EnergyBackendType type, unsigned int flag) 
 
 void energy_backend_write_csv_header(FILE *fp, int overtime) {
     fprintf(fp, "Language,Program,Powercap,%s", overtime ? "Timestamp_ms" : "Time_ms");
+    if (configured_overtime) {
+        const char *names[] = {"CPU_Memory_KB", "Cores",
+            overtime ? "Workload_Processes" : "Workload_Processes_Peak",
+            overtime ? "System_Running_Processes" : "System_Running_Processes_Peak"};
+        for (size_t i = 0; i < 4; i++)
+            if (configured_system[i]) fprintf(fp, ",%s", names[i]);
+        if (configured_system[4]) {
+            int cores = configured_frequency_cores;
+            if (cores > SYS_MAX_CORES) cores = SYS_MAX_CORES;
+            for (int core = 0; core < cores; core++)
+                fprintf(fp, overtime ? ",Core%d_Freq_MHz" : ",Core%d_Avg_Freq_MHz", core);
+        }
+        for (size_t i = 0; i < active_metric_count; i++) {
+            if (!configured_backend_selected || !configured_backend_selected[i]) continue;
+            const ActiveMetric *metric = &active_metrics[i];
+            fprintf(fp, ",%s.%s_%s",
+                    metric->backend_type == ENERGY_BACKEND_CPU ? "cpu" : "gpu",
+                    metric->descriptor->name, metric->descriptor->unit);
+        }
+        for (size_t i = 0; i < configured_external_count; i++) {
+            ConfiguredExternalMetric *metric = &configured_external_metrics[i];
+            ConfiguredAdapter *adapter = &configured_adapters[metric->adapter_index];
+            const GreenMetricDescriptor *descriptor = &adapter->handle.adapter->metrics[metric->metric_index];
+            fprintf(fp, ",external.%s.%s_%s", adapter->name, descriptor->name, descriptor->unit);
+        }
+        fputc('\n', fp);
+        return;
+    }
     fprintf(fp, ",CPU_Memory_KB,Cores");
     /* Standard rows summarise the run (peak / average); overtime rows are instantaneous. */
     fprintf(fp, overtime ? ",Workload_Processes,System_Running_Processes"
@@ -201,10 +555,31 @@ static double calibrateTemperature(const char *target_calib_file, int sleep_seco
         sleep(sleep_seconds);
     }
 
-    /* Save a snapshot to the calibration file. */
-    char dump_cmd[600];
-    snprintf(dump_cmd, sizeof(dump_cmd), "sensors > %s 2>/dev/null || true", target_calib_file);
-    system(dump_cmd);
+    FILE *snapshot = fopen(target_calib_file, "w");
+    if (!snapshot) {
+        perror("[ERROR] Failed to open calibration file");
+        return -1;
+    } else {
+        pid_t child = fork();
+        if (child == 0) {
+            if (dup2(fileno(snapshot), STDOUT_FILENO) < 0) _exit(127);
+            execlp("sensors", "sensors", (char *)NULL);
+            _exit(127);
+        }
+        if (child < 0) {
+            perror("[WARNING] Failed to start sensors");
+        } else {
+            int status;
+            pid_t waited;
+            do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+            if (waited < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+                fprintf(stderr, "[WARNING] Unable to collect sensors snapshot.\n");
+        }
+        if (fclose(snapshot) != 0) {
+            perror("[ERROR] Failed to close calibration snapshot");
+            return -1;
+        }
+    }
 
     float mean_temp = get_current_cpu_temp(0);
     if (mean_temp <= 0.0f) {
@@ -214,11 +589,15 @@ static double calibrateTemperature(const char *target_calib_file, int sleep_seco
 
     FILE *output_file = fopen(target_calib_file, "a");
     if (output_file != NULL) {
-        fprintf(output_file, "Average temperature: %.1f°C\n\n", mean_temp);
-        fclose(output_file);
+        int write_failed = fprintf(output_file, "Average temperature: %.1f°C\n\n", mean_temp) < 0;
+        if (fclose(output_file) != 0 || write_failed) {
+            perror("[ERROR] Failed to write calibration file");
+            return -1;
+        }
         printf("[INFO] Calibrated baseline temperature saved to %s: %.1f°C\n", target_calib_file, mean_temp);
     } else {
         perror("[ERROR] Failed to write calibration file");
+        return -1;
     }
 
     return (double)mean_temp;
@@ -379,22 +758,55 @@ static int register_selected_metrics(void) {
         return -1;
     }
 
+    const EnergyMetricFunctionMap *maps[2] = {NULL, NULL};
+    for (size_t i = 0; i < loaded_backend_count; i++) {
+        const EnergyBackendDescriptor *backend = loaded_backends[i].descriptor;
+        if ((backend->type == ENERGY_BACKEND_CPU && backend->backend.cpu == active_cpu_backend) ||
+            (backend->type == ENERGY_BACKEND_GPU && backend->backend.gpu == active_gpu_backend))
+            maps[backend->type] = loaded_backends[i].function_map;
+    }
     size_t output_index = 0;
     for (size_t i = 0; i < cpu_count; i++) {
         active_metrics[output_index++] = (ActiveMetric) {
             .descriptor = &active_cpu_backend->metrics[i],
             .backend_type = ENERGY_BACKEND_CPU,
-            .backend_metric_index = i
+            .backend_metric_index = i,
+            .function = maps[ENERGY_BACKEND_CPU] ? &maps[ENERGY_BACKEND_CPU]->functions[i] : NULL
         };
     }
     for (size_t i = 0; i < gpu_count; i++) {
         active_metrics[output_index++] = (ActiveMetric) {
             .descriptor = &active_gpu_backend->metrics[i],
             .backend_type = ENERGY_BACKEND_GPU,
-            .backend_metric_index = i
+            .backend_metric_index = i,
+            .function = maps[ENERGY_BACKEND_GPU] ? &maps[ENERGY_BACKEND_GPU]->functions[i] : NULL
         };
     }
     return 0;
+}
+
+static int backend_function_map_valid(const EnergyMetricFunctionMap *map,
+                                      const EnergyBackendDescriptor *backend) {
+    if (!map) return 1;
+    const EnergyMetricDescriptor *metrics = backend->type == ENERGY_BACKEND_CPU
+        ? backend->backend.cpu->metrics : backend->backend.gpu->metrics;
+    size_t count = backend->type == ENERGY_BACKEND_CPU
+        ? backend->backend.cpu->metric_count : backend->backend.gpu->metric_count;
+    if (map->version != ENERGY_METRIC_FUNCTION_MAP_VERSION ||
+        map->count != count || !map->functions) return 0;
+    for (size_t i = 0; i < count; i++) {
+        const char *name = map->functions[i].name;
+        if (!name || !name[0] || !map->functions[i].read ||
+            !((*name >= 'a' && *name <= 'z') || (*name >= 'A' && *name <= 'Z') || *name == '_'))
+            return 0;
+        for (const char *p = name + 1; *p; p++)
+            if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                  (*p >= '0' && *p <= '9') || *p == '_')) return 0;
+        for (size_t j = 0; j < count; j++)
+            if ((i != j && !strcmp(name, metrics[j].name)) ||
+                (j < i && !strcmp(name, map->functions[j].name))) return 0;
+    }
+    return 1;
 }
 
 static int load_backend_plugin(const char *plugin_path, const char *category,
@@ -416,6 +828,14 @@ static int load_backend_plugin(const char *plugin_path, const char *category,
         return -1;
     }
 
+    dlerror();
+    const EnergyMetricFunctionMap *map = dlsym(handle, ENERGY_METRIC_FUNCTION_MAP_SYMBOL);
+    if (dlerror()) map = NULL;
+    if (!backend_function_map_valid(map, descriptor)) {
+        add_backend_report(category, vendor_dir, "invalid", "invalid metric function map");
+        dlclose(handle);
+        return -1;
+    }
     LoadedBackend *new_backends = realloc(
         loaded_backends, (loaded_backend_count + 1) * sizeof(*loaded_backends));
     if (!new_backends) {
@@ -427,8 +847,16 @@ static int load_backend_plugin(const char *plugin_path, const char *category,
     const char *name = expected_type == ENERGY_BACKEND_CPU
         ? descriptor->backend.cpu->name : descriptor->backend.gpu->name;
     loaded_backends = new_backends;
+    char *directory = strdup(vendor_dir);
+    if (!directory) {
+        fprintf(stderr, "[ERROR] Unable to allocate backend directory name.\n");
+        dlclose(handle);
+        return -1;
+    }
     loaded_backends[loaded_backend_count].handle = handle;
     loaded_backends[loaded_backend_count].descriptor = descriptor;
+    loaded_backends[loaded_backend_count].function_map = map;
+    loaded_backends[loaded_backend_count].directory = directory;
     loaded_backends[loaded_backend_count].report_index = add_backend_report(category, name, "loaded", "");
     loaded_backend_count++;
     return 0;
@@ -488,6 +916,7 @@ static void cleanup_backends(void) {
     }
     for (size_t i = 0; i < loaded_backend_count; i++) {
         dlclose(loaded_backends[i].handle);
+        free(loaded_backends[i].directory);
     }
     free(loaded_backends);
     loaded_backends = NULL;
@@ -497,8 +926,6 @@ static void cleanup_backends(void) {
     active_metric_count = 0;
 }
 
-/* Backends that do not apply to this machine are hidden unless the category
-   has no selected backend (to explain why) or verbose output is requested. */
 static void print_backend_summary(void) {
     const char *verbose_env = getenv("GREENMEASURER_VERBOSE_BACKENDS");
     int verbose = verbose_env && verbose_env[0] && strcmp(verbose_env, "0") != 0;
@@ -508,18 +935,9 @@ static void print_backend_summary(void) {
     printf("  %-4s  %-28s  %-13s  %s\n", "----", "----------------------------", "-------------", "-------");
     for (size_t i = 0; i < backend_report_count; i++) {
         const BackendReport *report = &backend_reports[i];
-        int show = verbose || strcmp(report->status, "selected") == 0;
-        if (!show) {
-            int category_has_selected = 0;
-            for (size_t j = 0; j < backend_report_count; j++) {
-                if (strcmp(backend_reports[j].category, report->category) == 0 &&
-                    strcmp(backend_reports[j].status, "selected") == 0) {
-                    category_has_selected = 1;
-                    break;
-                }
-            }
-            show = !category_has_selected || strcmp(report->status, "invalid") == 0;
-        }
+        int show = verbose || strcmp(report->status, "selected") == 0 ||
+                   strcmp(report->status, "invalid") == 0 ||
+                   strcmp(report->status, "load failed") == 0;
         if (show) {
             printf("  %-4s  %-28s  %-13s  %s\n",
                    report->category, report->label, report->status, report->detail);
@@ -573,25 +991,31 @@ static void init_backends(void) {
     if (register_selected_metrics() != 0) exit(EXIT_FAILURE);
     if (!header_only_mode) {
         print_backend_summary();
-        printf("[INFO] Active backend metrics:");
-        for (size_t i = 0; i < active_metric_count; i++) {
-            const char *category =
-                active_metrics[i].backend_type == ENERGY_BACKEND_CPU ? "cpu" : "gpu";
-            printf(" %s.%s (%s)", category, active_metrics[i].descriptor->name,
-                   active_metrics[i].descriptor->unit);
+        if (!configured_overtime) {
+            printf("[INFO] Active backend metrics:");
+            for (size_t i = 0; i < active_metric_count; i++) {
+                const char *category =
+                    active_metrics[i].backend_type == ENERGY_BACKEND_CPU ? "cpu" : "gpu";
+                printf(" %s.%s (%s)", category, active_metrics[i].descriptor->name,
+                       active_metrics[i].descriptor->unit);
+            }
+            printf("\n");
         }
-        printf("\n");
     }
 
-    if (!active_cpu_backend && !active_gpu_backend) {
-        fprintf(stderr, "[ERROR] No usable CPU or GPU energy backend. See the table above for the reason of each backend.\n");
-        exit(EXIT_FAILURE);
-    }
     if (!active_cpu_backend) {
-        fprintf(stderr, "[WARNING] No CPU energy backend active. CPU metrics will be reported as NOT_SUPPORTED.\n");
+        fprintf(stderr, "[WARNING] No CPU energy backend active. CPU backend metrics are unavailable.\n");
     }
     if (!active_gpu_backend) {
-        fprintf(stderr, "[WARNING] No GPU energy backend active. GPU metrics will be reported as NOT_SUPPORTED.\n");
+        fprintf(stderr, "[WARNING] No GPU energy backend active. GPU backend metrics are unavailable.\n");
+    }
+    if ((!active_cpu_backend || !active_gpu_backend) && !header_only_mode) {
+        fprintf(stderr, "[INFO] Set GREENMEASURER_VERBOSE_BACKENDS=1 for backend detection and build details.\n");
+    }
+    if (configured_overtime && select_configured_backend_metrics() != 0) exit(EXIT_FAILURE);
+    if (!active_cpu_backend && !active_gpu_backend && !configured_overtime) {
+        fprintf(stderr, "[ERROR] No usable CPU or GPU energy backend. Enable verbose backend diagnostics for details.\n");
+        exit(EXIT_FAILURE);
     }
     if (!header_only_mode) printf("\n");
 }
@@ -832,6 +1256,13 @@ static void* measureWorker(void *arg) {
     int gpu_sample_ready = gpu_initialized &&
                            active_gpu_backend->sample_start(0) == 0;
 
+    if (active_cpu_backend && !cpu_sample_ready) {
+        fprintf(stderr, "[WARNING] CPU backend initialization or sampling failed; CPU window metrics are unavailable.\n");
+    }
+    if (active_gpu_backend && !gpu_sample_ready) {
+        fprintf(stderr, "[WARNING] GPU backend initialization or sampling failed; GPU window metrics are unavailable.\n");
+    }
+
     run_stats_reset();
     run_backend_core = args->core;
     run_sample_ready[ENERGY_BACKEND_CPU] = cpu_sample_ready;
@@ -1002,6 +1433,7 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
 }
 
 #include "overtime.inc"
+#include "standard.inc"
 
 static void show_help(const char *bin_name) {
     printf("\nUsage:\n");
@@ -1018,6 +1450,8 @@ static void show_help(const char *bin_name) {
     printf("      Samples metrics sequentially and dumps interval values to a CSV when the command ends.\n\n");
     printf("  %s --csv-header | --overtime-csv-header\n", bin_name);
     printf("      Prints the selected backends' CSV header for the requested measurement mode.\n\n");
+    printf("  %s --config <file.toml> [measurement options]\n", bin_name);
+    printf("      Runs the supported subset of TOML configurations; see README for limitations.\n\n");
 }
 
 static const char* resolve_python_venv(void) {
@@ -1032,15 +1466,61 @@ int main(int argc, char **argv) {
     setlocale(LC_NUMERIC, "C");
     signal(SIGINT, sigint_handler);
 
+    if (argc >= 2 && !strcmp(argv[1], "--config")) {
+        char executable[PATH_MAX], script[PATH_MAX];
+        ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+        if (length < 0) {
+            perror("[ERROR] Unable to locate executable");
+            return 1;
+        }
+        if ((size_t)length >= sizeof(executable) - 1) {
+            fprintf(stderr, "[ERROR] Executable path is too long.\n");
+            return 1;
+        }
+        executable[length] = '\0';
+        char *slash = strrchr(executable, '/');
+        if (!slash) {
+            fprintf(stderr, "[ERROR] Unable to locate configuration runner.\n");
+            return 1;
+        }
+        *slash = '\0';
+#ifdef GREENMEASURER_TEST_ENGINE
+        int written = snprintf(script, sizeof(script), "%s/run_config_legacy.py", executable);
+#else
+        int written = snprintf(script, sizeof(script), "%s/../scripts/run_config.py", executable);
+#endif
+        if (written < 0 || (size_t)written >= sizeof(script)) {
+            fprintf(stderr, "[ERROR] Configuration runner path is too long.\n");
+            return 1;
+        }
+        char **arguments = calloc((size_t)argc + 2, sizeof(*arguments));
+        if (!arguments) {
+            fprintf(stderr, "[ERROR] Unable to allocate configuration arguments.\n");
+            return 1;
+        }
+        arguments[0] = "python3";
+        arguments[1] = script;
+        for (int i = 2; i < argc; i++) arguments[i] = argv[i];
+        execvp(arguments[0], arguments);
+        perror("[ERROR] Unable to start Python configuration runner");
+        free(arguments);
+        return 1;
+    }
+
     if (argc >= 2 && (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h"))) {
         show_help(argv[0]);
         return 0;
     }
 
+    configured_standard = argc >= 2 && !strcmp(argv[1], "--configured-standard");
+    configured_overtime = configured_standard ||
+        (argc >= 2 && !strcmp(argv[1], "--configured-overtime"));
+    if (configured_overtime && configure_overtime_metrics(argc, argv) != 0) return 1;
     header_only_mode = argc >= 2 &&
         (!strcmp(argv[1], "--csv-header") ||
          !strcmp(argv[1], "--overtime-csv-header"));
     init_backends();
+    if (configured_standard) return configured_standard_run(argc, argv);
     if (argc >= 2 && (!strcmp(argv[1], "--csv-header") ||
                       !strcmp(argv[1], "--overtime-csv-header"))) {
         energy_backend_write_csv_header(stdout,
@@ -1060,8 +1540,7 @@ int main(int argc, char **argv) {
                 strncpy(calib_file, argv[++i], sizeof(calib_file) - 1);
             }
         }
-        calibrateTemperature(calib_file, sleep_secs);
-        return 0;
+        return calibrateTemperature(calib_file, sleep_secs) < 0 ? 1 : 0;
     }
 
     /* ========================================================
@@ -1129,7 +1608,7 @@ int main(int argc, char **argv) {
         int memory = platform_measure_memory(command);
 
         if (access(calib_file, F_OK) != 0) {
-            calibrateTemperature(calib_file, sleep_secs);
+            if (calibrateTemperature(calib_file, sleep_secs) < 0) return 1;
         }
         float ref_temp = getInitialTemperature(calib_file);
         if (ref_temp <= 0.0f) ref_temp = get_current_cpu_temp(0);
@@ -1146,15 +1625,27 @@ int main(int argc, char **argv) {
         }
 
         const char *py_bin = resolve_python_venv();
-        char proc_cmd[1024];
-        if (access("Utils/processPowercapCalibrationCSV.py", F_OK) == 0) {
-            snprintf(proc_cmd, sizeof(proc_cmd), "%s Utils/processPowercapCalibrationCSV.py %s", py_bin, calib_csv);
-        } else {
-            snprintf(proc_cmd, sizeof(proc_cmd), "%s ../Utils/processPowercapCalibrationCSV.py %s", py_bin, calib_csv);
+#ifdef GREENMEASURER_PROCESSOR
+        const char *processor = GREENMEASURER_PROCESSOR;
+#else
+        const char *processor = access("Utils/processPowercapCalibrationCSV.py", F_OK) == 0
+            ? "Utils/processPowercapCalibrationCSV.py" : "../Utils/processPowercapCalibrationCSV.py";
+#endif
+        printf("[INFO] Processing calibration CSV via: %s %s\n", py_bin, processor);
+        pid_t processor_pid = fork();
+        if (processor_pid == 0) {
+            execlp(py_bin, py_bin, processor, calib_csv, (char *)NULL);
+            _exit(127);
         }
-        printf("[INFO] Processing calibration CSV via: %s\n", proc_cmd);
-        if (system(proc_cmd) != 0) {
-            fprintf(stderr, "[WARNING] Calibration post-processing script exited with error.\n");
+        if (processor_pid < 0) {
+            perror("[WARNING] Unable to start calibration post-processing");
+        } else {
+            int status;
+            pid_t waited;
+            do { waited = waitpid(processor_pid, &status, 0); } while (waited < 0 && errno == EINTR);
+            if (waited < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+                fprintf(stderr, "[WARNING] Calibration post-processing script exited with error.\n");
+            }
         }
 
         return 0;
@@ -1163,14 +1654,29 @@ int main(int argc, char **argv) {
     /* ========================================================
        3. MODE: OVERTIME
        ======================================================== */
-    if (argc >= 2 && (!strcmp(argv[1], "--overtime") || !strcmp(argv[1], "--over-time"))) {
+    if (argc >= 2 && (!strcmp(argv[1], "--overtime") || !strcmp(argv[1], "--over-time") || configured_overtime)) {
         char command[500] = "", language[128] = "", program[128] = "";
         char ot_csv[512] = "measurements_ot.csv";
         int powercap = -1, variance = 5, sleep_time = 5;
         unsigned long interval_us = 1000UL;
 
         for (int i = 2; i < argc; ++i) {
-            if ((!strcmp(argv[i], "-command") || !strcmp(argv[i], "-run_cmd")) && i + 1 < argc) {
+            if (!strcmp(argv[i], "--configured-system")) {
+                i++;
+            }
+            else if (!strcmp(argv[i], "--configured-all")) {
+                continue;
+            }
+            else if (!strcmp(argv[i], "--configured-adapter")) {
+                i += 2;
+            }
+            else if (!strcmp(argv[i], "--configured-external")) {
+                i += 3;
+            }
+            else if (!strcmp(argv[i], "--configured-backend")) {
+                i++;
+            }
+            else if ((!strcmp(argv[i], "-command") || !strcmp(argv[i], "-run_cmd")) && i + 1 < argc) {
                 strncpy(command, argv[++i], sizeof(command) - 1);
             }
             else if (!strcmp(argv[i], "-language") && i + 1 < argc) strncpy(language, argv[++i], sizeof(language) - 1);
@@ -1211,7 +1717,7 @@ int main(int argc, char **argv) {
         }
 
         if (access(calib_file, F_OK) != 0) {
-            calibrateTemperature(calib_file, sleep_time);
+            if (calibrateTemperature(calib_file, sleep_time) < 0) return 1;
         }
         float ref_temp = getInitialTemperature(calib_file);
         if (ref_temp <= 0.0f) ref_temp = get_current_cpu_temp(0);
@@ -1257,114 +1763,5 @@ int main(int argc, char **argv) {
         return command_status == 0 ? 0 : 1;
     }
 
-    /* ========================================================
-       4. MODE: STANDARD MEASUREMENT
-       ======================================================== */
-    char command[500] = "", language[128] = "C", program[128] = "Target";
-    int ntimes = 1, powercap = -1, variance = 0, timeout = 3600;
-    int sleep_time = 5;
-
-    for (int i = 1; i < argc; ++i) {
-        if (!strcmp(argv[i], "--standard")) {
-            continue;
-        }
-        else if ((!strcmp(argv[i], "-command") || !strcmp(argv[i], "-run_cmd")) && i + 1 < argc) {
-            strncpy(command, argv[++i], sizeof(command) - 1);
-        }
-        else if (!strcmp(argv[i], "-language") && i + 1 < argc) strncpy(language, argv[++i], sizeof(language) - 1);
-        else if (!strcmp(argv[i], "-program") && i + 1 < argc) strncpy(program, argv[++i], sizeof(program) - 1);
-        else if (!strcmp(argv[i], "-n_times") && i + 1 < argc) ntimes = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-variance") && i + 1 < argc) variance = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-time_out_limit") && i + 1 < argc) timeout = atoi(argv[++i]) * 3600;
-        else if (!strcmp(argv[i], "-powercap") && i + 1 < argc) powercap = atoi(argv[++i]);
-        else if ((!strcmp(argv[i], "-sleep_time") || !strcmp(argv[i], "-sleep-secs")) && i + 1 < argc) {
-            sleep_time = atoi(argv[++i]);
-        }
-        else if (!strcmp(argv[i], "-calib-file") && i + 1 < argc) {
-            strncpy(calib_file, argv[++i], sizeof(calib_file) - 1);
-        }
-        else if ((!strcmp(argv[i], "-output") || !strcmp(argv[i], "-measurements-file")) && i + 1 < argc) {
-            strncpy(measurements_file, argv[++i], sizeof(measurements_file) - 1);
-        }
-    }
-
-    if (powercap != -1 && powercap < 1) {
-        fprintf(stderr, "[ERROR] -powercap must be -1 (no GreenMeasurer cap) or at least 1 W.\n");
-        return 1;
-    }
-
-    int memory = 0;
-    if (strlen(command) > 0) {
-        memory = platform_measure_memory(command);
-    }
-
-    if (access(calib_file, F_OK) != 0) {
-        printf("[WARNING] Calibration file %s not found. Running temperature calibration...\n", calib_file);
-        calibrateTemperature(calib_file, sleep_time);
-    } else {
-        printf("[INFO] Calibration file %s found. Skipping temperature calibration.\n", calib_file);
-    }
-
-    float ref_temp = getInitialTemperature(calib_file);
-    if (ref_temp <= 0.0f) {
-        ref_temp = get_current_cpu_temp(0);
-    }
-
-    printf("\n[INFO]\n======= Execution Details ========\n");
-    printf(" Command               : %s\n", command);
-    printf(" Language              : %s\n", language);
-    printf(" Program               : %s\n", program);
-    printf(" N_times               : %d\n", ntimes);
-    printf(" Variance              : %d°C\n", variance);
-    printf(" Timeout               : %d seconds\n", timeout);
-    printf(" Sleep_time            : %d seconds\n", sleep_time);
-    if (powercap == -1) printf(" PowerCap              : No power cap\n"); 
-    else printf(" PowerCap              : %d watts\n", powercap);
-    printf(" Calibration file      : %s\n", calib_file);
-    printf(" Baseline temperature  : %.2f °C\n", ref_temp);
-    printf(" Output CSV            : %s\n", measurements_file);
-    printf("====================================\n\n");
-
-    if (powercap > 0) {
-        if (!active_cpu_backend || !active_cpu_backend->set_powercap) {
-            fprintf(stderr, "[ERROR] Active CPU backend does not support powercapping; measurement aborted.\n");
-            return 1;
-        }
-        if (active_cpu_backend->set_powercap(powercap) != 0) {
-            fprintf(stderr, "[ERROR] Failed to set powercap to %d W; measurement aborted.\n",
-                    powercap);
-            if (active_cpu_backend->destroy_powercap) {
-                active_cpu_backend->destroy_powercap();
-            }
-            return 1;
-        }
-    }
-
-    FILE *fp = fopen(measurements_file, "w");
-    if (!fp) {
-        perror("[ERROR] Failed to open measurement CSV");
-        if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
-            active_cpu_backend->destroy_powercap();
-        }
-        return 1;
-    }
-    energy_backend_write_csv_header(fp, 0);
-    if (fclose(fp) != 0) {
-        perror("[ERROR] Failed to write measurement CSV header");
-        if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
-            active_cpu_backend->destroy_powercap();
-        }
-        return 1;
-    }
-
-    runTesting(ntimes, 0, command, language, program, measurements_file, powercap, timeout, ref_temp, variance, memory);
-
-    if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
-        if (active_cpu_backend->destroy_powercap() != 0) {
-            fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
-            return 1;
-        }
-    }
-
-    return 0;
+    return configured_standard_run(argc, argv);
 }

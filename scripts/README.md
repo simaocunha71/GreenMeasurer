@@ -1,11 +1,59 @@
 ### Scripts
 
 - `install.sh`: Installs all prerequisites for the study, such as `git`, `cmake`, `lm-sensors`, etc.
-- `measure.sh`: Executes experiments on programs.
-- `run_powercap_calibration.sh`: Runs powercap calibration.
+- `measure.sh`: Generates a batch from TOML files, then runs it in a separate step.
+- `run_powercap_calibration.sh`: Generates a powercap calibration executable from TOML.
 - `analyze_overtime.py`: Reports observed overtime sampling intervals.
 - `probe_rapl_frequency.py`: Measures observed Intel package RAPL counter changes.
 - `compare_overtime_overhead.py`: Compares workload wall time with and without overtime sampling.
+- `validate_config.py`: Validates the TOML configuration. Optional
+  `--check-adapters` loads trusted selected adapters and tests their readings.
+- `run_config.py`: Internal configuration-to-engine argument translation.
+- `generate_config.py`: C generation and compilation, including
+  source-based external metrics. It does not execute the workload; see
+  the [main README](../README.md#executing-a-configuration).
+
+Python 3.11+ or `tomli` is required for TOML parsing.
+
+## Batch generation and execution
+
+```sh
+bash scripts/measure.sh generate generated-batch first.toml second.toml
+bash scripts/measure.sh run generated-batch
+```
+
+The batch directory must not already exist. Configurations execute in the
+order supplied. Each TOML specifies its own command, metrics and output;
+use different output paths to avoid overwriting results. Generation does not
+run workloads. On a generation failure, fix the configuration and select a
+new directory; an incomplete batch must not be run. Unlike the old script,
+this does not alter Wi-Fi, clean builds, or delete CSV files.
+
+For powercap calibration, generate with
+`bash scripts/run_powercap_calibration.sh config.toml generated-powercap`
+and then run `generated-powercap/greenmeasurer` separately with the necessary
+hardware permissions.
+
+## Configuration and backend diagnostics
+
+Both modes support explicitly selected CPU, GPU, system and external metrics.
+`select = "all"` includes all system metrics, runtime-selected CPU/GPU backend
+metrics, all metrics in declared adapters, and all declared source metrics.
+Unavailable metrics are skipped with diagnostics.
+Runnable examples and details are in the [main README](../README.md#executing-a-configuration).
+
+Default backend output shows selected plugins and load/descriptor errors; it
+warns when CPU or GPU has no active backend. Undetected, unbuilt and
+lower-priority backends are hidden. For full diagnostics, including permission
+hints, set `GREENMEASURER_VERBOSE_BACKENDS=1`, for example:
+
+```sh
+./src/main --config examples/configurations/system-cores.toml --directory generated-diagnostics
+GREENMEASURER_VERBOSE_BACKENDS=1 ./generated-diagnostics/greenmeasurer
+```
+
+The command runs a measurement and overwrites the example's output CSV in the
+current directory. It does not merely list backends.
 
 ## Evaluating overtime sampling
 
@@ -47,15 +95,19 @@ These scripts use Python 3's standard library. Run them from the repository root
 3. Compare wall-clock times for the same workload with and without overtime:
 
    ```sh
-   make -C src
-   sudo python3 scripts/compare_overtime_overhead.py \
-     --command 'sleep 2' --calib-file /tmp/cores_temperatures.txt \
-     --runs 5 --interval-us 1000
+   python3 scripts/compare_overtime_overhead.py \
+     --config path/to/overtime.toml --runs 5
    ```
 
    The workload runs twice per pair, in reproducibly randomized order. The
-   existing calibration file is required; prepare it separately with
-   `--temperature-calibration` if necessary. Both modes run under the same
+   TOML supplies the command, selected metrics, sampling interval and other
+   settings. An existing calibration file is required (using
+   `measurement.calibration_file` or the default `/tmp/cores_temperatures.txt`);
+   prepare it separately using a temperature-calibration TOML if necessary. The
+   script generates a temporary configured executable once and redirects its
+   output to a temporary CSV, without changing `measurement.output` in the
+   file or overwriting its configured CSV. Source paths and adapter paths are
+   resolved relative to the original configuration. Both modes run under the same
    user as the script. The baseline uses shell elapsed time; overtime workload
    time is approximated by its final sample timestamp, and `wrapper_ms` also
    includes initialization, possible temperature waiting and CSV output.
@@ -70,8 +122,10 @@ These scripts use Python 3's standard library. Run them from the repository root
    Redirect standard output to a file to retain the run order, individual
    timings and summary, for example append `> overhead-report.txt`. Save
    standard error separately when retaining warnings or failure diagnostics.
-   The `-1` powercap setting does not remove a cap previously applied outside
-   this run; verify the system's actual power limits before comparing.
+   The comparison requires the TOML's powercap to be absent or `-1`, because
+   the unmeasured baseline cannot apply a GreenMeasurer cap. This does not
+   remove a cap previously applied outside this run; verify the system's
+   actual power limits before comparing.
 
 Overtime reads the backends and system metrics sequentially. `Timestamp_ms` is
 captured before the backend reads and is not their exact simultaneous read time.

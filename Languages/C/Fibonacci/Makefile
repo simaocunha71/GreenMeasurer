@@ -19,13 +19,13 @@ endif
 compile:
 	$(GCC_PATH) -pipe -Wall -O3 -fomit-frame-pointer -march=ivybridge fibonacci.c -o fib -lm
 
-standard:
-	-modprobe msr 2>/dev/null || true
-	../../../src/main --standard -command "$(command)" -language $(language) -program $(program)_$(input) -n_times $(n_times) -variance $(variance) -time_out_limit $(time_out_limit) -sleep_time $(sleep_secs) -powercap $(powercap)
+generate:
+	@test -n "$(CONFIG)" -a -n "$(BUILD_DIR)" || { echo "Set CONFIG and BUILD_DIR."; exit 1; }
+	python3 ../../../scripts/generate_config.py "$(CONFIG)" --directory "$(BUILD_DIR)"
 
-overtime:
-	-modprobe msr 2>/dev/null || true
-	../../../src/main --overtime -command "$(command)" -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance) -interval-us $(interval_us)
+run-configured:
+	@test -n "$(BUILD_DIR)" || { echo "Set BUILD_DIR."; exit 1; }
+	"$(BUILD_DIR)/greenmeasurer"
 
 run:
 	$(command)
