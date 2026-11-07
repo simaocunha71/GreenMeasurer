@@ -140,13 +140,25 @@ sudo ./main --standard \
 ---
 
 ### 3. Over-Time Dynamic Sampling (`--overtime`)
-Starts one sampler thread per metric that runs for the whole workload and stores values in statically allocated arrays. Nothing is allocated or written while the workload runs; the CSV is written once, after the workload ends. Each array holds 262144 samples per metric (about 7 hours at the fixed internal 100 ms pause); a sampler that reaches this capacity stops recording rather than overwriting data. There is no sampling-interval option.
+The parent process samples the backends and system metrics sequentially while the
+workload runs, without sampler threads. Samples are stored in static arrays and
+the CSV is written after the workload exits. The default pause between sampling
+cycles is 1 ms; the time spent reading metrics and scheduler delays make the
+actual intervals longer and variable. This is a polling interval, not a
+hardware update notification: repeated counter readings or missed updates are
+possible. A final partial interval is recorded when the workload exits.
+
+The capacity is 262144 rows. If it is exceeded, the workload is stopped and the
+measurement fails without writing a partial CSV. Metric collection itself may
+perform I/O and, depending on the backend, allocate memory. At exactly 1000
+samples per second, the capacity covers approximately 4 minutes and 22 seconds.
 
 ```bash
 sudo ./main --overtime \
   -command "<command>" \
   -language <lang> \
   -program <prog> \
+  [-interval-us <microseconds>] \
   [-powercap <W>] \
   [-variance <V>] \
   [-sleep-secs <sec>] \
@@ -157,10 +169,14 @@ sudo ./main --overtime \
 * `-command`: Foreground benchmark workload.
 * `-language`: Programming language identifier.
 * `-program`: Program identifier.
+* `-interval-us`: Positive pause between sampling cycles in microseconds (default: `1000`).
 * `-powercap`: Clamping limit in Watts (optional, defaults to `-1`).
 * `-variance`: Maximum allowed temperature variance above baseline.
 * `-sleep-secs`: Stabilization sleep duration.
 * `-output`: Output CSV file path (default: `measurements_ot.csv`).
+
+For scripts to analyze observed sample intervals, probe RAPL update behavior,
+and compare workload timing overhead, see [scripts/README.md](scripts/README.md#evaluating-overtime-sampling).
 
 ---
 
@@ -185,7 +201,7 @@ Runs tests at each Watt step in the defined range. Results are saved to `powerca
 
 On Intel, each requested Watt value is applied to every detected package and die. Destroying the RAPL context does not restore the previous package limits; the configured limits may remain in effect after a measurement or calibration run. The standard and overtime `-powercap` options accept only `-1` (do not set a GreenMeasurer cap) or a positive Watt value.
 
-For Intel, `cpu.Package_J` is total package energy over the run, not average power. A lower power cap can extend `Time_ms` enough that total energy stays similar or increases; compare both metrics, or derive average package power as `cpu.Package_J / (Time_ms / 1000)`. Do not assume package energy must decrease monotonically with the cap.
+In standard mode, `cpu.Package_J` is total package energy over the run, not average power. A lower power cap can extend `Time_ms` enough that total energy stays similar or increases; compare both metrics, or derive average package power as `cpu.Package_J / (Time_ms / 1000)`. Do not assume package energy must decrease monotonically with the cap.
 
 ---
 
@@ -219,20 +235,31 @@ Metric behavior is declared by each backend:
   aggregated across the workload process tree. Polling is every 50 ms, so brief
   allocations may be missed.
 
-In over-time mode `Time_ms` is the total run time of the program (repeated on every row), there is no per-row timestamp, and
+In over-time mode `Timestamp_ms` is the monotonic elapsed time in milliseconds
+at the start of each sample's backend readings, and
 `CPU_Memory_KB` is the current resident set size of the workload process tree.
 It also reports `Cores` (online logical cores), `Workload_Processes` (live
 processes in the workload tree), `System_Running_Processes` (runnable processes
 system-wide) and one `Core<N>_Freq_MHz` column per core. Each of the memory, core-count, process-count, running-process and core-frequency
-metrics has its own thread, and the CPU and GPU backends have one thread each,
-all storing into static arrays. Every sampler uses the same fixed pause, so row *i* holds the *i*-th sample of each metric. For example:
+metrics is read sequentially in each cycle. Values in the same row are therefore
+not exactly simultaneous. Process-scoped readings may be unavailable in the
+final row because the workload has already exited. For example:
 
 ```csv
-Language,Program,Powercap,Time_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
 
-Window metrics (energy) are accumulated in 64-bit sums of short segments, so the 32-bit hardware counters cannot overflow however long the run is. This is also how standard mode measures energy (50 ms segments). They are accumulated from the start of the workload through each
-row; gauges and process-scoped values are the latest sample at each row. Use
+Window metrics such as energy are **joules consumed in the interval since the
+preceding backend reading**, not instantaneous joules or cumulative energy.
+Gauges and process-scoped values are readings taken in that cycle. Built-in
+backends use consecutive counter snapshots without gaps; legacy plugins without
+the optional `energy_backend_sample_next` symbol use separate start/stop windows
+and issue a warning because energy between windows is missed. Intel RAPL deltas
+handle one 32-bit wrap per interval, but cannot detect multiple wraps. Choose an
+interval short enough for the hardware and workload. The timestamp is taken
+immediately before the sequential backend reads, so timing of individual metrics
+and interval-average power are approximate.
+Standard mode continues to accumulate 50 ms segments. Use
 `main --csv-header` or `main --overtime-csv-header` to print the schema selected
 on the current machine.
 

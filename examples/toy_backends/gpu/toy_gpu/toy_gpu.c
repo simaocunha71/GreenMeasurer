@@ -18,6 +18,7 @@
 #define TOY_GPU_WATTS 5.0
 
 static struct timespec window_start;
+static struct timespec window_end;
 static double window_seconds = 0.0;
 static int window_valid = 0;
 
@@ -50,11 +51,16 @@ static int toy_gpu_sample_start(int device) {
 
 static int toy_gpu_sample_stop(int device) {
     (void)device;
-    struct timespec end;
-    if (clock_gettime(CLOCK_MONOTONIC, &end) != 0) return -1;
-    window_seconds = seconds_between(&window_start, &end);
+    if (clock_gettime(CLOCK_MONOTONIC, &window_end) != 0) return -1;
+    window_seconds = seconds_between(&window_start, &window_end);
     window_valid = 1;
     return 0;
+}
+
+int energy_backend_sample_next(int device) {
+    int result = toy_gpu_sample_stop(device);
+    if (result == 0) window_start = window_end;
+    return result;
 }
 
 /* Resident memory of one process, in MiB (Linux only). */

@@ -1,4 +1,5 @@
 #include "intel.h"
+#include "../../../../include/energy-counter.h"
 #include <pthread.h>
 #include <regex.h>
 
@@ -9,6 +10,7 @@ static uint32_t dram_before = 0, dram_after = 0;
 static int package_before_valid = 0, package_after_valid = 0;
 static int core_before_valid = 0, core_after_valid = 0;
 static int dram_before_valid = 0, dram_after_valid = 0;
+static int next_sample_has_previous = 0;
 
 static double energy_units = 0.0;
 static int energy_units_valid = 0;
@@ -115,6 +117,7 @@ static int intel_init(int core) {
 }
 
 static int intel_sample_start(int core) {
+    next_sample_has_previous = 0;
     package_before_valid = 0;
     core_before_valid = 0;
     dram_before_valid = 0;
@@ -187,7 +190,7 @@ static double intel_get_package_energy(int core) {
     if (!energy_units_valid || !package_before_valid || !package_after_valid) {
         return METRIC_NOT_SUPPORTED;
     }
-    return (double)(uint32_t)(package_after - package_before) * energy_units;
+    return (double)energy_counter_delta32(package_after, package_before) * energy_units;
 }
 
 static double intel_get_core_energy(int core) {
@@ -195,7 +198,7 @@ static double intel_get_core_energy(int core) {
     if (!energy_units_valid || !core_before_valid || !core_after_valid) {
         return METRIC_NOT_SUPPORTED;
     }
-    return (double)(uint32_t)(core_after - core_before) * energy_units;
+    return (double)energy_counter_delta32(core_after, core_before) * energy_units;
 }
 
 static double intel_get_dram_energy(int core) {
@@ -203,7 +206,21 @@ static double intel_get_dram_energy(int core) {
     if (!energy_units_valid || !dram_before_valid || !dram_after_valid) {
         return METRIC_NOT_SUPPORTED;
     }
-    return (double)(uint32_t)(dram_after - dram_before) * energy_units;
+    return (double)energy_counter_delta32(dram_after, dram_before) * energy_units;
+}
+
+int energy_backend_sample_next(int core) {
+    if (next_sample_has_previous) {
+        package_before = package_after;
+        core_before = core_after;
+        dram_before = dram_after;
+        package_before_valid = package_after_valid;
+        core_before_valid = core_after_valid;
+        dram_before_valid = dram_after_valid;
+    }
+    int result = intel_sample_stop(core);
+    next_sample_has_previous = result == 0;
+    return result;
 }
 
 #define INTEL_MAX_TEMP_SENSORS 64

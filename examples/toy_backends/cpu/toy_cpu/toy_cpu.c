@@ -16,6 +16,7 @@
 #define TOY_CPU_WATTS 10.0
 
 static struct timespec window_start;
+static struct timespec window_end;
 static double window_seconds = 0.0;
 static int window_valid = 0;
 
@@ -52,11 +53,16 @@ static int toy_cpu_sample_start(int core) {
 /* Close the window. A non-zero return makes the metrics NOT_SUPPORTED. */
 static int toy_cpu_sample_stop(int core) {
     (void)core;
-    struct timespec end;
-    if (clock_gettime(CLOCK_MONOTONIC, &end) != 0) return -1;
-    window_seconds = seconds_between(&window_start, &end);
+    if (clock_gettime(CLOCK_MONOTONIC, &window_end) != 0) return -1;
+    window_seconds = seconds_between(&window_start, &window_end);
     window_valid = 1;
     return 0;
+}
+
+int energy_backend_sample_next(int core) {
+    int result = toy_cpu_sample_stop(core);
+    if (result == 0) window_start = window_end;
+    return result;
 }
 
 /* Name + unit become the CSV column: <category>.<name>_<unit>. */

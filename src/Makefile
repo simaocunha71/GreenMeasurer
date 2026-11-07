@@ -37,7 +37,7 @@ BACKEND_HOST_LDLIBS := $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call ba
 $(if $(VERBOSE),$(foreach dir,$(BACKEND_DIRS),$(if $(filter no,$(call backend_available,$(dir))),$(info [BUILD] Backend $(dir) skipped: $(or $(BACKEND_SKIP_REASON_$(call backend_key,$(dir))),optional dependencies are unavailable)))))
 
 define backend_rule
-$(1)/backend.so: $(call backend_source,$(1)) $(wildcard $(1)/backend.mk)
+$(1)/backend.so: $(call backend_source,$(1)) $(wildcard $(1)/backend.mk) include/energy-backend.h include/energy-counter.h
 	$$(CC) $$(CFLAGS) $$(BACKEND_CFLAGS_$(call backend_key,$(1))) $$(SHARED_FLAGS) -o $$@ $$< $$(LDFLAGS) $$(BACKEND_LDLIBS_$(call backend_key,$(1)))
 endef
 
@@ -47,6 +47,8 @@ all: $(TARGET)
 
 $(TARGET): $(OBJS) $(BACKEND_TARGETS)
 	$(CC) $(CFLAGS) $(HOST_EXPORT_FLAGS) -o $@ $(OBJS) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) $(DL_LIBS)
+
+main.o: overtime.inc include/energy-backend.h metrics/system_metrics.h
 
 %.o: %.c
 	@mkdir -p $(dir $@)
@@ -58,5 +60,6 @@ clean:
 
 test: all
 	@bash tests/run_tests.sh
+	@python3 -m unittest discover -s tests -p test_overtime_scripts.py -v
 
 .PHONY: all clean test

@@ -110,6 +110,10 @@ int platform_measure_memory(const char *command);
 
 #define ENERGY_BACKEND_DESCRIPTOR_SYMBOL "energy_backend_descriptor"
 
+/* Optional plugin symbol: close a window and advance its baseline to the
+   previous stop on the next call, without losing energy between windows. */
+#define ENERGY_BACKEND_SAMPLE_NEXT_SYMBOL "energy_backend_sample_next"
+
 /* Write framework metadata columns followed by metrics from selected backends. */
 void energy_backend_write_csv_header(FILE *stream, int overtime);
 

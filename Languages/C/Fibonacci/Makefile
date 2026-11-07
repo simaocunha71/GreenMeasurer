@@ -4,6 +4,7 @@ variance ?= 5
 sleep_secs ?= 10
 input ?= 45
 powercap ?= -1
+interval_us ?= 1000
 language ?= C
 program ?= fibonacci
 export n_times
@@ -24,7 +25,7 @@ standard:
 
 overtime:
 	-modprobe msr 2>/dev/null || true
-	../../../src/main --overtime -command "$(command)" -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance)
+	../../../src/main --overtime -command "$(command)" -language $(language) -program $(program) -powercap $(powercap) -sleep_time $(sleep_secs) -variance $(variance) -interval-us $(interval_us)
 
 run:
 	$(command)

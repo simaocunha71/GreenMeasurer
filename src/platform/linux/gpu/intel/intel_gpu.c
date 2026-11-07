@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include <limits.h>
 #include "../../../../include/energy-backend.h"
+#include "../../../../include/energy-counter.h"
 
 #define MSR_RAPL_POWER_UNIT   0x606
 #define MSR_PP1_ENERGY_STATUS 0x641
@@ -21,6 +22,7 @@ static uint32_t pp1_after = 0;
 static int pp1_before_valid = 0;
 static int pp1_after_valid = 0;
 static int igpu_supported = 0;
+static int next_sample_has_previous = 0;
 
 static float intel_gpu_read_hwmon_temperature(void) {
     DIR *hwmon_dir = opendir("/sys/class/hwmon");
@@ -144,6 +146,7 @@ static int intel_gpu_init(int device_idx) {
 
 static int intel_gpu_sample_start(int device_idx) {
     (void)device_idx;
+    next_sample_has_previous = 0;
     pp1_before_valid = 0;
     int fd = open_msr(0);
     if (fd < 0) return -1;
@@ -181,7 +184,17 @@ static double intel_gpu_get_energy(int device_idx) {
         return METRIC_NOT_SUPPORTED;
     }
 
-    return (double)(uint32_t)(pp1_after - pp1_before) * energy_units;
+    return (double)energy_counter_delta32(pp1_after, pp1_before) * energy_units;
+}
+
+int energy_backend_sample_next(int device_idx) {
+    if (next_sample_has_previous) {
+        pp1_before = pp1_after;
+        pp1_before_valid = pp1_after_valid;
+    }
+    int result = intel_gpu_sample_stop(device_idx);
+    next_sample_has_previous = result == 0;
+    return result;
 }
 
 static float intel_gpu_get_temperature(int device_idx) {

@@ -11,6 +11,7 @@ static unsigned long long energy_after_mj = 0;
 static int energy_before_valid = 0;
 static int energy_after_valid = 0;
 static int nvml_initialized = 0;
+static int next_sample_has_previous = 0;
 
 static int nvidia_detect(void) {
     if (nvmlInit() != NVML_SUCCESS) return 0;
@@ -37,6 +38,7 @@ static int nvidia_init(int device_idx) {
 
 static int nvidia_sample_start(int device_idx) {
     (void)device_idx;
+    next_sample_has_previous = 0;
     if (!nvml_initialized) return -1;
     energy_before_valid = 0;
     if (nvmlDeviceGetTotalEnergyConsumption(nvml_device, &energy_before_mj) != NVML_SUCCESS) {
@@ -55,6 +57,16 @@ static int nvidia_sample_stop(int device_idx) {
     }
     energy_after_valid = 1;
     return 0;
+}
+
+int energy_backend_sample_next(int device_idx) {
+    if (next_sample_has_previous) {
+        energy_before_mj = energy_after_mj;
+        energy_before_valid = energy_after_valid;
+    }
+    int result = nvidia_sample_stop(device_idx);
+    next_sample_has_previous = result == 0;
+    return result;
 }
 
 static double nvidia_get_energy(int device_idx) {

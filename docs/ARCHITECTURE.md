@@ -85,6 +85,13 @@ Defined in `src/include/energy-backend.h`. Two vtable-style structs, `CpuBackend
 | `calibrate_powercap(...)` | optional | Powercap curve exploration |
 | `diagnose()` | optional | Short hint on why `detect()` failed |
 
+Plugins can also export the optional `energy_backend_sample_next(int id)` symbol.
+After `sample_start`, each call closes the current window, exposes its metric
+values through `get_metric`, and uses that stop snapshot as the next baseline.
+This avoids gaps between successive overtime energy windows without changing the
+backend descriptor ABI. Legacy plugins still work, but the core warns that their
+separate stop/start windows omit energy between windows.
+
 ### 3.2 GPU interface
 
 | Callback | Required |
@@ -217,8 +224,9 @@ separate VRAM through the current backend.
 
 ### 6.6 Dynamic CSV schema
 
-The standard CSV starts with `Language,Program,Powercap,Time_ms,CPU_Memory_KB`; the
-over-time CSV starts with `Language,Program,Powercap,Timestamp_ms`. These common
+The standard CSV starts with `Language,Program,Powercap,Time_ms,CPU_Memory_KB`;
+over-time uses `Timestamp_ms` instead, the monotonic elapsed time at the start
+of each sample's backend readings. These common
 metadata fields are followed by columns declared by the selected plugins, in
 CPU-then-GPU order. A metric column is named
 `<category>.<metric-name>_<unit>`, for example `cpu.Package_J` or
@@ -228,10 +236,15 @@ the current runtime schema, and the measurement wrapper uses that header when
 aggregating output from multiple workloads.
 
 ### 6.7 Over-time sampling
-`--overtime` mode records accumulated window metrics per sampling tick, which
-provides time-resolved profiles and mitigates the multiple-wrap limitation of a
-single start/stop window. Gauge and process-scoped metrics are recorded at each
-tick. Standard-mode metric behavior is declared by each backend: window metrics
+`--overtime` records each window metric's delta since the previous backend
+snapshot, rather than accumulated energy. The parent samples all metrics
+sequentially without sampler threads, using a configurable pause (`-interval-us`,
+default 1000 microseconds); a final partial window is sampled on workload
+completion. Samples are buffered and dumped after completion. Times vary with
+metric overhead and scheduling; the interval does not synchronize polling with
+hardware updates. Intel counter
+deltas handle one 32-bit wrap between readings, but cannot detect multiple wraps.
+Gauge and process-scoped metrics are recorded at each tick. Standard-mode metric behavior is declared by each backend: window metrics
 use start/stop samples, gauges are read after the workload, and peak metrics are
 polled during execution.
 

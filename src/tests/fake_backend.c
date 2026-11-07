@@ -6,6 +6,9 @@
 static int fake_detect(void) { return FAKE_DETECT; }
 static int fake_init(int id) { (void)id; return 0; }
 static int fake_sample(int id) { (void)id; return 0; }
+#ifndef FAKE_NO_NEXT
+int energy_backend_sample_next(int id) { return fake_sample(id); }
+#endif
 static double fake_metric(size_t metric_index, int id, pid_t process_id) {
     (void)id;
     if (metric_index == 0) return 1.0;
