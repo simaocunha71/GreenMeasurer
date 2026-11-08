@@ -390,6 +390,7 @@ static int configured_standard_run(int argc, char **argv) {
     const char *output = "measurements.csv";
     int repetitions = 1, timeout = 3600, variance = 0, sleep_time = 5, powercap = -1;
     int status = 1, cap_applied = 0, fd = -1, temporary_created = 0;
+    int (*commit_powercap)(void) = NULL;
     char *temporary = NULL;
     FILE *stream = NULL;
     ConfiguredStandardBackends backends = {0};
@@ -464,7 +465,9 @@ static int configured_standard_run(int argc, char **argv) {
     float baseline = getInitialTemperature(calib_file);
     if (baseline <= 0.0f) baseline = get_current_cpu_temp(0);
     if (powercap > 0) {
-        if (!active_cpu_backend || !active_cpu_backend->set_powercap) {
+        commit_powercap = get_powercap_commit();
+        if (!active_cpu_backend || !active_cpu_backend->set_powercap ||
+            !active_cpu_backend->destroy_powercap || !commit_powercap) {
             fprintf(stderr, "[ERROR] Active CPU backend does not support powercapping.\n");
             goto cleanup;
         }
@@ -491,10 +494,11 @@ static int configured_standard_run(int argc, char **argv) {
     }
     energy_backend_write_csv_header(stream, 0);
     for (int repetition = 0; repetition < repetitions; repetition++) {
-        float temperature = get_current_cpu_temp(0);
+        float temperature;
+        if (require_cpu_temperature(&temperature) != 0) goto cleanup;
         while (temperature > baseline + variance && !global_terminate) {
             sleep(1);
-            temperature = get_current_cpu_temp(0);
+            if (require_cpu_temperature(&temperature) != 0) goto cleanup;
         }
         if (global_terminate) {
             fprintf(stderr, "[ERROR] Standard measurement interrupted.\n");
@@ -560,16 +564,16 @@ static int configured_standard_run(int argc, char **argv) {
         goto cleanup;
     }
     stream = NULL;
-    if (cap_applied) {
-        cap_applied = 0;
-        if (active_cpu_backend->destroy_powercap() != 0) {
-            fprintf(stderr, "[ERROR] Failed to destroy powercap context.\n");
-            goto cleanup;
-        }
-    }
     if (rename(temporary, output) != 0) {
         perror("[ERROR] Failed to publish standard CSV");
         goto cleanup;
+    }
+    if (cap_applied) {
+        if (commit_powercap() != 0) {
+            fprintf(stderr, "[ERROR] Failed to retain powercap.\n");
+            goto cleanup;
+        }
+        cap_applied = 0;
     }
     printf("[INFO] Execution Details: Standard session finished -> %s\n", output);
     status = 0;

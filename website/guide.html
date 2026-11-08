@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Install and run GreenMeasurer with TOML configurations.">
+  <title>Measurement guide — GreenMeasurer</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar"><div class="topbar-inner">
+  <a class="brand" href="index.html"><img src="favicon.svg" alt="" width="30" height="30">GreenMeasurer</a>
+  <nav aria-label="Main navigation"><a href="index.html">Overview</a><a aria-current="page" href="guide.html">Guide</a><a href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a href="reference.html">Backend API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
+</div></header>
+<main id="main" class="wrap">
+  <header class="doc-header"><p class="eyebrow">01 / Run</p><h1>Measurement guide</h1><p class="lead">Build the project, configure a workload and choose how to collect its data.</p><p class="table-hint">Tables scroll horizontally on small screens.</p></header>
+  <div class="doc-layout">
+    <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#install">Install</a><a href="#first-run">First run</a><a href="#modes">Measurement modes</a><a href="#temperature">Temperature</a><a href="#powercap">Powercap</a><a href="#configuration">TOML fields</a><a href="#troubleshooting">Troubleshooting</a></nav>
+    <div class="doc-content">
+      <section id="install"><p class="eyebrow">Getting started</p><h2>Install &amp; build</h2>
+        <p>GreenMeasurer currently targets Linux. You need a C compiler, Make and Python 3.11 or Python with <code>tomli</code>. Hardware backends have optional dependencies: Intel CPU uses powercap and raplcap; NVIDIA uses NVML. Read <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/scripts/install.sh">scripts/install.sh</a> before using it to install dependencies.</p>
+        <pre><code>git clone https://github.com/simaocunha71/GreenMeasurer.git
+cd GreenMeasurer
+make -C src VERBOSE=1
+./src/main --list-metrics</code></pre>
+        <p>The verbose build explains which optional backends were skipped. Intel RAPL MSR access may require loading the <code>msr</code> kernel module and elevated permissions. A built backend is not a guarantee that its hardware or every metric is available.</p>
+      </section>
+      <section id="first-run"><h2>Make your first measurement</h2>
+        <p>Edit <code>configuration.toml</code> in the repository root. Replace the placeholder command with your program:</p>
+        <pre><code>[measurement]
+mode = "standard"
+command = "sleep 1"
+language = "Shell"
+program = "my-program"
+output = "measurements.csv"
+repetitions = 3
+sleep_seconds = 0
+powercap = -1
+
+[metrics]
+select = ["system.cores", "cpu.Package"]</code></pre>
+        <p>Generate into a directory that does not already exist, then run the executable separately from the repository root:</p>
+        <pre><code>./src/main --directory my-build
+./my-build/greenmeasurer</code></pre>
+        <p>Use <code>./src/main --config path/to/file.toml --directory my-build</code> for a different file. Generation compiles but does not execute the workload. The executable embeds the configuration: after editing the TOML, generate again in a new directory. A successful measurement replaces its configured CSV.</p>
+        <p>For a complete example of using GreenMeasurer, follow the <a href="fibonacci.html">usage walkthrough</a> from a sample program through standard and overtime CSVs. Ready-made test configurations are in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/configurations">configurations/</a>; run their executables from the repository root so shared relative paths resolve as intended.</p>
+      </section>
+      <section id="modes"><h2>Choose a mode</h2>
+        <div class="table-wrap"><table><thead><tr><th>Mode</th><th>What it does</th><th>Result</th></tr></thead><tbody>
+          <tr><td><code>standard</code></td><td>Runs the command for the configured repetitions.</td><td>One row per measured execution.</td></tr>
+          <tr><td><code>overtime</code></td><td>Runs once and samples sequentially while it executes.</td><td>One row per sampling window.</td></tr>
+          <tr><td><code>temperature-calibration</code></td><td>Waits for a settling period and reads CPU temperature.</td><td>A baseline text file.</td></tr>
+          <tr><td><code>powercap-calibration</code></td><td>Measures an existing-limit baseline and a range of power limits.</td><td>A CSV and, when available, a summary.</td></tr>
+        </tbody></table></div>
+        <p>For overtime, set <code>interval_us</code> to the pause between sampling cycles. Reads and scheduling add time, so it is not a guaranteed period. Window energy is reported per interval, not as instantaneous power. Sampling has a finite capacity of 262,144 rows.</p>
+      </section>
+      <section id="temperature"><h2>Temperature baseline</h2>
+        <p>All measurement and calibration modes require a readable CPU temperature from the selected CPU backend. An unavailable or invalid reading stops execution before the workload. If the baseline file is missing, a measurement creates it after the configured settling time.</p>
+        <pre><code>[measurement]
+mode = "temperature-calibration"
+sleep_seconds = 10
+calibration_file = "temperature.txt"</code></pre>
+        <p>In measurements, <code>variance</code> controls how far above the baseline the CPU can be before a run starts. Relative output and baseline paths resolve from the working directory where the executable runs.</p>
+      </section>
+      <section id="powercap"><h2>Powercap &amp; calibration</h2>
+        <aside class="notice warning"><strong>Hardware state</strong><p>Powercap controls can change real package limits. The desired cleanup behaviour has not been confirmed on hardware: a calibration previously left a 2 W limit visible. Do not assume limits are removed; inspect RAPL state before and after a run.</p></aside>
+        <p><code>powercap = -1</code> leaves existing limits unchanged. A calibration baseline labelled <code>-1</code> therefore uses the limits already in force; it is not necessarily uncapped. The Intel calibration code attempts to restore the prior limits after each sweep point. Firmware or other controls may impose additional limits.</p>
+        <p>The current Intel backend does not expose the optional commit callback required by the configured standard and overtime paths for a positive powercap. Those runs report an unsupported-powercapping error rather than applying the requested cap. Calibration uses a separate backend callback. Confirm your checkout before relying on powercap behaviour.</p>
+        <pre><code>for file in /sys/class/powercap/intel-rapl:0/{enabled,constraint_0_power_limit_uw,constraint_1_power_limit_uw}; do
+    echo "$file: $(cat "$file")"
+done</code></pre>
+        <p>This reads package 0 only; a multi-package host may expose additional zones. Values are in microwatts. Only use power limits supported by your hardware and account for permissions and external power-management software.</p>
+      </section>
+      <section id="configuration"><h2>TOML fields</h2>
+        <div class="table-wrap"><table><thead><tr><th>Field</th><th>Purpose</th></tr></thead><tbody>
+          <tr><td><code>mode</code></td><td>One of the four modes above.</td></tr>
+          <tr><td><code>command</code></td><td>Foreground workload command; required for measurements and powercap calibration.</td></tr>
+          <tr><td><code>language</code>, <code>program</code></td><td>Labels written to CSV, not language selectors.</td></tr>
+          <tr><td><code>output</code>, <code>calibration_file</code></td><td>CSV and temperature baseline paths.</td></tr>
+          <tr><td><code>repetitions</code>, <code>timeout_hours</code></td><td>Standard runs and powercap calibration.</td></tr>
+          <tr><td><code>interval_us</code></td><td>Overtime sampling pause in microseconds.</td></tr>
+          <tr><td><code>variance</code>, <code>sleep_seconds</code></td><td>Temperature threshold and calibration settling time.</td></tr>
+          <tr><td><code>powercap</code></td><td>Standard/overtime limit in watts, or <code>-1</code> to leave existing limits unchanged.</td></tr>
+          <tr><td><code>powercap_min</code>, <code>powercap_max</code></td><td>Inclusive watt range for powercap calibration.</td></tr>
+          <tr><td><code>compile_command</code></td><td>Optional build command before powercap calibration.</td></tr>
+          <tr><td><code>[metrics] select</code></td><td>List of metric names or <code>"all"</code>; not used for calibration modes.</td></tr>
+        </tbody></table></div>
+        <p>Use <code>python3 scripts/validate_config.py path/to/config.toml</code> to validate without running a workload. Source and adapter paths are relative to the TOML; output paths are relative to the execution working directory. See the <a href="https://github.com/simaocunha71/GreenMeasurer#adding-a-new-architecture--driver">repository README</a> for external metric configuration.</p>
+      </section>
+      <section id="troubleshooting"><h2>When a metric is missing</h2>
+        <p>Run <code>./src/main --list-metrics</code> to inspect compiled plugins. To see runtime detection details, run a generated executable with <code>GREENMEASURER_VERBOSE_BACKENDS=1</code>. Check backend build dependencies, hardware support and permissions.</p>
+        <p>Metrics unavailable at preflight are skipped with a warning; readings that fail later are recorded as <code>NOT_SUPPORTED</code>. CPU package energy includes other activity in the same hardware domain. It is not process-exclusive, and overlapping domains should not be added together.</p>
+        <div class="page-links"><a href="metrics.html">Metric catalogue →</a><a href="reference.html">Backend API →</a></div>
+      </section>
+    </div>
+  </div>
+</main>
+<footer><div class="wrap">
+  <div class="footer-inner"><span>GreenMeasurer <span class="muted">/ measurement guide</span></span><a href="https://github.com/simaocunha71/GreenMeasurer">Source on GitHub ↗</a></div>
+  <div class="footer-notes"><p><strong>Submission</strong> Submitted to the 11th International Workshop on Green and Sustainable Software (GREENS’27).</p><p><strong>Acknowledgements</strong> This work is funded by national funds through FCT - Fundação para a Ciência e a Tecnologia, I.P., under the support <a href="https://doi.org/10.54499/UID/50014/2025">UID/50014/2025</a>. Simão Cunha is also funded by FCT grant <a href="https://doi.org/10.54499/2025.04596.BDANA">2025.04596.BDANA</a>.</p></div>
+</div></footer>
+</body>
+</html>

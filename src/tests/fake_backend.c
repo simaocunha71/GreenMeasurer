@@ -56,7 +56,18 @@ static double fake_metric(size_t metric_index, int id, pid_t process_id) {
 #endif
     }
 #else
-    if (metric_index == 1) return 42.0;
+    if (metric_index == 1) {
+#ifdef FAKE_TEMPERATURE_UNAVAILABLE
+        return METRIC_NOT_SUPPORTED;
+#elif defined(FAKE_TEMPERATURE_NAN)
+        return NAN;
+#elif defined(FAKE_TEMPERATURE_FAIL_AFTER_ONE)
+        static int temperature_reads;
+        return temperature_reads++ == 0 ? 42.0 : METRIC_NOT_SUPPORTED;
+#else
+        return 42.0;
+#endif
+    }
     if (metric_index == 2) return 8.5;
 #ifdef FAKE_DEVICE_PEAK
     if (metric_index == 3) {
@@ -69,6 +80,8 @@ static double fake_metric(size_t metric_index, int id, pid_t process_id) {
 }
 static const char *fake_diagnose(void) { return "fake backend is disabled"; }
 #if defined(FAKE_POWER_CAP_FAILURE) || defined(FAKE_POWER_CAP_SUCCESS)
+int energy_backend_commit_powercap(void) { return 0; }
+static int fake_destroy_powercap(void) { return 0; }
 static int fake_set_powercap(int watts) {
     (void)watts;
 #ifdef FAKE_POWER_CAP_FAILURE
@@ -151,6 +164,7 @@ static CpuBackend backend = {
     .get_metric = fake_metric,
 #if defined(FAKE_POWER_CAP_FAILURE) || defined(FAKE_POWER_CAP_SUCCESS)
     .set_powercap = fake_set_powercap,
+    .destroy_powercap = fake_destroy_powercap,
     .calibrate_powercap = fake_calibrate_powercap,
 #endif
     .diagnose = fake_diagnose

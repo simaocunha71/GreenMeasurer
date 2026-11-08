@@ -186,9 +186,9 @@ Temperature availability depends on the sensors exposed by the kernel and the in
 
 ### C. Makefile Integration
 
-The `src/Makefile` discovers backend directories below `platform/linux/{cpu,gpu}` and builds an available implementation as a shared object named `backend.so`. Each directory may provide a `backend.mk` with the source file, availability condition, include flags and link dependencies. The main executable is linked with dynamic loading support.
+The `src/Makefile` discovers backend directories below `platform/linux/{cpu,gpu}` and builds an available implementation as a shared object named `backend.so`. Backend-specific availability checks, include flags and link dependencies are configured in that Makefile. The main executable is linked with dynamic loading support.
 
-This two-level build arrangement separates optional backend dependencies from the core. The Intel CPU plugin is built only when the powercap/raplcap headers and libraries are present; the NVIDIA plugin is built only when its NVML header and library are present. If a dependency is missing, the build reports the reason and continues with the core and other eligible plugins. Some dependencies may need to be linked into the host executable rather than into a plugin, which is the purpose of the `BACKEND_HOST_LDLIBS_*` variables.
+The build separates optional backend dependencies from the core. The Intel CPU plugin is built only when the powercap/raplcap headers and libraries are present; the NVIDIA plugin is built only when its NVML header and library are present. If a dependency is missing, verbose build output reports the reason and the build continues with the core and other eligible plugins. Some dependencies may need to be linked into the host executable rather than into a plugin, which is the purpose of the `BACKEND_HOST_LDLIBS_*` variables.
 
 Workload directories provide the build and execution conventions used by the experiment scripts. A typical run is initiated with `scripts/measure.sh`, which builds the framework and target workload, then invokes `src/main`. For isolated smoke testing, `scripts/merda.sh` runs the main executable directly in its supported modes and places generated outputs in a temporary directory.
 
@@ -198,7 +198,7 @@ To add a backend, a contributor creates a directory under the appropriate CPU or
 
 GreenMeasurer provides two calibration workflows.
 
-**Temperature calibration (`--temperature-calibration`).** The framework waits for an idle period, reads available CPU temperatures and writes a baseline file (default: `/tmp/cores_temperatures.txt`). Standard and over-time modes use this baseline and the configured variance threshold to avoid running under temperatures that are too far above the reference. This calibration controls one source of experimental variation; it does not eliminate all system noise.
+**Temperature calibration (`--temperature-calibration`).** The framework waits for an idle period, reads available CPU temperatures and writes a baseline file (default: `/tmp/cores_temperatures.txt`). Standard and over-time modes use this baseline and the configured variance threshold to avoid running under temperatures that are too far above the reference. All measurement and calibration modes require a readable CPU temperature before starting the workload. This calibration controls one source of experimental variation; it does not eliminate all system noise.
 
 ```sh
 sudo ./src/main --temperature-calibration \
@@ -206,7 +206,7 @@ sudo ./src/main --temperature-calibration \
   -calib-file /tmp/cores_temperatures.txt
 ```
 
-**Power-cap calibration (`--powercap-calibration`).** The CPU backend sweeps the requested power range and records the configured limits in a CSV. It invokes the repository's post-processing utility when available. Power capping is optional and currently available only on Intel CPUs. The executable validates this at run time: if the selected CPU backend has no power-cap callbacks (for example AMD, or no active CPU backend), calibration and capped runs abort with an error instead of running uncapped. Power capping has been used in previous studies [cite]. Destroying the RAPL context does not restore previously configured package limits.
+**Power-cap calibration (`--powercap-calibration`).** The CPU backend sweeps the requested power range and records the configured limits in a CSV. It invokes the repository's post-processing utility when available. Power capping is optional and currently available only on Intel CPUs. The executable validates this at run time: if the selected CPU backend has no power-cap callbacks, calibration and capped runs abort with an error instead of running uncapped. A successful capped measurement leaves its cap active; a successful calibration disables the RAPL package zones, including previously enabled limits. Failures attempt to restore the prior state. Firmware limits may still apply.
 
 ```sh
 sudo ./src/main --powercap-calibration \
@@ -384,10 +384,10 @@ All modes accept `-command` (alias `-run_cmd`) with the command to run through `
 | `-language` | text | standard, over-time, power-cap calibration | Label written to the `Language` column; does not change how the command runs (default `C` in standard mode) |
 | `-program` | text | same | Label written to the `Program` column (default `Target` in standard mode) |
 | `-n_times` | count | standard (default 1), power-cap calibration (default 3) | Number of measured runs (per power limit in calibration) |
-| `-variance` | °C | all measurement modes | Maximum temperature above the calibrated baseline at which a run may start; otherwise the tool waits, checking each second (defaults: 0 standard, 5 over-time and calibration). Skipped when no CPU temperature is available |
+| `-variance` | °C | all measurement modes | Maximum temperature above the calibrated baseline at which a run may start; otherwise the tool waits, checking each second (defaults: 0 standard, 5 over-time and calibration). A readable CPU temperature is required |
 | `-time_out_limit` | hours | standard, power-cap calibration | Time limit for the initial check run; on expiry a `TimeOut` row is recorded (default 1) |
 | `-interval-us` | µs | over-time | Pause between sampling cycles (default 1000) |
-| `-powercap` | W, or `-1` | standard, over-time | Package power limit (Intel only); `-1` means no cap (default); otherwise at least 1 |
+| `-powercap` | W, or `-1` | standard, over-time | Package power limit (Intel only); `-1` leaves existing limits unchanged (default); otherwise at least 1 |
 | `-sleep_time`, `-sleep-secs` | s | all | Idle time used to settle the machine when a temperature baseline has to be created (default 5; default 10 as `-secs_to_sleep` in power-cap calibration) |
 | `-calib-file` | path | all | Baseline-temperature file (default `/tmp/cores_temperatures.txt`); created by a calibration if missing |
 | `-output`, `-measurements-file` | path | all | Output CSV (defaults `measurements.csv`, `measurements_ot.csv`, `powercap_calibration.csv`) |

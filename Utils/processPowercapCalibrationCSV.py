@@ -1,4 +1,5 @@
 import pandas as pd
+import math
 import sys
 from typing import Any, Literal
 
@@ -77,8 +78,7 @@ def process_csv(filename):
         if column == 'Package' or column.startswith('cpu.Package_')
     ]
     if not package_columns:
-        print("Error: CSV does not contain a CPU Package energy metric.")
-        return
+        raise ValueError("CSV does not contain a CPU Package energy metric.")
     package_column = package_columns[0]
     results = {}
     grouped = data.groupby('Powercap')
@@ -88,9 +88,11 @@ def process_csv(filename):
     print(f"{'=' * 115}\n")
 
     for powercap, group in grouped:
-        if len(group) <= 2:
-            continue
-
+        group = group.copy()
+        for column in (package_column, 'Time_ms'):
+            group[column] = pd.to_numeric(group[column], errors='coerce')
+            if not group[column].map(lambda value: math.isfinite(value) and value > 0).all():
+                raise ValueError(f"Powercap {powercap}: {column} must contain finite positive measurements.")
         filtered_group = remove_package_outliers_iqr(group, package_column)
         average_package = filtered_group[package_column].mean()
         average_time = filtered_group['Time_ms'].mean()
@@ -152,7 +154,8 @@ def process_csv(filename):
     if results:
         lowest_powercap = min(results, key=lambda k: results[k]['Package'])
         lowest_value    = results[lowest_powercap]['Package']
-        print(f"{'Optimal Energy Powercap (Lowest Package):':<45} {lowest_powercap} W (Average: {lowest_value:.2f} J)")
+        label = "baseline (existing system limits)" if lowest_powercap == -1 else f"{lowest_powercap} W"
+        print(f"{'Optimal Energy Powercap (Lowest Package):':<45} {label} (Average: {lowest_value:.2f} J)")
     print(f"{'=' * sum(col_widths)}\n")
 
 def main():

@@ -5,10 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from temperature_fixture import install_temperature_backend
+
 
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = ROOT / "src" / "tests" / "legacy-engine"
-EXAMPLES = ROOT / "examples"
+EXAMPLES = ROOT / "src" / "tests" / "fixtures"
 
 
 class ExamplesTest(unittest.TestCase):
@@ -24,6 +26,7 @@ class ExamplesTest(unittest.TestCase):
         self.directory = Path(self.temporary.name)
         self.backend_root = self.directory / "backends"
         self.backend_root.mkdir()
+        install_temperature_backend(self.backend_root)
         self.environment = os.environ.copy()
         self.environment["GREENMEASURER_BACKEND_DIR"] = str(self.backend_root)
         self.calibration = self.directory / "calibration.txt"

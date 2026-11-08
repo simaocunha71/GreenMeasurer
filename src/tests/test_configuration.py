@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from temperature_fixture import install_temperature_backend
+
 
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = ROOT / "scripts" / "validate_config.py"
@@ -54,6 +56,7 @@ class ConfigurationTest(unittest.TestCase):
         environment = os.environ.copy()
         backends = self.directory / "backends"
         backends.mkdir(exist_ok=True)
+        install_temperature_backend(backends)
         environment["GREENMEASURER_BACKEND_DIR"] = str(backends)
         if env:
             environment.update(env)
@@ -79,7 +82,6 @@ class ConfigurationTest(unittest.TestCase):
             path, '["system.running_processes", "external.demo.Negative", "external.demo.Sequence"]'
         ))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("No CPU energy backend active", result.stderr)
         self.assertIn("No GPU energy backend active", result.stderr)
         with (self.directory / "out.csv").open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
@@ -164,7 +166,7 @@ class ConfigurationTest(unittest.TestCase):
         plugin.parent.mkdir(parents=True)
         subprocess.run(
             ["cc", "-fPIC", "-shared", "-I", str(ROOT / "src" / "include"),
-             str(ROOT / "examples" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c"),
+             str(ROOT / "src" / "tests" / "fixtures" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c"),
              "-o", str(plugin)], check=True, capture_output=True, text=True,
         )
         result = self.run_configured(
@@ -262,7 +264,6 @@ class ConfigurationTest(unittest.TestCase):
                 self.assertIn("library's .c and .h files", result.stderr)
                 self.assertIn("external.<adapter>.<metric>", result.stderr)
                 if selected == '["cpu.Package"]':
-                    self.assertIn("No CPU energy backend active", result.stderr)
                     self.assertIn("No GPU energy backend active", result.stderr)
                 self.assertFalse((self.directory / "out.csv").exists())
 
@@ -760,6 +761,7 @@ class ConfigurationTest(unittest.TestCase):
     def test_standard_timeout_aborts_without_output(self):
         backends = self.directory / "backends"
         backends.mkdir()
+        install_temperature_backend(backends)
         environment = os.environ.copy()
         environment["GREENMEASURER_BACKEND_DIR"] = str(backends)
         calibration = self.directory / "calibration.txt"
@@ -840,7 +842,7 @@ class ConfigurationTest(unittest.TestCase):
 
     def test_example_adapter_is_checked(self):
         path = self.directory / "example.so"
-        example = ROOT / "examples" / "custom_metric"
+        example = ROOT / "src" / "tests" / "fixtures" / "custom_metric"
         subprocess.run(
             ["cc", "-fPIC", "-shared", str(example / "adapter.c"),
              str(example / "processes.c"), "-o", str(path)],

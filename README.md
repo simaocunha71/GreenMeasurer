@@ -31,7 +31,10 @@ src/
 │       │       ├── intel.h             # Intel MSR addresses & model declarations
 │       │       └── sensors.c           # coretemp sensor driver & package temperature
 │       └── gpu/
-│           ├── intel/                  # Intel integrated GPU backend
+│           ├── intel/
+│           │   ├── intel.c             # Intel integrated GPU backend
+│           │   ├── intel.h             # Backend and sensor declarations
+│           │   └── sensors.c           # GPU hwmon temperature reader
 │           └── nvidia/                 # NVIDIA NVML backend
 ├── sensors/
 │   └── sensors.c                       # Shared runtime sensor dispatcher & calibration
@@ -103,14 +106,47 @@ the generated binary separately:
 
 ```bash
 make -C src
-./src/main --config examples/configurations/system-cores.toml --directory generated
+./src/main --directory generated
 ./generated/greenmeasurer
 ```
 
+By default the launcher uses the repository-root `configuration.toml`; edit it
+to choose the workload, mode and metrics. Use `--config path/to/file.toml`
+before `--directory` to select a different configuration.
 Alternatively invoke `python3 scripts/generate_config.py FILE --directory DIR`.
 The output directory must not already exist. The executable embeds the
 configuration, accepts no overrides, and does not reread the TOML. Rebuild it
 when the configuration changes. The old measurement CLI is no longer available.
+
+### Hardware test configurations
+
+The TOML files in [`configurations/`](configurations/) exercise temperature
+calibration, standard and overtime measurements with and without a requested
+2 W limit, and a 15–16 W powercap calibration. They use the same short CPU-bound
+Python workload and do not depend on the `Languages` directory. Run commands
+from the repository root so that the shared temperature baseline and CSV files
+are written there. For each configuration, generate into a new directory:
+
+```bash
+./src/main --config configurations/temperature.toml --directory generated-temperature-test
+./generated-temperature-test/greenmeasurer
+./src/main --config configurations/standard.toml --directory generated-standard-test
+sudo ./generated-standard-test/greenmeasurer
+```
+
+Replace the configuration and generated directory names to run the other files.
+The output CSV is overwritten on a successful run. Access to Intel RAPL MSRs and
+powercap controls may require elevated privileges.
+
+**Powercap tests change real hardware settings.** Check the host's supported
+limits and adjust `powercap`, `powercap_min` and `powercap_max` before running;
+2 W and 15–16 W are test values, not guaranteed to be supported or applied exactly.
+The current Intel backend does not export the commit callback required for
+positive caps in standard and overtime modes, so those runs are rejected.
+Calibration attempts to restore the previous limits after each sweep point;
+it does not disable the zones at the end. A `-1` measurement leaves existing
+limits unchanged. Check package settings before and after each run: cleanup
+has not been verified on hardware, and other limits may also apply.
 
 ### Over-time sampling
 The parent process samples the backends and system metrics sequentially while the
@@ -138,27 +174,43 @@ with `command`, `powercap_min`, `powercap_max` and optional `compile_command`,
 `sleep_seconds` and `calibration_file`. Calibration does not use a `[metrics]`
 table.
 
-The [website](website/index.html#fibonacci-example) provides a step-by-step C
-Fibonacci walkthrough with standard, overtime and calibration configurations
-and illustrative outputs.
+The [website](website/index.html) provides a configuration and execution guide.
 
 For example:
 
 ```bash
-python3 scripts/generate_config.py examples/configurations/temperature-calibration.toml --directory generated-temperature
+python3 scripts/generate_config.py src/tests/fixtures/configurations/temperature-calibration.toml --directory generated-temperature
 ./generated-temperature/greenmeasurer
-python3 scripts/generate_config.py examples/configurations/powercap-calibration.toml --directory generated-powercap
+python3 scripts/generate_config.py src/tests/fixtures/configurations/powercap-calibration.toml --directory generated-powercap
 sudo ./generated-powercap/greenmeasurer
 ```
 
 Powercap calibration runs tests at each Watt step in the configured range. It
 requires a backend supporting calibration and appropriate hardware permissions.
-Temperature calibration requires an available CPU or GPU backend; when no CPU
-temperature is readable, it warns and uses a 40 °C fallback.
-Results are summarized if post-processing is available; without an uncapped
-baseline, baseline-relative GPS-UP metrics cannot be calculated.
+Every measurement and calibration requires a readable CPU temperature from the
+active CPU backend. If it is unavailable, the program reports an error and does
+not start the workload.
+The Intel backend first measures a baseline with `Powercap = -1`, then measures
+each configured limit. Results are summarized if post-processing is available.
+The baseline uses existing system limits; `-1` does not disable or remove them.
+Check the actual system limits before interpreting it as an uncapped baseline.
 
-On Intel, each requested Watt value is applied to every detected package and die. Destroying the RAPL context does not restore the previous package limits; the configured limits may remain in effect after a measurement or calibration run. The standard and overtime `powercap` field accepts only `-1` (do not set a GreenMeasurer cap) or a positive Watt value.
+On Intel, each requested Watt value in the calibration is applied to every
+detected package and die. The backend attempts to restore saved limits and zone
+state after each step, rather than disabling the zones at the end. Restoration
+errors are reported and abrupt termination can leave modified limits in place.
+Cleanup has not been verified on hardware; inspect the actual state before and
+after a run. Firmware or other power limits can still apply.
+`powercap = -1` does not change existing limits; it does not disable them.
+The current Intel backend lacks the commit callback required to run standard or
+overtime measurements with a positive powercap.
+
+As in the original RAPL implementation, Intel powercapping
+sets the same wattage for the package's long- and short-term limits, leaves
+their time windows unchanged, and enables the zones after setting all limits.
+Unlike the artifact, the current backend checks each package's die count,
+aborts on write errors and attempts to restore the prior limits and zone state
+after a failed measurement.
 
 In standard mode, `cpu.Package_J` is total package energy over the run, not average power. A lower power cap can extend `Time_ms` enough that total energy stays similar or increases; compare both metrics, or derive average package power as `cpu.Package_J / (Time_ms / 1000)`. Do not assume package energy must decrease monotonically with the cap.
 
@@ -244,12 +296,12 @@ reflects the selected metrics that are available at runtime.
 An experimental interface for additional, independent gauge metrics is defined
 in [`src/include/metric-adapter.h`](src/include/metric-adapter.h), with a
 loader in [`src/metrics/metric_adapter_loader.c`](src/metrics/metric_adapter_loader.c)
-and an example in [`examples/custom_metric/`](examples/custom_metric/). The
+and an example in [`src/tests/fixtures/custom_metric/`](src/tests/fixtures/custom_metric/). The
 adapter exports a versioned descriptor with names and units, optional
 initialization and cleanup, and a read callback that returns a status and writes
 a finite numeric value. For example, the provided adapter wraps a C library
 that reads the number of runnable Linux processes. Build it with
-`make -C examples/custom_metric`. Only load trusted adapters: loading a shared
+`make -C src/tests/fixtures/custom_metric`. Only load trusted adapters: loading a shared
 library executes native code within the GreenMeasurer process.
 
 Every metric needs an implementation that obtains its value. Backend metrics
@@ -260,13 +312,13 @@ does not create that function, and GreenMeasurer cannot verify that an adapter
 implemented the intended calculation.
 
 To add an external gauge from a trusted C library, use
-[`examples/custom_metric/adapter.c`](examples/custom_metric/adapter.c) as a
+[`src/tests/fixtures/custom_metric/adapter.c`](src/tests/fixtures/custom_metric/adapter.c) as a
 template: include the library's `.h`, add the metric name and unit to the
 adapter descriptor, and call the library function from `read` for that metric's
 index. Compile the adapter together with the library's `.c` file into a shared
-library, as shown by [`examples/custom_metric/Makefile`](examples/custom_metric/Makefile).
+library, as shown by [`src/tests/fixtures/custom_metric/Makefile`](src/tests/fixtures/custom_metric/Makefile).
 Then declare its path under `[[adapters]]` and select
-`external.<adapter>.<metric>` in TOML. `make -C examples/custom_metric` builds a
+`external.<adapter>.<metric>` in TOML. `make -C src/tests/fixtures/custom_metric` builds a
 working example. Adapters currently support gauges only; CPU/GPU metrics needing
 hardware-specific window or process semantics require a backend instead.
 
@@ -276,7 +328,7 @@ read failed and suggests checking hardware, permissions and the implementation:
 failure alone does not establish that the metric or its function is missing.
 
 A TOML configuration can be validated with
-`python3 scripts/validate_config.py examples/configuration.toml`; Python 3.11+
+`python3 scripts/validate_config.py src/tests/fixtures/configuration.toml`; Python 3.11+
 or the `tomli` package is required. The validator checks syntax and structure,
 not hardware availability, and does not execute measurements. This particular
 file selects CPU metrics whose availability depends on the selected backend
@@ -310,7 +362,7 @@ select = ["external.processes.RunningProcesses"]
 
 [[adapters]]
 name = "processes"
-path = "examples/custom_metric/adapter.so"
+path = "src/tests/fixtures/custom_metric/adapter.so"
 ```
 
 Adapter paths are resolved relative to the configuration file and must already
@@ -321,8 +373,8 @@ loading the adapters:
 
 ```bash
 make -C src metric-adapter-check
-make -C examples/custom_metric
-python3 scripts/validate_config.py --check-adapters examples/custom_metric/configuration.toml
+make -C src/tests/fixtures/custom_metric
+python3 scripts/validate_config.py --check-adapters src/tests/fixtures/custom_metric/configuration.toml
 ```
 
 Replace the example path with your own configuration when testing another
@@ -345,7 +397,7 @@ The generator can also build one shared adapter per selected external function
 directly from C sources. For example:
 
 ```bash
-python3 scripts/generate_config.py examples/configurations/external-source.toml \
+python3 scripts/generate_config.py src/tests/fixtures/configurations/external-source.toml \
   --directory generated-external
 ./generated-external/greenmeasurer
 ```
@@ -390,8 +442,8 @@ from an average or peak without bias.
 The generator builds a separate executable:
 
 ```bash
-make -C examples/custom_metric
-python3 scripts/generate_config.py examples/configurations/system-and-external.toml \
+make -C src/tests/fixtures/custom_metric
+python3 scripts/generate_config.py src/tests/fixtures/configurations/system-and-external.toml \
   --directory generated-measurement
 ./generated-measurement/greenmeasurer
 ```
@@ -415,40 +467,41 @@ adapter descriptors are discovered when the generated executable runs.
 Unavailable metrics are skipped as described above; runtime failures retain
 their columns with `NOT_SUPPORTED`. The resulting schema can differ between
 machines and executions. See
-[`all-metrics.toml`](examples/configurations/all-metrics.toml) for an example.
+[`all-metrics.toml`](src/tests/fixtures/configurations/all-metrics.toml) for an example.
 
-The [`examples/configurations/`](examples/configurations/) directory contains
+The [`src/tests/fixtures/configurations/`](src/tests/fixtures/configurations/) directory contains
 additional runnable configurations:
 
 | File | Selected metrics | Output |
 | --- | --- | --- |
-| [`all-metrics.toml`](examples/configurations/all-metrics.toml) | All available system and active backend metrics | `all-metrics.csv` |
-| [`system-cores.toml`](examples/configurations/system-cores.toml) | Online CPU core count | `system-cores.csv` |
-| [`system-processes.toml`](examples/configurations/system-processes.toml) | Workload memory and process count; system runnable processes | `system-processes.csv` |
-| [`external-processes.toml`](examples/configurations/external-processes.toml) | Custom runnable-process gauge | `external-processes.csv` |
-| [`system-and-external.toml`](examples/configurations/system-and-external.toml) | Core count, runnable processes and the custom gauge | `system-and-external.csv` |
-| [`toy-cpu-gpu.toml`](examples/configurations/toy-cpu-gpu.toml) | Simulated CPU and GPU energy, GPU power and core count | `toy-configured.csv` |
-| [`standard-system-and-external.toml`](examples/configurations/standard-system-and-external.toml) | Standard repetitions with core count and a custom gauge | `standard-system-and-external.csv` |
-| [`standard-toy-cpu-gpu.toml`](examples/configurations/standard-toy-cpu-gpu.toml) | Standard repetitions with simulated CPU/GPU energy and power | `standard-toy-cpu-gpu.csv` |
+| [`all-metrics.toml`](src/tests/fixtures/configurations/all-metrics.toml) | All available system and active backend metrics | `all-metrics.csv` |
+| [`system-cores.toml`](src/tests/fixtures/configurations/system-cores.toml) | Online CPU core count | `system-cores.csv` |
+| [`system-processes.toml`](src/tests/fixtures/configurations/system-processes.toml) | Workload memory and process count; system runnable processes | `system-processes.csv` |
+| [`external-processes.toml`](src/tests/fixtures/configurations/external-processes.toml) | Custom runnable-process gauge | `external-processes.csv` |
+| [`system-and-external.toml`](src/tests/fixtures/configurations/system-and-external.toml) | Core count, runnable processes and the custom gauge | `system-and-external.csv` |
+| [`toy-cpu-gpu.toml`](src/tests/fixtures/configurations/toy-cpu-gpu.toml) | Simulated CPU and GPU energy, GPU power and core count | `toy-configured.csv` |
+| [`standard-system-and-external.toml`](src/tests/fixtures/configurations/standard-system-and-external.toml) | Standard repetitions with core count and a custom gauge | `standard-system-and-external.csv` |
+| [`standard-toy-cpu-gpu.toml`](src/tests/fixtures/configurations/standard-toy-cpu-gpu.toml) | Standard repetitions with simulated CPU/GPU energy and power | `standard-toy-cpu-gpu.csv` |
 
 For example:
 
 ```bash
-./src/main --config examples/configurations/system-cores.toml --directory generated-cores
+./src/main --config src/tests/fixtures/configurations/system-cores.toml --directory generated-cores
 ./generated-cores/greenmeasurer
 ```
 
 All examples run `sleep 1`, use no power cap, and **overwrite** their named CSV
 in the current directory. Build the custom adapter as above before validating
 or running either external example. The first four use the actual hardware backend
-discovery but do not require a CPU or GPU energy backend. System process metrics
+discovery and require a CPU backend with a readable temperature, even when no CPU
+energy metric is selected; a GPU backend is optional. System process metrics
 depend on Linux `/proc`; access failures are reported. Workload memory and
 process metrics may be `NOT_SUPPORTED` in the final row after the process exits.
 
 Run the standard example after building the custom adapter:
 
 ```bash
-./src/main --config examples/configurations/standard-system-and-external.toml --directory generated-standard
+./src/main --config src/tests/fixtures/configurations/standard-system-and-external.toml --directory generated-standard
 ./generated-standard/greenmeasurer
 ```
 
@@ -473,8 +526,8 @@ from each measured repetition, rather than a separate execution.
 
 The example runs `sleep 1` and overwrites `custom_metric_overtime.csv` in the
 current directory. Its CSV contains only metadata, selected system metrics and
-the selected external gauge. Missing CPU and GPU backends are each reported,
-but do not prevent measurements of system and external metrics.
+the selected external gauge. A GPU backend is optional; a CPU backend providing
+a readable temperature is required even for system and external metrics.
 
 The workload command is required and runs through the shell, as in the existing
 overtime mode. Use only trusted commands and adapters: adapters execute native
@@ -508,8 +561,8 @@ directory; adapter paths are relative to the configuration file.
 
 ### CPU and GPU backend examples
 
-The [`toy_cpu.c`](examples/toy_backends/cpu/toy_cpu/toy_cpu.c) and
-[`toy_gpu.c`](examples/toy_backends/gpu/toy_gpu/toy_gpu.c) sources are complete,
+The [`toy_cpu.c`](src/tests/fixtures/toy_backends/cpu/toy_cpu/toy_cpu.c) and
+[`toy_gpu.c`](src/tests/fixtures/toy_backends/gpu/toy_gpu/toy_gpu.c) sources are complete,
 buildable CPU and GPU backend examples. They deliberately simulate energy:
 CPU energy is elapsed time times 10 W, GPU energy is elapsed time times 5 W,
 and their reported GPU memory is process RSS, not VRAM. **None of these energy
@@ -519,9 +572,9 @@ and are not loaded unless the backend directory is explicitly overridden:
 
 ```bash
 make -C src
-make -C examples/toy_backends
-./src/main --config examples/configurations/toy-cpu-gpu.toml --directory generated-toy
-GREENMEASURER_BACKEND_DIR="$PWD/examples/toy_backends/build" ./generated-toy/greenmeasurer
+make -C src/tests/fixtures/toy_backends
+./src/main --config src/tests/fixtures/configurations/toy-cpu-gpu.toml --directory generated-toy
+GREENMEASURER_BACKEND_DIR="$PWD/src/tests/fixtures/toy_backends/build" ./generated-toy/greenmeasurer
 ```
 
 This command uses only the simulated backends, not the machine's real CPU/GPU
@@ -529,23 +582,27 @@ backends, and overwrites `toy-configured.csv`.
 For the configured standard mode, run:
 
 ```bash
-./src/main --config examples/configurations/standard-toy-cpu-gpu.toml --directory generated-toy-standard
-GREENMEASURER_BACKEND_DIR="$PWD/examples/toy_backends/build" \
+./src/main --config src/tests/fixtures/configurations/standard-toy-cpu-gpu.toml --directory generated-toy-standard
+GREENMEASURER_BACKEND_DIR="$PWD/src/tests/fixtures/toy_backends/build" \
   ./generated-toy-standard/greenmeasurer
 ```
 
 This overwrites `standard-toy-cpu-gpu.csv` and also uses simulated values.
 
-To add support for real hardware, copy the CPU or GPU source into a new
+To add support for real hardware, copy the corresponding `.c` and `.h` from
+[`src/backend_templates/`](src/backend_templates/) into a new
 `src/platform/linux/cpu/<vendor>/` or `src/platform/linux/gpu/<vendor>/`
-directory, replace the simulated code and metric names, implement detection
+directory, implement the listed callbacks and edit its `backend_metric_definitions` list,
+implement detection
 that returns 1 **only** for supported hardware, and build with `make -C src`.
-The default build discovers a single `.c` source in that directory; use the
-`backend.mk` mechanism below when additional flags or dependencies are needed.
+The default build discovers a single `.c` source in that directory. Configure
+additional flags or dependencies in `src/Makefile` when required.
 Before using a new backend for real measurements, implement and validate its
 hardware reads, units, errors, lifecycle and counter rollover handling. A
 backend must return `METRIC_NOT_SUPPORTED` when it cannot read a metric; do
 not substitute synthetic values for missing hardware measurements.
+Every CPU backend used for measurements must provide a readable temperature
+metric marked `ENERGY_METRIC_FLAG_CPU_TEMPERATURE`.
 
 `sample_start` opens an energy window and `sample_stop` closes it; a window
 metric must return its energy delta in joules. If implemented, the optional
@@ -578,26 +635,41 @@ Set `GREENMEASURER_BACKEND_DIR` to inspect another plugin tree.
 
 ### Adding a metric to a backend
 
-Implement a function with signature `double (int device, pid_t pid)` and add
-one entry to the backend's metric list, for example:
+Each backend keeps its metric definitions near the beginning of its source:
+[`intel_metric_definitions`](src/platform/linux/cpu/intel/intel.c),
+[`intel_gpu_metric_definitions`](src/platform/linux/gpu/intel/intel.c),
+and [`nvidia_metric_definitions`](src/platform/linux/gpu/nvidia/nvidia.c).
+Each entry describes one metric and its reading function. To add one, declare
+and implement a function with signature `double (int device, pid_t pid)`, then
+add an entry to the relevant array:
 
 ```c
-static double custom_read_load(int device, pid_t pid) {
-    (void)device;
-    (void)pid;
-    /* Replace with the real metric reading. */
-    return METRIC_NOT_SUPPORTED;
-}
-
-#define CUSTOM_METRICS(X) \
-    X("Load", "units", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, \
-      ENERGY_METRIC_FLAG_NONE, custom_read_load, "Device load", "Hardware API")
-ENERGY_DEFINE_METRICS(custom, CUSTOM_METRICS)
+{
+    .descriptor = {
+        .name = "Load",
+        .unit = "units",
+        .kind = ENERGY_METRIC_GAUGE,
+        .scope = ENERGY_METRIC_DEVICE,
+        .flags = ENERGY_METRIC_FLAG_NONE
+    },
+    .function = ENERGY_METRIC_FUNCTION(custom_read_load),
+    .info = {
+        .description = "Device load",
+        .origin = "Hardware API"
+    }
+},
 ```
 
-The macro generates the descriptor, function map, metadata and indexed
-`custom_get_metric` callback from the same list. Existing backends already call
-it once: add the new `X(...)` row to their list, not a second invocation.
+`.name` is the TOML name (`cpu.Load`); `.unit` becomes part of the CSV column.
+The function must return a real reading or `METRIC_NOT_SUPPORTED`. `WINDOW`
+means an energy delta across a measurement window, `GAUGE` a current reading,
+and `PEAK` a sampled maximum. `DEVICE` applies to the whole device; `PROCESS`
+receives the workload PID. Use the CPU or GPU temperature flag only for an actual corresponding sensor.
+Update the function and its origin to match the hardware.
+The existing `ENERGY_DEFINE_METRIC_TABLE` call prepares the plugin's registry;
+do not add another call. It uses a compiler constructor so older executables
+can load the plugin using the existing ABI.
+
 Use `cpu.Load` or `cpu.custom_read_load` in TOML. Both names identify the same
 metric; the CSV uses the short name. The core compares the configuration to
 this registry automatically. Use `METRIC_NOT_SUPPORTED` on unavailable reads.
@@ -607,18 +679,19 @@ Rebuild the plugin and regenerate the executable after changes.
 
 ### Adding a backend
 
-1. Copy [`cpu.c`](examples/backend_template/cpu.c) or
-   [`gpu.c`](examples/backend_template/gpu.c) into a new directory under
+1. Copy [`cpu.c`](src/backend_templates/cpu.c) and [`cpu.h`](src/backend_templates/cpu.h),
+   or [`gpu.c`](src/backend_templates/gpu.c) and [`gpu.h`](src/backend_templates/gpu.h),
+   into a new directory under
    `src/platform/linux/cpu/` or `src/platform/linux/gpu/`.
 2. Replace the placeholder detection, initialization, cleanup and sampling
    functions, implement real metric functions and register them in the one
-   `BACKEND_METRICS` list. The templates intentionally do not detect hardware
+   `backend_metric_definitions` list. The templates intentionally do not detect hardware
    or perform measurements. Each backend uses the same lifecycle contract, but
    declares only the metrics it can implement. Implement the optional
    `energy_backend_sample_next` to avoid gaps between energy windows.
 3. Run `make -C src` and `./src/main --list-metrics cpu <directory>` (or `gpu`).
-   If extra libraries or sources are needed, add `backend.mk` as shown by the
-   existing hardware backends. Test detection, readings, errors, rollover and
+   If extra libraries or sources are needed, configure them in `src/Makefile`.
+   Test detection, readings, errors, rollover and
    units on the target hardware before trusting results.
 
 Discovery chooses the highest-priority detected backend independently for CPU

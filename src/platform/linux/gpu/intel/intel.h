@@ -1,0 +1,10 @@
+#ifndef GREENMEASURER_INTEL_GPU_H
+#define GREENMEASURER_INTEL_GPU_H
+
+#include "../../../../include/energy-backend.h"
+
+float intel_gpu_read_hwmon_temperature(void);
+
+extern GpuBackend intel_gpu_backend;
+
+#endif

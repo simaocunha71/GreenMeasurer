@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="GreenMeasurer backend callbacks, metric definitions and extension guide.">
+  <title>Backend API — GreenMeasurer</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar"><div class="topbar-inner">
+  <a class="brand" href="index.html"><img src="favicon.svg" alt="" width="30" height="30">GreenMeasurer</a>
+  <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="guide.html">Guide</a><a href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a aria-current="page" href="reference.html">Backend API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
+</div></header>
+<main id="main" class="wrap">
+  <header class="doc-header"><p class="eyebrow">03 / Build</p><h1>Backend API</h1><p class="lead">The functions and structures that connect a hardware implementation to GreenMeasurer.</p><p class="table-hint">Tables scroll horizontally on small screens.</p></header>
+  <div class="doc-layout">
+    <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#overview">How it fits together</a><a href="#callbacks">Backend callbacks</a><a href="#symbols">Optional symbols</a><a href="#definitions">Metric definitions</a><a href="#new-backend">Add a backend</a><a href="#adapter">External adapters</a><a href="#tools">Developer tools</a></nav>
+    <div class="doc-content">
+      <section id="overview"><h2>How it fits together</h2>
+        <p>Each compiled plugin exports an <code>energy_backend_descriptor</code> containing its CPU or GPU backend and detection priority. The engine selects the highest-priority detected backend independently for each category. It then uses callbacks and metric definitions to read values.</p>
+        <p>The interface lives in <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/include/energy-backend.h">energy-backend.h ↗</a>. The <a href="metrics.html">metric catalogue</a> maps each built-in metric to its reading function.</p>
+      </section>
+      <section id="callbacks"><h2>Backend callbacks</h2><p>Both <code>CpuBackend</code> and <code>GpuBackend</code> share the callbacks below. A <code>device</code> is the core or device index supplied by the engine.</p>
+        <div class="table-wrap"><table><thead><tr><th>Callback</th><th>Required?</th><th>Responsibility</th></tr></thead><tbody>
+          <tr><td><code>detect(void)</code></td><td>Yes</td><td>Return 1 if this backend can operate on the host. A backend that does not return 1 is not selected.</td></tr>
+          <tr><td><code>init(int device)</code></td><td>Yes</td><td>Initialize resources for readings. Return 0 on success; report failure with a nonzero result.</td></tr>
+          <tr><td><code>cleanup(void)</code></td><td>No</td><td>Release resources at shutdown when provided.</td></tr>
+          <tr><td><code>sample_start(int device)</code></td><td>Yes</td><td>Capture the beginning of a measurement window; return 0 on success.</td></tr>
+          <tr><td><code>sample_stop(int device)</code></td><td>Yes</td><td>Capture the end of the window; return 0 on success.</td></tr>
+          <tr><td><code>get_metric(size_t index, int device, pid_t pid)</code></td><td>Yes</td><td>Return the indexed metric reading, or <code>METRIC_NOT_SUPPORTED</code> if unavailable. Process-scoped readings use the supplied PID.</td></tr>
+          <tr><td><code>diagnose(void)</code></td><td>No</td><td>Return a short explanation when detection fails.</td></tr>
+          <tr><td><code>set_powercap(int watts)</code></td><td>CPU only; optional</td><td>Apply a supported cap. The calling code treats <code>-1</code> as leaving existing limits unchanged.</td></tr>
+          <tr><td><code>destroy_powercap(void)</code></td><td>CPU only; optional</td><td>Release or restore the active powercap context; the Intel implementation attempts to restore its saved limits.</td></tr>
+          <tr><td><code>calibrate_powercap(...)</code></td><td>CPU only; optional</td><td>Run the backend's powercap sweep and return success or failure.</td></tr>
+        </tbody></table></div>
+        <p><code>metrics</code> and <code>metric_count</code> describe the indexed metrics; they are fields, not callbacks. CPU backends must supply a readable metric marked <code>ENERGY_METRIC_FLAG_CPU_TEMPERATURE</code> for measurements to run.</p>
+      </section>
+      <section id="symbols"><h2>Optional plugin symbols</h2>
+        <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Purpose</th></tr></thead><tbody>
+          <tr><td><code>energy_backend_sample_next(int device)</code></td><td>Finish a window and advance the baseline for contiguous overtime samples. Without it, the engine uses separate stop/start windows, which can leave gaps.</td></tr>
+          <tr><td><code>energy_backend_commit_powercap(void)</code></td><td>Optional callback looked up by configured capped measurements to retain an applied limit on success. A positive cap is rejected if the required callbacks are unavailable. The current Intel backend does not export this symbol.</td></tr>
+          <tr><td><code>energy_metric_function_map</code></td><td>Maps metric indices to reading functions and allows selecting by function name.</td></tr>
+          <tr><td><code>energy_metric_info_map</code></td><td>Provides descriptions and origins for <code>--list-metrics</code>.</td></tr>
+        </tbody></table></div>
+        <aside class="notice warning"><strong>Powercap</strong><p>Powercap state and calibration cleanup are not verified on real hardware. See the <a href="guide.html#powercap">powercap warning</a> before running a sweep.</p></aside>
+      </section>
+      <section id="definitions"><h2>Define a metric</h2>
+        <p>Built-in backends put an array of <code>EnergyMetricDefinition</code> near the top of their source. Each entry connects a descriptor, function and descriptive information. Declare the function before the array and implement it below:</p>
+        <pre><code>static double read_load(int device, pid_t pid);
+
+static const EnergyMetricDefinition backend_metric_definitions[] = {
+    {
+        .descriptor = {
+            .name = "Load",
+            .unit = "units",
+            .kind = ENERGY_METRIC_GAUGE,
+            .scope = ENERGY_METRIC_DEVICE,
+            .flags = ENERGY_METRIC_FLAG_NONE
+        },
+        .function = ENERGY_METRIC_FUNCTION(read_load),
+        .info = {
+            .description = "Device load",
+            .origin = "Hardware API"
+        }
+    }
+};
+ENERGY_DEFINE_METRIC_TABLE(backend, backend_metric_definitions)
+
+static double read_load(int device, pid_t pid) {
+    (void)device;
+    (void)pid;
+    return METRIC_NOT_SUPPORTED; /* Replace with a hardware read. */
+}</code></pre>
+        <p>In an existing backend, add an entry to its existing array; do not add a second table macro. The macro prepares the plugin's descriptor, function map, metadata and indexed getter. Choose window, gauge or peak semantics and device or process scope to match the actual reading. Use the corresponding CPU or GPU temperature flag only for a real temperature sensor.</p>
+        <p>The older <code>ENERGY_DEFINE_METRICS</code> macro remains available to existing plugins. Keep native plugin sources trusted: loading a library can execute its constructors.</p>
+      </section>
+      <section id="new-backend"><h2>Add a backend</h2>
+        <ol>
+          <li>Copy the <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/src/backend_templates">CPU or GPU template</a> <code>.c</code> and <code>.h</code> into a new directory under <code>src/platform/linux/cpu/</code> or <code>gpu/</code>.</li>
+          <li>Implement hardware detection, initialization, sampling and the metric functions. The templates are placeholders and do not detect hardware or return real readings.</li>
+          <li>Update the metric array, descriptor name and priority. For a CPU backend, provide a CPU temperature reading.</li>
+          <li>Run <code>make -C src</code> and <code>./src/main --list-metrics cpu &lt;directory&gt;</code> (or <code>gpu</code>). Verify actual hardware readings, units, errors and counter wraparound.</li>
+        </ol>
+        <p>The build discovers a primary <code>.c</code> per backend directory. Extra sources, compiler flags and libraries are configured in <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/Makefile">src/Makefile</a>; the Intel GPU links its separate <code>sensors.c</code> there.</p>
+      </section>
+      <section id="adapter"><h2>External metric adapters</h2><p>An external adapter is a separate shared library, not a CPU/GPU backend. Its <code>greenmeasurer_metric_adapter</code> descriptor uses <code>init</code>, <code>read(index, value)</code> and <code>cleanup</code> callbacks; it describes metrics by name and unit. See <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/include/metric-adapter.h">metric-adapter.h</a> and the <a href="https://github.com/simaocunha71/GreenMeasurer#adding-a-new-architecture--driver">repository guide</a> for configuration and source metrics.</p></section>
+      <section id="tools"><h2>Developer tools</h2>
+        <div class="table-wrap"><table><thead><tr><th>Command</th><th>Use</th></tr></thead><tbody>
+          <tr><td><code>make -C src VERBOSE=1</code></td><td>Build the project and show skipped optional backends.</td></tr>
+          <tr><td><code>./src/main --list-metrics</code></td><td>List compiled backend metrics, functions, descriptions and origins.</td></tr>
+          <tr><td><code>python3 scripts/validate_config.py FILE</code></td><td>Validate a TOML file without executing its workload.</td></tr>
+          <tr><td><code>python3 scripts/generate_config.py FILE --directory DIR</code></td><td>Generate and compile a configured executable.</td></tr>
+          <tr><td><code>bash scripts/measure.sh generate DIR FILE...</code></td><td>Generate a batch; use <code>bash scripts/measure.sh run DIR</code> to execute it.</td></tr>
+          <tr><td><code>make -C src test</code></td><td>Run the test suite. The current checkout has an unresolved Intel powercap mock compilation failure.</td></tr>
+        </tbody></table></div>
+        <p>Utilities for overtime analysis are described in <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/scripts/README.md">scripts/README.md</a>.</p>
+      </section>
+    </div>
+  </div>
+</main>
+<footer><div class="wrap">
+  <div class="footer-inner"><span>GreenMeasurer <span class="muted">/ backend API</span></span><a href="https://github.com/simaocunha71/GreenMeasurer">Source on GitHub ↗</a></div>
+  <div class="footer-notes"><p><strong>Submission</strong> Submitted to the 11th International Workshop on Green and Sustainable Software (GREENS’27).</p><p><strong>Acknowledgements</strong> This work is funded by national funds through FCT - Fundação para a Ciência e a Tecnologia, I.P., under the support <a href="https://doi.org/10.54499/UID/50014/2025">UID/50014/2025</a>. Simão Cunha is also funded by FCT grant <a href="https://doi.org/10.54499/2025.04596.BDANA">2025.04596.BDANA</a>.</p></div>
+</div></footer>
+</body>
+</html>

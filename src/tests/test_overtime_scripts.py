@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+
+from temperature_fixture import install_temperature_backend
 import subprocess
 import sys
 import tempfile
@@ -66,7 +68,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         subprocess.run(
             ["cc", "-O2", "-fPIC", "-shared", "-I", str(ROOT / "src" / "include"),
              "-o", str(backend_dir / "backend.so"),
-             str(ROOT / "examples" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c")],
+             str(ROOT / "src" / "tests" / "fixtures" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c")],
             check=True,
         )
         calibration = self.directory / "calib.txt"
@@ -140,6 +142,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         )
         backends = self.directory / "backends"
         backends.mkdir()
+        install_temperature_backend(backends)
         env = os.environ.copy()
         env["GREENMEASURER_BACKEND_DIR"] = str(backends)
         config = self.directory / "config.toml"

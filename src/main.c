@@ -521,6 +521,16 @@ static float get_current_cpu_temp(int core) {
                                         ENERGY_METRIC_FLAG_CPU_TEMPERATURE);
 }
 
+static int require_cpu_temperature(float *temperature) {
+    float value = get_current_cpu_temp(0);
+    if (!isfinite(value) || value <= 0.0f) {
+        fprintf(stderr, "[ERROR] CPU temperature is unavailable; measurement cannot run.\n");
+        return -1;
+    }
+    if (temperature) *temperature = value;
+    return 0;
+}
+
 static float getInitialTemperature(const char *calibration_file) {
     if (!calibration_file || strlen(calibration_file) == 0) return -1.0f;
 
@@ -555,6 +565,8 @@ static double calibrateTemperature(const char *target_calib_file, int sleep_seco
         sleep(sleep_seconds);
     }
 
+    float mean_temp;
+    if (require_cpu_temperature(&mean_temp) != 0) return -1;
     FILE *snapshot = fopen(target_calib_file, "w");
     if (!snapshot) {
         perror("[ERROR] Failed to open calibration file");
@@ -579,12 +591,6 @@ static double calibrateTemperature(const char *target_calib_file, int sleep_seco
             perror("[ERROR] Failed to close calibration snapshot");
             return -1;
         }
-    }
-
-    float mean_temp = get_current_cpu_temp(0);
-    if (mean_temp <= 0.0f) {
-        fprintf(stderr, "[WARNING] Sensor read returned <= 0.0, defaulting baseline to 40.0°C\n");
-        mean_temp = 40.0f;
     }
 
     FILE *output_file = fopen(target_calib_file, "a");
@@ -945,6 +951,16 @@ static void print_backend_summary(void) {
     }
 }
 
+static int (*get_powercap_commit(void))(void) {
+    for (size_t i = 0; i < loaded_backend_count; i++) {
+        const EnergyBackendDescriptor *descriptor = loaded_backends[i].descriptor;
+        if (descriptor && descriptor->type == ENERGY_BACKEND_CPU &&
+            descriptor->backend.cpu == active_cpu_backend)
+            return dlsym(loaded_backends[i].handle, ENERGY_BACKEND_COMMIT_POWERCAP_SYMBOL);
+    }
+    return NULL;
+}
+
 static void init_backends(void) {
     if (get_backend_root() != 0) exit(EXIT_FAILURE);
     if (load_backend_category("cpu", ENERGY_BACKEND_CPU) != 0 ||
@@ -1015,6 +1031,7 @@ static void init_backends(void) {
     if (configured_overtime && select_configured_backend_metrics() != 0) exit(EXIT_FAILURE);
     if (!active_cpu_backend && !active_gpu_backend && !configured_overtime) {
         fprintf(stderr, "[ERROR] No usable CPU or GPU energy backend. Enable verbose backend diagnostics for details.\n");
+        if (!header_only_mode) require_cpu_temperature(NULL);
         exit(EXIT_FAILURE);
     }
     if (!header_only_mode) printf("\n");
@@ -1331,7 +1348,7 @@ static void* measureWorker(void *arg) {
     return NULL;
 }
 
-void runTesting(int ntimes, int core, const char *command, const char *language, 
+int runTesting(int ntimes, int core, const char *command, const char *language,
                 const char *program, const char *output_file, int powercap, 
                 int time_out_limit, float temp_threshold, int variance, int memory) {
     struct timespec ts;
@@ -1340,14 +1357,14 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
     /* 1. Check that the target program can run before measuring it. */
     if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
         perror("[ERROR] clock_gettime");
-        return;
+        return -1;
     }
     ts.tv_sec += time_out_limit;
 
     threadData.returnValue = 0;
     if (pthread_create(&th, NULL, programWorks, (void *)command) != 0) {
         writeErrorMessage(language, program, "ThreadCreateError", output_file, powercap);
-        return;
+        return -1;
     }
 
     int state = pthread_timedjoin_np(th, NULL, &ts);
@@ -1358,25 +1375,35 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
         } else {
             writeErrorMessage(language, program, "JoinError", output_file, powercap);
         }
-        return;
+        return -1;
     }
 
     if (threadData.returnValue != 1) {
         writeErrorMessage(language, program, "ProgramError", output_file, powercap);
-        return;
+        return -1;
     }
 
     FILE *fp = fopen(output_file, "a");
-    if (!fp) return;
+    if (!fp) {
+        perror("[ERROR] Failed to open calibration measurement CSV");
+        return -1;
+    }
 
     /* 2. Run repetitions under thermal control. */
     for (int i = 0; i < ntimes; i++) {
-        float temp = get_current_cpu_temp(core);
+        float temp;
+        if (require_cpu_temperature(&temp) != 0) {
+            fclose(fp);
+            return -1;
+        }
         while (temp > temp_threshold + variance) {
             printf("[INFO] Temperature %.1f°C > Baseline %.1f°C + %d°C. Waiting 1s...\n", 
                    temp, temp_threshold, variance);
             sleep(1);
-            temp = get_current_cpu_temp(core);
+            if (require_cpu_temperature(&temp) != 0) {
+                fclose(fp);
+                return -1;
+            }
         }
 
         fprintf(fp, "%s, %s, %d, ", language, program, powercap);
@@ -1384,7 +1411,7 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
         if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
             perror("[ERROR] clock_gettime");
             fclose(fp);
-            return;
+            return -1;
         }
         ts.tv_sec += time_out_limit;
 
@@ -1392,14 +1419,14 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
         if (!m) {
             fprintf(stderr, "[ERROR] Unable to allocate measurement state.\n");
             fclose(fp);
-            return;
+            return -1;
         }
         m->metric_values = malloc(active_metric_count * sizeof(*m->metric_values));
         if (active_metric_count > 0 && !m->metric_values) {
             fprintf(stderr, "[ERROR] Unable to allocate metric results.\n");
             free(m);
             fclose(fp);
-            return;
+            return -1;
         }
         for (size_t metric_index = 0; metric_index < active_metric_count; metric_index++) {
             m->metric_values[metric_index] = METRIC_NOT_SUPPORTED;
@@ -1414,7 +1441,7 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
             free(m);
             writeErrorMessage(language, program, "ThreadCreateError", output_file, powercap);
             fclose(fp);
-            return;
+            return -1;
         }
 
         state = pthread_timedjoin_np(th, NULL, &ts);
@@ -1426,10 +1453,14 @@ void runTesting(int ntimes, int core, const char *command, const char *language,
                 writeErrorMessage(language, program, "JoinError", output_file, powercap);
             }
             fclose(fp);
-            return;
+            return -1;
         }
     }
-    fclose(fp);
+    if (fclose(fp) != 0) {
+        perror("[ERROR] Failed to close calibration measurement CSV");
+        return -1;
+    }
+    return 0;
 }
 
 #include "overtime.inc"
@@ -1520,6 +1551,7 @@ int main(int argc, char **argv) {
         (!strcmp(argv[1], "--csv-header") ||
          !strcmp(argv[1], "--overtime-csv-header"));
     init_backends();
+    if (!header_only_mode && require_cpu_temperature(NULL) != 0) return 1;
     if (configured_standard) return configured_standard_run(argc, argv);
     if (argc >= 2 && (!strcmp(argv[1], "--csv-header") ||
                       !strcmp(argv[1], "--overtime-csv-header"))) {
@@ -1722,24 +1754,31 @@ int main(int argc, char **argv) {
         float ref_temp = getInitialTemperature(calib_file);
         if (ref_temp <= 0.0f) ref_temp = get_current_cpu_temp(0);
 
-        float temp = get_current_cpu_temp(0);
-        while (temp > ref_temp + variance) {
+        float temp;
+        if (require_cpu_temperature(&temp) != 0) return 1;
+        while (temp > ref_temp + variance && !global_terminate) {
             printf("[INFO] Waiting for temperature (%.1f°C) to reach baseline (%.1f°C)...\n", temp, ref_temp);
             sleep(1);
-            temp = get_current_cpu_temp(0);
+            if (require_cpu_temperature(&temp) != 0) return 1;
+        }
+        if (global_terminate) {
+            fprintf(stderr, "[ERROR] Overtime measurement interrupted.\n");
+            return 1;
         }
 
+        int (*commit_powercap)(void) = NULL;
         if (powercap > 0) {
-            if (!active_cpu_backend || !active_cpu_backend->set_powercap) {
+            commit_powercap = get_powercap_commit();
+            if (!active_cpu_backend || !active_cpu_backend->set_powercap ||
+                !active_cpu_backend->destroy_powercap || !commit_powercap) {
                 fprintf(stderr, "[ERROR] Active CPU backend does not support powercapping; overtime measurement aborted.\n");
                 return 1;
             }
             if (active_cpu_backend->set_powercap(powercap) != 0) {
                 fprintf(stderr, "[ERROR] Failed to set powercap to %d W; overtime measurement aborted.\n",
                         powercap);
-                if (active_cpu_backend->destroy_powercap) {
-                    active_cpu_backend->destroy_powercap();
-                }
+                if (active_cpu_backend->destroy_powercap() != 0)
+                    fprintf(stderr, "[ERROR] Failed to restore powercap after setup failure.\n");
                 return 1;
             }
         }
@@ -1753,8 +1792,12 @@ int main(int argc, char **argv) {
 
         int command_status = ot_run(command, &ctx, interval_us);
 
-        if (powercap > 0 && active_cpu_backend && active_cpu_backend->destroy_powercap) {
-            if (active_cpu_backend->destroy_powercap() != 0) {
+        if (powercap > 0) {
+            if (command_status == 0 && commit_powercap() != 0) {
+                fprintf(stderr, "[ERROR] Failed to retain powercap.\n");
+                command_status = -1;
+            }
+            if (command_status != 0 && active_cpu_backend->destroy_powercap() != 0) {
                 fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
                 command_status = -1;
             }

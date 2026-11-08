@@ -48,7 +48,7 @@ class BackendRegistryTest(unittest.TestCase):
     def test_listing_all_plugins_and_filter_without_detection(self):
         for category in ("cpu", "gpu"):
             self.compile_backend(category, "template",
-                                 ROOT / "examples" / "backend_template" / f"{category}.c")
+                                 ROOT / "src" / "backend_templates" / f"{category}.c")
         self.compile_backend("cpu", "legacy", SRC / "tests" / "fake_backend.c",
                              '-DFAKE_NAME="Legacy"', "-DFAKE_PRIORITY=0", "-DFAKE_DETECT=0")
         result = subprocess.run([str(SRC / "main"), "--list-metrics"], env=self.env,
@@ -73,7 +73,7 @@ class BackendRegistryTest(unittest.TestCase):
 
     def test_listing_reports_plugin_errors_and_honors_filters(self):
         self.compile_backend("cpu", "valid",
-                             ROOT / "examples" / "backend_template" / "cpu.c")
+                             ROOT / "src" / "backend_templates" / "cpu.c")
         broken = self.backends / "gpu" / "broken" / "backend.so"
         broken.parent.mkdir(parents=True)
         broken.write_text("not a shared library", encoding="utf-8")
@@ -102,17 +102,22 @@ class BackendRegistryTest(unittest.TestCase):
         self.assertNotIn("gpu", result.stderr)
 
     def test_single_registry_entry_is_selectable_by_short_name_or_function(self):
-        source = (ROOT / "examples" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c").read_text()
-        source = source.replace(
-            "#define TOY_CPU_METRICS(X)",
-            "static double added_metric(int device, pid_t pid) "
-            "{ (void)device; (void)pid; return 42.0; }\n\n#define TOY_CPU_METRICS(X)",
-        ).replace(
-            'X("Energy", "J", ENERGY_METRIC_WINDOW',
-            'X("Extra", "units", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, '
-            'ENERGY_METRIC_FLAG_NONE, added_metric, "Example extra metric", "Test source") \\\n'
-            '    X("Energy", "J", ENERGY_METRIC_WINDOW',
-        )
+        source = (ROOT / "src" / "tests" / "fixtures" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c").read_text()
+        start = source.index("static const EnergyMetricDefinition toy_cpu_metric_definitions[]")
+        end = source.index("ENERGY_DEFINE_METRIC_TABLE(toy_cpu, toy_cpu_metric_definitions)", start)
+        end += len("ENERGY_DEFINE_METRIC_TABLE(toy_cpu, toy_cpu_metric_definitions)")
+        definitions = """
+static double added_metric(int device, pid_t pid) {
+    (void)device; (void)pid; return 42.0;
+}
+#define LEGACY_METRICS(X) \\
+    X("Extra", "units", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, added_metric, "Example extra metric", "Test source") \\
+    X("Energy", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, toy_cpu_metric_energy, "Energy", "Test") \\
+    X("LoadAvg", "1m", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, toy_cpu_metric_load, "Load", "Test") \\
+    X("Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_CPU_TEMPERATURE, toy_cpu_metric_temperature, "Temperature", "Test")
+ENERGY_DEFINE_METRICS(toy_cpu, LEGACY_METRICS)
+"""
+        source = source[:start] + definitions + source[end:]
         file = self.directory / "custom.c"
         file.write_text(source, encoding="utf-8")
         self.compile_backend("cpu", "custom", file)
@@ -146,6 +151,94 @@ class BackendRegistryTest(unittest.TestCase):
                     self.assertTrue(all(float(row[-1]) == 42 for row in rows[1:]))
                     output.unlink()
 
+    def test_structured_metric_entry_is_listed_and_selectable(self):
+        source = (SRC / "tests" / "fixtures" / "toy_backends" / "cpu" /
+                  "toy_cpu" / "toy_cpu.c").read_text(encoding="utf-8")
+        declaration = "static const EnergyMetricDefinition toy_cpu_metric_definitions[] = {"
+        self.assertIn(declaration, source)
+        source = source.replace(declaration, """
+static double added_metric(int device, pid_t pid) {
+    (void)device; (void)pid; return 42.0;
+}
+""" + declaration + """
+    {
+        .descriptor = {.name = "Extra", .unit = "units", .kind = ENERGY_METRIC_GAUGE,
+                       .scope = ENERGY_METRIC_DEVICE, .flags = ENERGY_METRIC_FLAG_NONE},
+        .function = ENERGY_METRIC_FUNCTION(added_metric),
+        .info = {.description = "Example extra metric", .origin = "Test source"}
+    },
+""", 1)
+        file = self.directory / "structured.c"
+        file.write_text(source, encoding="utf-8")
+        self.compile_backend("cpu", "structured", file)
+        listing = subprocess.run([str(SRC / "main"), "--list-metrics", "cpu", "structured"],
+                                 env=self.env, text=True, capture_output=True)
+        self.assertEqual(listing.returncode, 0, listing.stderr)
+        self.assertIn("cpu.Extra (units)", listing.stdout)
+        self.assertIn("Function: added_metric", listing.stdout)
+        self.assertIn("Description: Example extra metric", listing.stdout)
+        self.assertIn("Origin: Test source", listing.stdout)
+        for mode in ("standard", "overtime"):
+            for selection in ("cpu.Extra", "cpu.added_metric"):
+                with self.subTest(mode=mode, selection=selection):
+                    output = self.directory / "structured.csv"
+                    config = self.directory / "structured.toml"
+                    config.write_text(
+                        f'[measurement]\nmode="{mode}"\ncommand="sleep 0.05"\n'
+                        f'output="{output}"\ncalibration_file="{self.calibration}"\n'
+                        f'variance=100\nsleep_seconds=0\n[metrics]\nselect=["{selection}"]\n',
+                        encoding="utf-8",
+                    )
+                    build = self.directory / f"structured-{mode}-{selection}"
+                    result = self.generate(config, build)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    result = subprocess.run([str(build / "greenmeasurer")], env=self.env,
+                                            text=True, capture_output=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    with output.open(newline="", encoding="utf-8") as file:
+                        rows = list(csv.reader(file, skipinitialspace=True))
+                    self.assertEqual(rows[0][-1], "cpu.Extra_units")
+                    self.assertTrue(rows[1:])
+                    self.assertTrue(all(float(row[-1]) == 42 for row in rows[1:]))
+                    output.unlink()
+
+    def test_intel_structured_metric_can_be_added(self):
+        intel = SRC / "platform" / "linux" / "cpu" / "intel"
+        if not (intel / "backend.so").exists():
+            self.skipTest("Intel backend development dependencies are unavailable")
+        source = (intel / "intel.c").read_text(encoding="utf-8")
+        declaration = "static const EnergyMetricDefinition intel_metric_definitions[] = {"
+        self.assertIn(declaration, source)
+        source = source.replace(
+            declaration,
+            "static double added_metric(int device, pid_t pid) "
+            "{ (void)device; (void)pid; return 42.0; }\n" + declaration + """
+    {
+        .descriptor = {.name = "Extra", .unit = "units", .kind = ENERGY_METRIC_GAUGE,
+                       .scope = ENERGY_METRIC_DEVICE, .flags = ENERGY_METRIC_FLAG_NONE},
+        .function = ENERGY_METRIC_FUNCTION(added_metric),
+        .info = {.description = "Example extra metric", .origin = "Test source"}
+    },
+""", 1,
+        )
+        file = self.directory / "intel-with-extra.c"
+        file.write_text(source, encoding="utf-8")
+        plugin = self.backends / "cpu" / "intel-test" / "backend.so"
+        plugin.parent.mkdir(parents=True)
+        subprocess.run(
+            ["cc", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared",
+             "-I", str(SRC / "include"), "-I", str(intel), str(file), "-o", str(plugin), "-lm"],
+            check=True, capture_output=True, text=True,
+        )
+        listing = subprocess.run([str(SRC / "main"), "--list-metrics", "cpu", "intel-test"],
+                                 env=self.env, text=True, capture_output=True)
+        self.assertEqual(listing.returncode, 0, listing.stderr)
+        self.assertIn("cpu.Extra (units)", listing.stdout)
+        self.assertIn("Function: added_metric", listing.stdout)
+        self.assertIn("Description: Example extra metric", listing.stdout)
+        self.assertIn("cpu.Package (J)", listing.stdout)
+        self.assertIn("cpu.Temperature (C)", listing.stdout)
+
     def test_fibonacci_examples_execute_both_modes(self):
         demo = self.directory / "fibonacci-demo"
         demo.mkdir()
@@ -157,7 +250,7 @@ class BackendRegistryTest(unittest.TestCase):
         empty_backends = self.directory / "empty-backends"
         empty_backends.mkdir()
         for mode in ("standard", "overtime"):
-            example = ROOT / "examples" / "configurations" / f"fibonacci-{mode}.toml"
+            example = ROOT / "src" / "tests" / "fixtures" / "configurations" / f"fibonacci-{mode}.toml"
             output = self.directory / f"fibonacci-{mode}.csv"
             build = self.directory / f"build-{mode}"
             result = self.generate(example, build)
@@ -174,6 +267,12 @@ class BackendRegistryTest(unittest.TestCase):
                     result = subprocess.run([str(build / "greenmeasurer")], env=environment,
                                             cwd=self.directory, text=True, capture_output=True,
                                             timeout=60)
+                    if not package_available:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertFalse(baseline.exists())
+                        self.assertFalse(output.exists())
+                        self.assertIn("CPU temperature is unavailable", result.stderr)
+                        continue
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertTrue(baseline.exists())
                     with output.open(newline="", encoding="utf-8") as file:
@@ -187,8 +286,6 @@ class BackendRegistryTest(unittest.TestCase):
                         self.assertEqual(len(rows), 4)
                     self.assertGreater(len(rows), 1)
                     self.assertTrue(all(len(row) == len(columns) for row in rows))
-                    if not package_available:
-                        self.assertIn("cpu.Package", result.stderr)
                     output.unlink()
 
 

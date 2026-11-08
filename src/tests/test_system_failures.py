@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from temperature_fixture import install_temperature_backend
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -37,6 +39,7 @@ class SystemFailureTest(unittest.TestCase):
         )
         cls.backends = cls.directory / "backends"
         cls.backends.mkdir()
+        install_temperature_backend(cls.backends)
         cls.calibration = cls.directory / "calibration"
         cls.calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
 

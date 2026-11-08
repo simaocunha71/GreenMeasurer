@@ -63,6 +63,38 @@ typedef struct energy_metric_info_map {
 
 #define ENERGY_METRIC_INFO_MAP_VERSION 1u
 #define ENERGY_METRIC_INFO_MAP_SYMBOL "energy_metric_info_map"
+
+typedef struct energy_metric_definition {
+    EnergyMetricDescriptor descriptor;
+    EnergyMetricFunction function;
+    EnergyMetricInfo info;
+} EnergyMetricDefinition;
+
+/* Preserve the existing plugin ABI by preparing its parallel arrays at load time. */
+#define ENERGY_DEFINE_METRIC_TABLE(prefix, definitions) \
+    static EnergyMetricDescriptor prefix##_metrics[sizeof(definitions) / sizeof((definitions)[0])]; \
+    static EnergyMetricFunction prefix##_metric_functions[sizeof(definitions) / sizeof((definitions)[0])]; \
+    static EnergyMetricInfo prefix##_metric_info[sizeof(definitions) / sizeof((definitions)[0])]; \
+    const EnergyMetricFunctionMap energy_metric_function_map = { \
+        ENERGY_METRIC_FUNCTION_MAP_VERSION, \
+        sizeof(prefix##_metric_functions) / sizeof(prefix##_metric_functions[0]), prefix##_metric_functions \
+    }; \
+    const EnergyMetricInfoMap energy_metric_info_map = { \
+        ENERGY_METRIC_INFO_MAP_VERSION, \
+        sizeof(prefix##_metric_info) / sizeof(prefix##_metric_info[0]), prefix##_metric_info \
+    }; \
+    static void __attribute__((constructor)) prefix##_prepare_metrics(void) { \
+        for (size_t i = 0; i < sizeof(definitions) / sizeof((definitions)[0]); i++) { \
+            prefix##_metrics[i] = (definitions)[i].descriptor; \
+            prefix##_metric_functions[i] = (definitions)[i].function; \
+            prefix##_metric_info[i] = (definitions)[i].info; \
+        } \
+    } \
+    static double prefix##_get_metric(size_t index, int device, pid_t pid) { \
+        return index < sizeof(prefix##_metric_functions) / sizeof(prefix##_metric_functions[0]) \
+            ? prefix##_metric_functions[index].read(device, pid) : METRIC_NOT_SUPPORTED; \
+    }
+
 #define ENERGY_METRIC_DESCRIPTOR_ENTRY(name, unit, kind, scope, flags, function, description, origin) \
     {name, unit, kind, scope, flags},
 #define ENERGY_METRIC_FUNCTION_ENTRY(name, unit, kind, scope, flags, function, description, origin) \
@@ -164,6 +196,9 @@ int platform_measure_memory(const char *command);
 /* Optional plugin symbol: close a window and advance its baseline to the
    previous stop on the next call, without losing energy between windows. */
 #define ENERGY_BACKEND_SAMPLE_NEXT_SYMBOL "energy_backend_sample_next"
+
+/* Commit a successfully applied power cap so backend cleanup keeps it active. */
+#define ENERGY_BACKEND_COMMIT_POWERCAP_SYMBOL "energy_backend_commit_powercap"
 
 /* Write framework metadata columns followed by metrics from selected backends. */
 void energy_backend_write_csv_header(FILE *stream, int overtime);

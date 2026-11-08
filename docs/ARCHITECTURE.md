@@ -66,8 +66,8 @@ Directory convention (`src/`):
 
 ```
 platform/linux/
-  cpu/<implementation>/{<source>.c, <header>.h, backend.mk, backend.so}
-  gpu/<implementation>/{<source>.c, <header>.h, backend.mk, backend.so}
+  cpu/<implementation>/{<source>.c, <header>.h, backend.so}
+  gpu/<implementation>/{<source>.c, <header>.h, backend.so}
 include/energy-backend.h     shared API
 utils/memory.c               RSS memory profiler
 tests/                       fake backends and test runner
@@ -81,10 +81,12 @@ The category (`cpu` or `gpu`) determines which interface the plugin must impleme
 
 Defined in `src/include/energy-backend.h`. Two vtable-style structs, `CpuBackend` and `GpuBackend`, plus a descriptor each plugin exports.
 
-The current built-in backends use `ENERGY_DEFINE_METRICS` to generate their
-descriptors, function map, indexed callback and description/origin metadata
-from one list. To add a backend, start with the
-[CPU or GPU template](../examples/backend_template/) and follow the concise
+The built-in backends use an `EnergyMetricDefinition` array and
+`ENERGY_DEFINE_METRIC_TABLE` to prepare their descriptors, function map,
+indexed callback and description/origin metadata from one list. The older
+`ENERGY_DEFINE_METRICS` interface remains available for existing plugins.
+To add a backend, start with the
+[CPU or GPU template](../src/backend_templates/) and follow the concise
 [backend guide](../README.md#adding-a-backend). The public
 `./src/main --list-metrics [cpu|gpu [directory]]` command lists compiled plugins
 without detecting hardware or running workloads. Loading a plugin may execute
@@ -177,11 +179,12 @@ required.
 
 `src/Makefile` discovers `platform/linux/*/*` directories and builds one `backend.so` per directory using `-fPIC -shared`. The core is linked with `-rdynamic -ldl`.
 
-Each implementation provides an optional `backend.mk` using the naming convention `BACKEND_<KEY>_<path with / replaced by _>`:
+Backend-specific build settings live in `src/Makefile`, using the naming convention `BACKEND_<KEY>_<path with / replaced by _>`:
 
 | Variable | Meaning |
 |---|---|
 | `BACKEND_SOURCE_*` | Source file (default: first `*.c` not named `sensors.c`) |
+| `BACKEND_EXTRA_SOURCES_*` | Additional source files linked into the plugin |
 | `BACKEND_AVAILABLE_*` | `yes`/`no`; `no` skips the plugin and prints a `[BUILD] ... skipped` line |
 | `BACKEND_CFLAGS_*` | Extra compile flags/include paths |
 | `BACKEND_LDLIBS_*` | Libraries linked into the plugin |
@@ -212,7 +215,8 @@ Each backend tracks whether the "before" and "after" samples were read successfu
 ### 6.3 Error handling
 - `init`, `sample_start`, `sample_stop` return codes are checked by the core (`cpu_sample_ready`/`gpu_sample_ready`); a failed sample marks the corresponding metrics as unsupported.
 - The AMD backend no longer calls `exit(127)` on MSR open failure; it returns an error so the core can continue with other backends.
-- The core null-checks the active CPU backend before powercap operations, enabling GPU-only operation.
+- The core null-checks the active CPU backend before powercap operations. Measurements
+  also require a readable CPU temperature, even when only GPU metrics are selected.
 - Permission and device errors are reported once instead of on every sample.
 
 ### 6.4 Temperature semantics
@@ -312,7 +316,7 @@ permission failure. The legacy runner exits if neither category is active;
 configured system/external overtime can run without either. Wrapper scripts
 (`scripts/measure.sh`) and Makefile messages were also made vendor-neutral.
 Vendor-specific logic remains only where it is inherently vendor-specific
-(the dependency installer `scripts/install.sh`, backend sources and their `backend.mk`).
+(the dependency installer `scripts/install.sh`, backend sources and build settings in `src/Makefile`).
 
 ---
 

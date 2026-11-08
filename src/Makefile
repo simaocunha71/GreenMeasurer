@@ -21,7 +21,39 @@ BACKEND_DIRS := $(shell find platform/$(PLATFORM) -mindepth 2 -maxdepth 2 -type 
 
 backend_key = $(subst /,_,$(1))
 
--include $(wildcard $(addsuffix /backend.mk,$(BACKEND_DIRS)))
+INTEL_HEADER_SEARCH_DIRS := /usr/include /usr/local/include
+INTEL_LIBRARY_SEARCH_DIRS := /usr/local/lib /usr/local/lib64 /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
+POWERCAP_HEADER := $(firstword $(foreach dir,$(INTEL_HEADER_SEARCH_DIRS),$(wildcard $(dir)/powercap/powercap.h)))
+RAPLCAP_HEADER := $(firstword $(foreach dir,$(INTEL_HEADER_SEARCH_DIRS),$(wildcard $(dir)/raplcap/raplcap.h)))
+POWERCAP_LIBRARY := $(firstword $(foreach dir,$(INTEL_LIBRARY_SEARCH_DIRS),$(wildcard $(dir)/libpowercap.a $(dir)/libpowercap.so)))
+RAPLCAP_LIBRARY := $(firstword $(foreach dir,$(INTEL_LIBRARY_SEARCH_DIRS),$(wildcard $(dir)/libraplcap-powercap.a $(dir)/libraplcap-powercap.so)))
+BACKEND_AVAILABLE_platform_linux_cpu_intel := $(if $(and $(POWERCAP_HEADER),$(RAPLCAP_HEADER),$(POWERCAP_LIBRARY),$(RAPLCAP_LIBRARY)),yes,no)
+BACKEND_SKIP_REASON_platform_linux_cpu_intel := required powercap/raplcap headers or libraries are unavailable
+BACKEND_CFLAGS_platform_linux_cpu_intel := -I$(dir $(dir $(POWERCAP_HEADER))) -I$(dir $(dir $(RAPLCAP_HEADER)))
+BACKEND_HOST_LDLIBS_platform_linux_cpu_intel := -Wl,--whole-archive $(RAPLCAP_LIBRARY) $(POWERCAP_LIBRARY) -Wl,--no-whole-archive
+
+NVML_HEADER := $(firstword $(wildcard \
+	/usr/include/nvml.h /usr/include/nvidia/gdk/nvml.h /usr/include/nvidia/gpu/nvml.h \
+	/usr/include/x86_64-linux-gnu/nvml.h /usr/local/include/nvml.h \
+	/usr/local/cuda/include/nvml.h /usr/local/cuda-*/include/nvml.h \
+	/opt/cuda/include/nvml.h $(CUDA_HOME)/include/nvml.h \
+	$(CUDA_HOME)/targets/*/include/nvml.h $(NVML_ROOT)/include/nvml.h))
+NVML_LIBRARY := $(firstword \
+	$(shell ldconfig -p 2>/dev/null | awk '$$1 ~ /^libnvidia-ml[.]so/ { print $$NF; exit }') \
+	$(wildcard /usr/lib/libnvidia-ml.so /usr/lib/libnvidia-ml.so.* \
+		/usr/lib64/libnvidia-ml.so /usr/lib64/libnvidia-ml.so.* \
+		/usr/lib/*/libnvidia-ml.so /usr/lib/*/libnvidia-ml.so.* \
+		/usr/local/lib/libnvidia-ml.so /usr/local/lib/libnvidia-ml.so.* \
+		/usr/local/cuda/lib64/libnvidia-ml.so /usr/local/cuda/lib64/libnvidia-ml.so.* \
+		/opt/cuda/lib64/libnvidia-ml.so /opt/cuda/lib64/libnvidia-ml.so.* \
+		$(CUDA_HOME)/lib64/libnvidia-ml.so $(CUDA_HOME)/lib64/libnvidia-ml.so.* \
+		$(CUDA_HOME)/targets/*/lib/libnvidia-ml.so \
+		$(NVML_ROOT)/lib/libnvidia-ml.so $(NVML_ROOT)/lib64/libnvidia-ml.so))
+BACKEND_AVAILABLE_platform_linux_gpu_nvidia := $(if $(and $(NVML_HEADER),$(NVML_LIBRARY)),yes,no)
+BACKEND_CFLAGS_platform_linux_gpu_nvidia := $(if $(NVML_HEADER),-I$(dir $(NVML_HEADER)))
+BACKEND_LDLIBS_platform_linux_gpu_nvidia := $(NVML_LIBRARY)
+BACKEND_SKIP_REASON_platform_linux_gpu_nvidia := NVML development header or runtime library is unavailable
+BACKEND_EXTRA_SOURCES_platform_linux_gpu_intel := platform/linux/gpu/intel/sensors.c
 
 define backend_source
 $(if $(BACKEND_SOURCE_$(call backend_key,$(1))),$(1)/$(BACKEND_SOURCE_$(call backend_key,$(1))),$(firstword $(filter-out %/sensors.c,$(wildcard $(1)/*.c))))
@@ -37,8 +69,8 @@ BACKEND_HOST_LDLIBS := $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call ba
 $(if $(VERBOSE),$(foreach dir,$(BACKEND_DIRS),$(if $(filter no,$(call backend_available,$(dir))),$(info [BUILD] Backend $(dir) skipped: $(or $(BACKEND_SKIP_REASON_$(call backend_key,$(dir))),optional dependencies are unavailable)))))
 
 define backend_rule
-$(1)/backend.so: $(call backend_source,$(1)) $(wildcard $(1)/backend.mk) include/energy-backend.h include/energy-counter.h
-	$$(CC) $$(CFLAGS) $$(BACKEND_CFLAGS_$(call backend_key,$(1))) $$(SHARED_FLAGS) -o $$@ $$< $$(LDFLAGS) $$(BACKEND_LDLIBS_$(call backend_key,$(1)))
+$(1)/backend.so: $(call backend_source,$(1)) $$(BACKEND_EXTRA_SOURCES_$(call backend_key,$(1))) $(wildcard $(1)/*.h) Makefile include/energy-backend.h include/energy-counter.h
+	$$(CC) $$(CFLAGS) $$(BACKEND_CFLAGS_$(call backend_key,$(1))) $$(SHARED_FLAGS) -o $$@ $$< $$(BACKEND_EXTRA_SOURCES_$(call backend_key,$(1))) $$(LDFLAGS) $$(BACKEND_LDLIBS_$(call backend_key,$(1)))
 endef
 
 $(foreach dir,$(BACKEND_DIRS),$(if $(filter yes,$(call backend_available,$(dir))),$(eval $(call backend_rule,$(dir)))))
@@ -70,11 +102,26 @@ print-configured-host-libs:
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET) list-metrics metric-adapter-check $(OBJS) launcher.o tests/legacy-engine.o tests/legacy-engine $(ALL_BACKEND_TARGETS)
+	rm -f $(TARGET) list-metrics metric-adapter-check $(OBJS) launcher.o tests/legacy-engine.o tests/legacy-engine tests/intel-powercap-test tests/nvidia-metric-test tests/intel-gpu-sensors-test $(ALL_BACKEND_TARGETS)
 	find platform/ utils/ -name "*.o" -delete 2>/dev/null || true
 
-test: all tests/legacy-engine
+ifeq ($(BACKEND_AVAILABLE_platform_linux_cpu_intel),yes)
+tests/intel-powercap-test: tests/intel_powercap_test.c platform/linux/cpu/intel/intel.c platform/linux/cpu/intel/intel.h include/energy-backend.h include/energy-counter.h
+	$(CC) $(CFLAGS) $(BACKEND_CFLAGS_platform_linux_cpu_intel) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $< $(LDFLAGS)
+INTEL_POWERCAP_TEST := tests/intel-powercap-test
+endif
+
+tests/nvidia-metric-test: tests/nvidia_metric_test.c tests/fixtures/nvml/nvml.h platform/linux/gpu/nvidia/nvidia.c include/energy-backend.h
+	$(CC) $(CFLAGS) -Itests/fixtures/nvml -o $@ $< $(LDFLAGS)
+
+tests/intel-gpu-sensors-test: tests/intel_gpu_sensors_test.c platform/linux/gpu/intel/sensors.c platform/linux/gpu/intel/intel.h include/energy-backend.h
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+test: all tests/legacy-engine tests/nvidia-metric-test tests/intel-gpu-sensors-test $(INTEL_POWERCAP_TEST)
 	@bash tests/run_tests.sh
+	@./tests/nvidia-metric-test
+	@./tests/intel-gpu-sensors-test
+	$(if $(INTEL_POWERCAP_TEST),@./$(INTEL_POWERCAP_TEST),@echo "[TEST] Intel powercap mock tests skipped: development headers unavailable")
 	@python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 .PHONY: all clean test print-configured-host-libs

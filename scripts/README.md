@@ -48,7 +48,7 @@ lower-priority backends are hidden. For full diagnostics, including permission
 hints, set `GREENMEASURER_VERBOSE_BACKENDS=1`, for example:
 
 ```sh
-./src/main --config examples/configurations/system-cores.toml --directory generated-diagnostics
+./src/main --config src/tests/fixtures/configurations/system-cores.toml --directory generated-diagnostics
 GREENMEASURER_VERBOSE_BACKENDS=1 ./generated-diagnostics/greenmeasurer
 ```
 

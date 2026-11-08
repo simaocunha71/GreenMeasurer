@@ -1,0 +1,14 @@
+[measurement]
+mode = "overtime"
+command = 'python3 -c "sum(i*i for i in range(5000000))"'
+language = "Python"
+program = "cpu-workload"
+output = "greenmeasurer-test-overtime-powercap.csv"
+interval_us = 10000
+sleep_seconds = 0
+variance = 5
+powercap = 2
+calibration_file = "greenmeasurer-test-temperature.txt"
+
+[metrics]
+select = ["system.cores", "cpu.Package", "cpu.Temperature"]

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Learn how to use GreenMeasurer from a sample program to CSV results.">
+  <title>Usage example — GreenMeasurer</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar"><div class="topbar-inner">
+  <a class="brand" href="index.html"><img src="favicon.svg" alt="" width="30" height="30">GreenMeasurer</a>
+  <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="guide.html">Guide</a><a aria-current="page" href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a href="reference.html">Backend API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
+</div></header>
+<main id="main" class="wrap">
+  <header class="doc-header"><p class="eyebrow">Getting started / Walkthrough</p><h1>Using GreenMeasurer</h1><p class="lead">Follow a complete measurement: configure a program, run it in standard and overtime modes, and inspect the resulting CSVs.</p></header>
+  <div class="doc-layout">
+    <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#before">Before you start</a><a href="#program">1. Write the program</a><a href="#config">2. Configure</a><a href="#run">3. Generate &amp; run</a><a href="#results">4. Read the CSVs</a><a href="#your-program">Use your own program</a></nav>
+    <div class="doc-content">
+      <section id="before"><h2>Before you start</h2>
+        <p>This walkthrough uses a small recursive Fibonacci program in Python only as an example workload. The same GreenMeasurer workflow applies to other foreground programs and languages: choose a command, configure measurements, generate an executable and run it.</p>
+        <p>Run the commands below from the GreenMeasurer repository root. Follow the <a href="guide.html#install">installation guide</a> first: this example requires Python, the built launcher and a working CPU backend with a readable temperature sensor. Intel package energy also needs the Intel RAPL backend and permission to read MSRs.</p>
+        <p>The example uses <code>powercap = -1</code>: it does not change existing limits, which may still affect the results. It does not run powercap calibration. Check your system's existing limits if you need an uncapped baseline.</p>
+        <p>The commands create <code>fibonacci.py</code>, two TOML files, two build directories, a temperature baseline and two CSVs in the repository root. The file-creation commands and successful measurements overwrite files with those names. Choose different names if you need to keep existing files.</p>
+      </section>
+      <section id="program"><p class="eyebrow">Step 01</p><h2>Write the workload</h2>
+        <p>Create a deliberately recursive implementation without memoization. It prints <code>9227465</code> for <code>fibonacci(35)</code>.</p>
+        <pre><code>cat &gt; fibonacci.py &lt;&lt;'PY'
+def fibonacci(n):
+    if n &lt; 2:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
+
+
+if __name__ == "__main__":
+    print(fibonacci(35))
+PY
+
+python3 fibonacci.py</code></pre>
+        <p>Increase or decrease 35 to adjust the workload duration; recursive Fibonacci becomes much slower as the input increases. This program is intentionally inefficient so that it can be sampled.</p>
+      </section>
+      <section id="config"><p class="eyebrow">Step 02</p><h2>Create two configurations</h2>
+        <p>First, configure three standard measurements. Each execution produces one row. The first run creates <code>fibonacci-temperature.txt</code> if it does not exist.</p>
+        <pre><code>cat &gt; fibonacci-standard.toml &lt;&lt;'TOML'
+[measurement]
+mode = "standard"
+command = "python3 fibonacci.py"
+language = "Python"
+program = "fibonacci"
+output = "fibonacci-standard.csv"
+repetitions = 3
+timeout_hours = 1
+sleep_seconds = 0
+variance = 5
+powercap = -1
+calibration_file = "fibonacci-temperature.txt"
+
+[metrics]
+select = ["system.cores", "cpu.Package", "cpu.Temperature"]
+TOML</code></pre>
+        <p>Now configure overtime sampling for one execution of the same program. It uses the same temperature baseline and writes a separate CSV.</p>
+        <pre><code>cat &gt; fibonacci-overtime.toml &lt;&lt;'TOML'
+[measurement]
+mode = "overtime"
+command = "python3 fibonacci.py"
+language = "Python"
+program = "fibonacci"
+output = "fibonacci-overtime.csv"
+interval_us = 10000
+sleep_seconds = 0
+variance = 5
+powercap = -1
+calibration_file = "fibonacci-temperature.txt"
+
+[metrics]
+select = ["system.cores", "cpu.Package", "cpu.Temperature"]
+TOML</code></pre>
+        <p>These selections assume an Intel CPU backend. Run <code>./src/main --list-metrics</code> to inspect compiled backend names. On another CPU backend, use the metrics it declares, or select only <code>system.cores</code> in both files; a readable CPU temperature is still required. Without an available energy metric the CSV cannot report energy.</p>
+      </section>
+      <section id="run"><p class="eyebrow">Step 03</p><h2>Generate and measure</h2>
+        <pre><code>make -C src
+./src/main --config fibonacci-standard.toml --directory fibonacci-standard-build
+./src/main --config fibonacci-overtime.toml --directory fibonacci-overtime-build
+
+./fibonacci-standard-build/greenmeasurer
+./fibonacci-overtime-build/greenmeasurer</code></pre>
+        <p>Generation compiles an executable but does not run Fibonacci. The two build directories must not already exist. If you change a TOML file, generate a new executable in a new directory.</p>
+        <p>On systems where MSR access requires elevated privileges, run the generated executables with <code>sudo</code>, for example <code>sudo ./fibonacci-standard-build/greenmeasurer</code>. Files created with sudo may be owned by root. Use elevation only when needed and inspect trusted commands before running them.</p>
+        <p>If CPU temperature cannot be read, GreenMeasurer reports an error and does not start the workload. It can wait between runs for the CPU to cool to the baseline plus <code>variance</code>. With <code>sleep_seconds = 0</code> the baseline is immediate, not a stabilized temperature; increase it for more controlled experiments. See <a href="guide.html#troubleshooting">troubleshooting</a> if a metric is unavailable.</p>
+      </section>
+      <section id="results"><p class="eyebrow">Step 04</p><h2>Inspect the CSVs</h2>
+        <pre><code>head -n 5 fibonacci-standard.csv
+head -n 5 fibonacci-overtime.csv</code></pre>
+        <p>Open the files in a spreadsheet or any CSV reader. The examples below use <strong>illustrative values, not actual measurements</strong>. Your values and available columns will depend on your machine.</p>
+        <h3>Standard: one row per run</h3>
+        <pre><code>Language,Program,Powercap,Time_ms,Cores,cpu.Package_J,cpu.Temperature_C
+Python, fibonacci, -1, 12000.000000, 12, 150.000000000000000000, 55.000000000000000000
+Python, fibonacci, -1, 12100.000000, 12, 152.000000000000000000, 56.000000000000000000
+Python, fibonacci, -1, 11900.000000, 12, 149.000000000000000000, 55.000000000000000000</code></pre>
+        <p>Standard contains three data rows on a successful run. <code>Time_ms</code> is the elapsed time for each run, and <code>cpu.Package_J</code>, when available, is the package energy over that run.</p>
+        <h3>Overtime: first three samples</h3>
+        <pre><code>Language,Program,Powercap,Timestamp_ms,Cores,cpu.Package_J,cpu.Temperature_C
+Python, fibonacci, -1, 10.200000, 12.000000000000000000, 0.125000000000000000, 50.000000000000000000
+Python, fibonacci, -1, 20.500000, 12.000000000000000000, 0.130000000000000000, 50.000000000000000000
+Python, fibonacci, -1, 30.800000, 12.000000000000000000, 0.128000000000000000, 51.000000000000000000</code></pre>
+        <p>Overtime contains a row per sampling window. <code>Timestamp_ms</code> is elapsed time, and <code>cpu.Package_J</code> is energy in that window, not cumulative energy or instantaneous power. The 10,000 µs interval is a pause between cycles, not a guaranteed sampling period.</p>
+        <p>Column availability and values vary with hardware and permissions. Package energy includes other activity and may overlap with other domains; it is not the energy of the Python process alone. A later failed reading is recorded as <code>NOT_SUPPORTED</code>.</p>
+      </section>
+      <section id="your-program"><h2>Use your own program</h2>
+        <p>Replace <code>command</code> in both TOML files with the command that runs your program in the foreground. Set <code>language</code> and <code>program</code> to labels that identify it in the CSV, and choose output names and metrics for your experiment. The command can run a program written in another language; those labels do not change how it is executed.</p>
+        <p>Generate new executables in new directories after changing the TOML files, then run them and inspect the CSVs as above. Make sure the command and its files are accessible from the directory in which you run the generated executable.</p>
+        <div class="page-links"><a href="guide.html">Measurement guide →</a><a href="metrics.html">Understand the metrics →</a></div>
+      </section>
+    </div>
+  </div>
+</main>
+<footer><div class="wrap">
+  <div class="footer-inner"><span>GreenMeasurer <span class="muted">/ usage example</span></span><a href="https://github.com/simaocunha71/GreenMeasurer">Source on GitHub ↗</a></div>
+  <div class="footer-notes"><p><strong>Submission</strong> Submitted to the 11th International Workshop on Green and Sustainable Software (GREENS’27).</p><p><strong>Acknowledgements</strong> This work is funded by national funds through FCT - Fundação para a Ciência e a Tecnologia, I.P., under the support <a href="https://doi.org/10.54499/UID/50014/2025">UID/50014/2025</a>. Simão Cunha is also funded by FCT grant <a href="https://doi.org/10.54499/2025.04596.BDANA">2025.04596.BDANA</a>.</p></div>
+</div></footer>
+</body>
+</html>

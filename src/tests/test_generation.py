@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from temperature_fixture import install_temperature_backend
+
 
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = ROOT / "scripts" / "generate_config.py"
@@ -22,6 +24,7 @@ class GenerationTest(unittest.TestCase):
         self.calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
         self.backends = self.directory / "backends"
         self.backends.mkdir()
+        install_temperature_backend(self.backends)
         self.environment = os.environ.copy()
         self.environment["GREENMEASURER_BACKEND_DIR"] = str(self.backends)
 
@@ -33,6 +36,25 @@ class GenerationTest(unittest.TestCase):
             [sys.executable, str(GENERATOR), str(self.config), "--directory", str(self.build)],
             text=True, capture_output=True, env=self.environment, timeout=60,
         )
+
+    def test_public_launcher_uses_root_configuration_by_default(self):
+        subprocess.run(["make", "-C", str(ROOT / "src")], check=True,
+                       capture_output=True, text=True)
+        result = subprocess.run(
+            [str(ROOT / "src" / "main"), "--directory", str(self.build)],
+            cwd=self.directory, text=True, capture_output=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source = (self.build / "greenmeasurer.c").read_text(encoding="utf-8")
+        self.assertTrue((self.build / "greenmeasurer").exists())
+        explicit = self.directory / "explicit"
+        result = subprocess.run(
+            [str(ROOT / "src" / "main"), "--config", str(ROOT / "configuration.toml"),
+             "--directory", str(explicit)],
+            cwd=self.directory, text=True, capture_output=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(source, (explicit / "greenmeasurer.c").read_text(encoding="utf-8"))
 
     def test_select_all_discovers_system_backends_and_external_metrics_in_both_modes(self):
         adapter = self.directory / "adapter.so"
@@ -63,7 +85,7 @@ class GenerationTest(unittest.TestCase):
                 for category in ("cpu", "gpu"):
                     plugin = self.backends / category / "toy" / "backend.so"
                     plugin.parent.mkdir(parents=True, exist_ok=True)
-                    source = (ROOT / "examples" / "toy_backends" / category /
+                    source = (ROOT / "src" / "tests" / "fixtures" / "toy_backends" / category /
                               f"toy_{category}" / f"toy_{category}.c")
                     subprocess.run(
                         ["cc", "-fPIC", "-shared", "-I", str(ROOT / "src" / "include"),
@@ -205,7 +227,8 @@ class GenerationTest(unittest.TestCase):
                 self.assertNotIn("external.demo.Unavailable_count", header)
                 self.assertNotIn("external.demo.NotFinite_count", header)
                 self.assertFalse(any("external.broken" in name for name in header))
-                self.assertFalse(any(name.startswith(("cpu.", "gpu.")) for name in header))
+                self.assertEqual([name for name in header if name.startswith(("cpu.", "gpu."))],
+                                 ["cpu.Temperature_C"])
                 self.csv.unlink()
 
     def test_public_launcher_rejects_legacy_modes_without_running_workload(self):
@@ -254,7 +277,7 @@ class GenerationTest(unittest.TestCase):
         plugin.parent.mkdir(parents=True)
         subprocess.run(
             ["cc", "-fPIC", "-shared", "-I", str(ROOT / "src" / "include"),
-             str(ROOT / "examples" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c"),
+             str(ROOT / "src" / "tests" / "fixtures" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c"),
              "-o", str(plugin)], check=True, capture_output=True, text=True,
         )
         target = self.directory / "new-calibration"
@@ -489,8 +512,8 @@ class GenerationTest(unittest.TestCase):
         self.assertEqual(rows[0][-1], "Cores")
 
     def test_external_source_example_runs_from_generated_library(self):
-        source = ROOT / "examples" / "configurations" / "external-source.toml"
-        example = ROOT / "examples" / "custom_metric"
+        source = ROOT / "src" / "tests" / "fixtures" / "configurations" / "external-source.toml"
+        example = ROOT / "src" / "tests" / "fixtures" / "custom_metric"
         text = source.read_text(encoding="utf-8")
         text = text.replace("../custom_metric/", f"{example}/")
         text = text.replace('command = "sleep 1"', 'command = "sleep 0.06"')
@@ -609,7 +632,7 @@ class GenerationTest(unittest.TestCase):
         self.assertTrue(all(float(row[-1]) == 3.0 for row in rows[1:]))
 
     def test_generated_executable_embeds_selection_and_runs_separately(self):
-        example = ROOT / "examples" / "custom_metric"
+        example = ROOT / "src" / "tests" / "fixtures" / "custom_metric"
         adapter = self.directory / "adapter.so"
         subprocess.run(
             ["cc", "-fPIC", "-shared", str(example / "adapter.c"),
@@ -723,7 +746,7 @@ class GenerationTest(unittest.TestCase):
         for category in ("cpu", "gpu"):
             directory = self.backends / category / "toy"
             directory.mkdir(parents=True)
-            source = ROOT / "examples" / "toy_backends" / category / f"toy_{category}" / f"toy_{category}.c"
+            source = ROOT / "src" / "tests" / "fixtures" / "toy_backends" / category / f"toy_{category}" / f"toy_{category}.c"
             subprocess.run(
                 ["cc", "-fPIC", "-shared", "-I", str(ROOT / "src" / "include"),
                  str(source), "-o", str(directory / "backend.so")],
@@ -759,7 +782,7 @@ class GenerationTest(unittest.TestCase):
         for category in ("cpu", "gpu"):
             directory = self.backends / category / "toy"
             directory.mkdir(parents=True)
-            source = ROOT / "examples" / "toy_backends" / category / f"toy_{category}" / f"toy_{category}.c"
+            source = ROOT / "src" / "tests" / "fixtures" / "toy_backends" / category / f"toy_{category}" / f"toy_{category}.c"
             subprocess.run(
                 ["cc", "-fPIC", "-shared", "-I", str(ROOT / "src" / "include"),
                  str(source), "-o", str(directory / "backend.so")],

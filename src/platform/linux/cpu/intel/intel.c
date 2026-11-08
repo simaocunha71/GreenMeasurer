@@ -3,6 +3,59 @@
 #include <pthread.h>
 #include <regex.h>
 
+static double intel_metric_package(int core, pid_t pid);
+static double intel_metric_core(int core, pid_t pid);
+static double intel_metric_dram(int core, pid_t pid);
+static double intel_metric_temperature(int core, pid_t pid);
+
+static const EnergyMetricDefinition intel_metric_definitions[] = {
+    {
+        .descriptor = {
+            .name = "Package",
+            .unit = "J",
+            .kind = ENERGY_METRIC_WINDOW,
+            .scope = ENERGY_METRIC_DEVICE,
+            .flags = ENERGY_METRIC_FLAG_NONE
+        },
+        .function = ENERGY_METRIC_FUNCTION(intel_metric_package),
+        .info = {.description = "CPU package energy", .origin = "Intel RAPL package MSR"}
+    },
+    {
+        .descriptor = {
+            .name = "Core",
+            .unit = "J",
+            .kind = ENERGY_METRIC_WINDOW,
+            .scope = ENERGY_METRIC_DEVICE,
+            .flags = ENERGY_METRIC_FLAG_NONE
+        },
+        .function = ENERGY_METRIC_FUNCTION(intel_metric_core),
+        .info = {.description = "CPU cores energy", .origin = "Intel RAPL PP0 MSR"}
+    },
+    {
+        .descriptor = {
+            .name = "DRAM",
+            .unit = "J",
+            .kind = ENERGY_METRIC_WINDOW,
+            .scope = ENERGY_METRIC_DEVICE,
+            .flags = ENERGY_METRIC_FLAG_NONE
+        },
+        .function = ENERGY_METRIC_FUNCTION(intel_metric_dram),
+        .info = {.description = "DRAM energy", .origin = "Intel RAPL DRAM MSR"}
+    },
+    {
+        .descriptor = {
+            .name = "Temperature",
+            .unit = "C",
+            .kind = ENERGY_METRIC_GAUGE,
+            .scope = ENERGY_METRIC_DEVICE,
+            .flags = ENERGY_METRIC_FLAG_CPU_TEMPERATURE
+        },
+        .function = ENERGY_METRIC_FUNCTION(intel_metric_temperature),
+        .info = {.description = "Average CPU core temperature", .origin = "Linux coretemp hwmon or sensors"}
+    }
+};
+ENERGY_DEFINE_METRIC_TABLE(intel, intel_metric_definitions)
+
 static int intel_cpu_model = -1;
 static uint32_t package_before = 0, package_after = 0;
 static uint32_t core_before = 0, core_after = 0;
@@ -16,8 +69,16 @@ static double energy_units = 0.0;
 static int energy_units_valid = 0;
 static raplcap global_rc;
 static int raplcap_active = 0;
+typedef struct {
+    uint32_t package, die;
+    raplcap_limit long_limit, short_limit;
+    int enabled;
+    int modified;
+} IntelPowercapSnapshot;
+static IntelPowercapSnapshot *powercap_snapshots = NULL;
+static size_t powercap_snapshot_count = 0;
 
-extern void runTesting(int ntimes, int core, const char *command, const char *language, 
+extern int runTesting(int ntimes, int core, const char *command, const char *language, 
                        const char *program, const char *measurements_file, int powercap, 
                        int time_out_limit, float temp_threshold, int variance, int memory);
 
@@ -319,17 +380,14 @@ static double intel_metric_temperature(int core, pid_t pid) {
     return intel_get_temperature(core);
 }
 
-#define INTEL_METRICS(X) \
-    X("Package", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, intel_metric_package, "CPU package energy", "Intel RAPL package MSR") \
-    X("Core", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, intel_metric_core, "CPU cores energy", "Intel RAPL PP0 MSR") \
-    X("DRAM", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, intel_metric_dram, "DRAM energy", "Intel RAPL DRAM MSR") \
-    X("Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_CPU_TEMPERATURE, intel_metric_temperature, "Average CPU core temperature", "Linux coretemp hwmon or sensors")
-ENERGY_DEFINE_METRICS(intel, INTEL_METRICS)
-
 static int intel_destroy_powercap(void);
 
 static int intel_set_powercap(int watts) {
-    if (watts <= 0) return 0;
+    if (watts == -1) return 0;
+    if (watts <= 0) {
+        fprintf(stderr, "[ERROR] RAPL powercap must be -1 or a positive number of watts.\n");
+        return -1;
+    }
     if (raplcap_active) {
         fprintf(stderr, "[ERROR] An earlier RAPL powercap context is still active.\n");
         return -1;
@@ -355,20 +413,53 @@ static int intel_set_powercap(int watts) {
             return -1;
         }
         for (uint32_t j = 0; j < d; j++) {
-            raplcap_limit long_limit = { .watts = watts, .seconds = 0 };
-            raplcap_limit short_limit = { .watts = watts, .seconds = 0 };
-            if (raplcap_pd_set_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE,
-                                      &long_limit, &short_limit) != 0) {
-                perror("[ERROR] raplcap_pd_set_limits");
+            IntelPowercapSnapshot *snapshots = realloc(
+                powercap_snapshots, (powercap_snapshot_count + 1) * sizeof(*snapshots));
+            if (!snapshots) {
+                fprintf(stderr, "[ERROR] Failed to allocate RAPL powercap snapshots.\n");
                 intel_destroy_powercap();
                 return -1;
             }
-            if (raplcap_pd_set_zone_enabled(&global_rc, q, j,
-                                            RAPLCAP_ZONE_PACKAGE, 1) != 0) {
-                perror("[ERROR] raplcap_pd_set_zone_enabled");
+            powercap_snapshots = snapshots;
+            IntelPowercapSnapshot *snapshot = &powercap_snapshots[powercap_snapshot_count];
+            memset(snapshot, 0, sizeof(*snapshot));
+            snapshot->package = q;
+            snapshot->die = j;
+            snapshot->enabled = raplcap_pd_is_zone_enabled(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE);
+            if (snapshot->enabled < 0 ||
+                raplcap_pd_get_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE,
+                                      &snapshot->long_limit, &snapshot->short_limit) != 0 ||
+                !isfinite(snapshot->long_limit.watts) || snapshot->long_limit.watts <= 0 ||
+                !isfinite(snapshot->short_limit.watts) || snapshot->short_limit.watts <= 0 ||
+                !isfinite(snapshot->long_limit.seconds) || snapshot->long_limit.seconds < 0 ||
+                !isfinite(snapshot->short_limit.seconds) || snapshot->short_limit.seconds < 0) {
+                fprintf(stderr, "[ERROR] Failed to read existing RAPL limits for package %u die %u.\n", q, j);
                 intel_destroy_powercap();
                 return -1;
             }
+            powercap_snapshot_count++;
+        }
+    }
+
+    raplcap_limit long_limit = { .watts = watts, .seconds = 0 };
+    raplcap_limit short_limit = { .watts = watts, .seconds = 0 };
+    for (size_t i = 0; i < powercap_snapshot_count; i++) {
+        IntelPowercapSnapshot *snapshot = &powercap_snapshots[i];
+        snapshot->modified = 1;
+        if (raplcap_pd_set_limits(&global_rc, snapshot->package, snapshot->die, RAPLCAP_ZONE_PACKAGE,
+                                  &long_limit, &short_limit) != 0) {
+            perror("[ERROR] raplcap_pd_set_limits");
+            intel_destroy_powercap();
+            return -1;
+        }
+    }
+    for (size_t i = 0; i < powercap_snapshot_count; i++) {
+        IntelPowercapSnapshot *snapshot = &powercap_snapshots[i];
+        if (raplcap_pd_set_zone_enabled(&global_rc, snapshot->package, snapshot->die,
+                                        RAPLCAP_ZONE_PACKAGE, 1) != 0) {
+            perror("[ERROR] raplcap_pd_set_zone_enabled");
+            intel_destroy_powercap();
+            return -1;
         }
     }
     return 0;
@@ -376,12 +467,33 @@ static int intel_set_powercap(int watts) {
 
 static int intel_destroy_powercap(void) {
     if (!raplcap_active) return 0;
+    int result = 0;
+    for (size_t i = 0; i < powercap_snapshot_count; i++) {
+        IntelPowercapSnapshot *snapshot = &powercap_snapshots[i];
+        if (!snapshot->modified) continue;
+        if (raplcap_pd_set_limits(&global_rc, snapshot->package, snapshot->die,
+                                  RAPLCAP_ZONE_PACKAGE, &snapshot->long_limit,
+                                  &snapshot->short_limit) != 0) {
+            fprintf(stderr, "[ERROR] Failed to restore RAPL limits for package %u die %u.\n",
+                    snapshot->package, snapshot->die);
+            result = -1;
+        }
+        if (raplcap_pd_set_zone_enabled(&global_rc, snapshot->package, snapshot->die,
+                                       RAPLCAP_ZONE_PACKAGE, snapshot->enabled) != 0) {
+            fprintf(stderr, "[ERROR] Failed to restore RAPL zone state for package %u die %u.\n",
+                    snapshot->package, snapshot->die);
+            result = -1;
+        }
+    }
     if (raplcap_destroy(&global_rc) != 0) {
         fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
-        return -1;
+        result = -1;
     }
+    free(powercap_snapshots);
+    powercap_snapshots = NULL;
+    powercap_snapshot_count = 0;
     raplcap_active = 0;
-    return 0;
+    return result;
 }
 
 static void intel_cleanup(void) {
@@ -455,31 +567,53 @@ int intel_calibrate_powercap(int ntimes, int core, const char *command, const ch
 
     int result = 0;
 
-    for (int power_cap = min_powercap; power_cap <= max_powercap; power_cap++) {
+    printf("[INFO] Baseline uses the existing system limits; -1 does not remove them.\n");
+    for (int power_cap = -1; ; power_cap = power_cap == -1 ? min_powercap : power_cap + 1) {
         printf("[INFO] Powercap calibration: Testing with power cap = %d W\n", power_cap);
 
-        if (intel_set_powercap(power_cap) != 0) {
-            fprintf(stderr, "[ERROR] Failed to set powercap %d W. Skipping...\n", power_cap);
+        if (power_cap != -1 && intel_set_powercap(power_cap) != 0) {
+            fprintf(stderr, "[ERROR] Failed to set powercap %d W; calibration aborted.\n", power_cap);
             result = -1;
-            continue;
+            break;
         }
 
-        char filename[256];
-        snprintf(filename, sizeof(filename), "/tmp/%s_%d.csv", program, power_cap);
+        char filename[] = "/tmp/greenmeasurer-calibration-XXXXXX";
+        int temporary_fd = mkstemp(filename);
+        if (temporary_fd < 0) {
+            perror("[ERROR] Failed to create temporary calibration CSV");
+            if (power_cap != -1 && intel_destroy_powercap() != 0) result = -1;
+            result = -1;
+            break;
+        }
+        if (close(temporary_fd) != 0) {
+            perror("[ERROR] Failed to close temporary calibration CSV");
+            remove(filename);
+            if (power_cap != -1 && intel_destroy_powercap() != 0) result = -1;
+            result = -1;
+            break;
+        }
 
         if (initialize_calibration_csv(filename) != 0) {
             result = -1;
-            if (intel_destroy_powercap() != 0) result = -1;
-            continue;
+            remove(filename);
+            if (power_cap != -1 && intel_destroy_powercap() != 0) result = -1;
+            break;
         }
 
-        runTesting(ntimes, core, command, language, program, filename,
-                   power_cap, time_out_limit, temp_threshold, variance, memory);
+        if (runTesting(ntimes, core, command, language, program, filename,
+                       power_cap, time_out_limit, temp_threshold, variance, memory) != 0) {
+            fprintf(stderr, "[ERROR] Calibration measurement failed for powercap %d.\n", power_cap);
+            result = -1;
+        }
 
-        if (intel_destroy_powercap() != 0) result = -1;
-        if (append_calibration_rows(outputFile, filename) != 0) result = -1;
-        remove(filename);
+        if (power_cap != -1 && intel_destroy_powercap() != 0) result = -1;
+        if (result == 0 && append_calibration_rows(outputFile, filename) != 0) result = -1;
+        if (remove(filename) != 0) {
+            perror("[ERROR] Failed to remove temporary calibration CSV");
+            result = -1;
+        }
 
+        if (result != 0 || power_cap == max_powercap) break;
         sleep(1);
     }
 

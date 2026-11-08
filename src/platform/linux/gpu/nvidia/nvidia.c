@@ -5,6 +5,46 @@
 #include <nvml.h>
 #include "../../../../include/energy-backend.h"
 
+static double nvidia_metric_energy(int device, pid_t pid);
+static double nvidia_metric_power(int device, pid_t pid);
+static double nvidia_metric_temperature(int device, pid_t pid);
+static double nvidia_metric_utilization(int device, pid_t pid);
+static double nvidia_metric_vram(int device, pid_t pid);
+
+static const EnergyMetricDefinition nvidia_metric_definitions[] = {
+    {
+        .descriptor = {.name = "GPU", .unit = "J", .kind = ENERGY_METRIC_WINDOW,
+                       .scope = ENERGY_METRIC_DEVICE, .flags = ENERGY_METRIC_FLAG_NONE},
+        .function = ENERGY_METRIC_FUNCTION(nvidia_metric_energy),
+        .info = {.description = "GPU energy over the measurement window", .origin = "NVML total energy counter"}
+    },
+    {
+        .descriptor = {.name = "Power", .unit = "W", .kind = ENERGY_METRIC_GAUGE,
+                       .scope = ENERGY_METRIC_DEVICE, .flags = ENERGY_METRIC_FLAG_NONE},
+        .function = ENERGY_METRIC_FUNCTION(nvidia_metric_power),
+        .info = {.description = "GPU power draw", .origin = "NVML power usage"}
+    },
+    {
+        .descriptor = {.name = "Temperature", .unit = "C", .kind = ENERGY_METRIC_GAUGE,
+                       .scope = ENERGY_METRIC_DEVICE, .flags = ENERGY_METRIC_FLAG_GPU_TEMPERATURE},
+        .function = ENERGY_METRIC_FUNCTION(nvidia_metric_temperature),
+        .info = {.description = "GPU temperature", .origin = "NVML GPU temperature sensor"}
+    },
+    {
+        .descriptor = {.name = "Utilization", .unit = "%", .kind = ENERGY_METRIC_GAUGE,
+                       .scope = ENERGY_METRIC_DEVICE, .flags = ENERGY_METRIC_FLAG_NONE},
+        .function = ENERGY_METRIC_FUNCTION(nvidia_metric_utilization),
+        .info = {.description = "GPU utilization", .origin = "NVML utilization rates"}
+    },
+    {
+        .descriptor = {.name = "VRAM", .unit = "MiB", .kind = ENERGY_METRIC_PEAK,
+                       .scope = ENERGY_METRIC_PROCESS, .flags = ENERGY_METRIC_FLAG_NONE},
+        .function = ENERGY_METRIC_FUNCTION(nvidia_metric_vram),
+        .info = {.description = "Workload GPU memory usage", .origin = "NVML compute and graphics process lists"}
+    }
+};
+ENERGY_DEFINE_METRIC_TABLE(nvidia, nvidia_metric_definitions)
+
 static nvmlDevice_t nvml_device;
 static unsigned long long energy_before_mj = 0;
 static unsigned long long energy_after_mj = 0;
@@ -180,14 +220,6 @@ static double nvidia_metric_utilization(int device, pid_t pid) {
 static double nvidia_metric_vram(int device, pid_t pid) {
     return nvidia_get_memory_usage(device, (int)pid);
 }
-#define NVIDIA_METRICS(X) \
-    X("GPU", "J", ENERGY_METRIC_WINDOW, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, nvidia_metric_energy, "GPU energy over the measurement window", "NVML total energy counter") \
-    X("Power", "W", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, nvidia_metric_power, "GPU power draw", "NVML power usage") \
-    X("Temperature", "C", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_GPU_TEMPERATURE, nvidia_metric_temperature, "GPU temperature", "NVML GPU temperature sensor") \
-    X("Utilization", "%", ENERGY_METRIC_GAUGE, ENERGY_METRIC_DEVICE, ENERGY_METRIC_FLAG_NONE, nvidia_metric_utilization, "GPU utilization", "NVML utilization rates") \
-    X("VRAM", "MiB", ENERGY_METRIC_PEAK, ENERGY_METRIC_PROCESS, ENERGY_METRIC_FLAG_NONE, nvidia_metric_vram, "Workload GPU memory usage", "NVML compute and graphics process lists")
-ENERGY_DEFINE_METRICS(nvidia, NVIDIA_METRICS)
-
 static void nvidia_cleanup(void) {
     if (nvml_initialized) {
         nvmlShutdown();

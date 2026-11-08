@@ -214,21 +214,25 @@ fi
 echo "[TEST] Contiguous overtime windows"
 mkdir -p "$WORK/toy/cpu/toy" "$WORK/toy/gpu/toy"
 if cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/cpu/toy/backend.so" \
-    ../../examples/toy_backends/cpu/toy_cpu/toy_cpu.c &&
+    fixtures/toy_backends/cpu/toy_cpu/toy_cpu.c &&
    cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/gpu/toy/backend.so" \
-    ../../examples/toy_backends/gpu/toy_gpu/toy_gpu.c; then
+    fixtures/toy_backends/gpu/toy_gpu/toy_gpu.c; then
     GREENMEASURER_BACKEND_DIR="$WORK/toy" "$MAIN" --overtime \
         -command "sleep 0.32" -language C -program t -interval-us 50000 \
         -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
         -output "$WORK/toy.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
     if [[ $? -eq 0 ]] && awk -F, '
+        NR == 1 { for (i = 1; i <= NF; i++) {
+            if ($i == "cpu.Energy_J") cpu_col = i;
+            if ($i == "gpu.Energy_J") gpu_col = i;
+        }}
         NR > 1 {
             elapsed = $4 / 1000;
-            cpu += $(NF-4); gpu += $(NF-2); count++;
-            if ($(NF-4) < 0 || $(NF-2) < 0) bad = 1;
+            cpu += $cpu_col; gpu += $gpu_col; count++;
+            if ($cpu_col < 0 || $gpu_col < 0) bad = 1;
         }
         END {
-            exit !(count >= 2 && !bad &&
+            exit !(cpu_col && gpu_col && count >= 2 && !bad &&
                    cpu > 9.5 * elapsed && cpu < 10.5 * elapsed &&
                    gpu > 4.75 * elapsed && gpu < 5.25 * elapsed);
         }' "$WORK/toy.csv"; then
@@ -288,7 +292,7 @@ if grep -Eq "Fake GPU Off|unbuilt" "$WORK/all.txt"; then
     FAIL=$((FAIL+1)); echo "  FAIL - overtime lists undetected or unbuilt GPU"
 else PASS=$((PASS+1)); echo "  ok   - overtime hides undetected and unbuilt GPU"; fi
 GREENMEASURER_BACKEND_DIR="$ROOT" GREENMEASURER_VERBOSE_BACKENDS=0 \
-    "$MAIN" --config ../../examples/configurations/system-cores.toml \
+    "$MAIN" --config fixtures/configurations/system-cores.toml \
     -command "sleep 0.05" -sleep-secs 0 -calib-file "$WORK/calib.txt" \
     -output "$WORK/configured.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
 RC=$?
@@ -314,8 +318,8 @@ build_fake gpu good "Fake GPU" 0 1 -DFAKE_GPU
 run_main
 expect "CPU absence warns"                    "No CPU energy backend active"
 expect "GPU still selected"                   "Fake GPU +selected"
-[[ $RC -eq 0 ]] && { PASS=$((PASS+1)); echo "  ok   - GPU-only measurement succeeds"; } || {
-    FAIL=$((FAIL+1)); echo "  FAIL - GPU-only measurement exits non-zero";
+[[ $RC -ne 0 ]] && { PASS=$((PASS+1)); echo "  ok   - GPU-only measurement requires CPU temperature"; } || {
+    FAIL=$((FAIL+1)); echo "  FAIL - GPU-only measurement did not require CPU temperature";
 }
 
 echo "[TEST] No backend at all"
@@ -337,7 +341,7 @@ expect "override error is reported"           "GREENMEASURER_BACKEND_DIR is not 
 
 echo "[TEST] External metric adapter"
 if cc -O2 -Wall -Wextra -fPIC -shared \
-    ../../examples/custom_metric/adapter.c ../../examples/custom_metric/processes.c \
+    fixtures/custom_metric/adapter.c fixtures/custom_metric/processes.c \
     -o "$WORK/metric-adapter.so" &&
    cc -O2 -Wall -Wextra metric_adapter_test.c ../metrics/metric_adapter_loader.c \
     -o "$WORK/metric-adapter-test" -ldl -lm &&
