@@ -195,9 +195,13 @@ sudo ./generated-powercap/greenmeasurer
 
 Powercap calibration runs tests at each Watt step in the configured range. It
 requires a backend supporting calibration and appropriate hardware permissions.
-Every measurement and calibration requires a readable CPU temperature from the
-active CPU backend. If it is unavailable, the program reports an error and does
-not start the workload.
+When a CPU backend is active, every measurement and calibration requires a
+readable CPU temperature from it. If it is unavailable, the program reports an
+error and does not start the workload. If no CPU backend is active but a GPU
+backend is (for example an unsupported CPU with an NVIDIA GPU), the temperature
+check, baseline waiting and temperature calibration are skipped; `variance` and
+`sleep_seconds` then have no effect, and only `gpu.*` and `system.*` metrics are
+available.
 The Intel backend first measures a baseline with `Powercap = -1`, then measures
 each configured limit. Results are summarized if post-processing is available.
 The baseline uses existing system limits; `-1` does not disable or remove them.

@@ -291,6 +291,26 @@ static double added_metric(int device, pid_t pid) {
                     self.assertTrue(all(len(row) == len(columns) for row in rows))
                     output.unlink()
 
+    def test_gpu_only_run_does_not_require_cpu_temperature(self):
+        self.compile_backend("gpu", "fake", SRC / "tests" / "fake_backend.c",
+                             '-DFAKE_NAME="FakeGpu"', "-DFAKE_PRIORITY=0", "-DFAKE_DETECT=1",
+                             "-DFAKE_GPU")
+        output = self.directory / "gpu-only.csv"
+        config = self.directory / "gpu-only.toml"
+        config.write_text(
+            '[measurement]\nmode = "standard"\ncommand = "true"\n'
+            f'output = "{output}"\nsleep_seconds = 0\n'
+            f'calibration_file = "{self.directory / "missing-baseline.txt"}"\n\n'
+            '[metrics]\nselect = ["system.cores"]\n', encoding="utf-8")
+        build = self.directory / "gpu-only-build"
+        result = self.generate(config, build)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run([str(build / "greenmeasurer")], env=self.env,
+                                cwd=self.directory, text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("CPU temperature is unavailable", result.stderr)
+        self.assertTrue(output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

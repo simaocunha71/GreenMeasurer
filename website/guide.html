@@ -55,7 +55,7 @@ select = ["system.cores", "cpu.Package"]</code></pre>
         <p>For overtime, <code>interval_us</code> is in microseconds: <code>10000</code> is 10 ms and <code>1000000</code> is 1 second. It sets the target pause between sampling cycles, not a guaranteed period; backend reads and scheduling add time. Window energy is reported per interval, not as instantaneous power. Sampling has a finite capacity of 262,144 rows.</p>
       </section>
       <section id="temperature"><h2>Temperature baseline</h2>
-        <p>All measurement and calibration modes require a readable CPU temperature from the selected CPU backend. An unavailable or invalid reading stops execution before the workload. If the baseline file is missing, a measurement creates it after the configured settling time.</p>
+        <p>When a CPU backend is active, all measurement and calibration modes require a readable CPU temperature from it; an unavailable or invalid reading stops execution before the workload. If only a GPU backend is active, temperature checks and calibration are skipped. If the baseline file is missing, a measurement creates it after the configured settling time.</p>
         <pre><code>[measurement]
 mode = "temperature-calibration"
 sleep_seconds = 10

@@ -215,8 +215,9 @@ Each backend tracks whether the "before" and "after" samples were read successfu
 ### 6.3 Error handling
 - `init`, `sample_start`, `sample_stop` return codes are checked by the core (`cpu_sample_ready`/`gpu_sample_ready`); a failed sample marks the corresponding metrics as unsupported.
 - The AMD backend no longer calls `exit(127)` on MSR open failure; it returns an error so the core can continue with other backends.
-- The core null-checks the active CPU backend before powercap operations. Measurements
-  also require a readable CPU temperature, even when only GPU metrics are selected.
+- The core null-checks the active CPU backend before powercap operations. When a CPU
+  backend is active, measurements require a readable CPU temperature, even when only GPU metrics
+  are selected. Without a CPU backend but with a GPU backend, thermal control is skipped.
 - Permission and device errors are reported once instead of on every sample.
 
 ### 6.4 Temperature semantics

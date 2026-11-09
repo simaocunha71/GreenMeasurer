@@ -551,7 +551,18 @@ static float get_current_cpu_temp(int core) {
                                         ENERGY_METRIC_FLAG_CPU_TEMPERATURE);
 }
 
+/* CPU temperature is mandatory when a CPU backend is active. Without one (for example an
+   unsupported CPU with a supported GPU) thermal control is skipped; with no backend at all
+   it stays required so that the run fails instead of measuring nothing. */
+static int cpu_temperature_required(void) {
+    return active_cpu_backend != NULL || active_gpu_backend == NULL;
+}
+
 static int require_cpu_temperature(float *temperature) {
+    if (!cpu_temperature_required()) {
+        if (temperature) *temperature = NAN;
+        return 0;
+    }
     float value = get_current_cpu_temp(0);
     if (!isfinite(value) || value <= 0.0f) {
         fprintf(stderr, "[ERROR] CPU temperature is unavailable; measurement cannot run.\n");
@@ -590,6 +601,10 @@ static float getInitialTemperature(const char *calibration_file) {
 }
 
 static int resolve_cpu_temperature_baseline(const char *calibration_file, float *baseline) {
+    if (!cpu_temperature_required()) {
+        *baseline = NAN;
+        return 0;
+    }
     float value = getInitialTemperature(calibration_file);
     if (!isfinite(value) || value <= 0.0f) {
         fprintf(stderr, "[WARNING] CPU temperature calibration is invalid; using the current temperature.\n");
@@ -601,6 +616,10 @@ static int resolve_cpu_temperature_baseline(const char *calibration_file, float 
 
 static int wait_for_cpu_temperature(float baseline, int variance, const char *mode,
                                     float *measurement_temperature) {
+    if (!cpu_temperature_required()) {
+        if (measurement_temperature) *measurement_temperature = NAN;
+        return 0;
+    }
     if (!isfinite(baseline) || baseline <= 0.0f || variance < 0) {
         fprintf(stderr, "[ERROR] Invalid CPU temperature baseline or variance.\n");
         return -1;
@@ -625,6 +644,10 @@ static int wait_for_cpu_temperature(float baseline, int variance, const char *mo
 }
 
 static double calibrateTemperature(const char *target_calib_file, int sleep_seconds) {
+    if (!cpu_temperature_required()) {
+        printf("[INFO] No CPU backend is active; CPU temperature calibration is skipped.\n");
+        return 0;
+    }
     printf("[INFO] Sleeping %d seconds to stabilize and calibrate CPU temperature...\n", sleep_seconds);
     if (sleep_seconds > 0) {
         sleep(sleep_seconds);
@@ -1455,7 +1478,7 @@ int runTesting(int ntimes, int core, const char *command, const char *language,
             fclose(fp);
             return -1;
         }
-        while (temp > temp_threshold + variance) {
+        while (cpu_temperature_required() && temp > temp_threshold + variance) {
             printf("[INFO] Temperature %.1f°C > Baseline %.1f°C + %d°C. Waiting 1s...\n", 
                    temp, temp_threshold, variance);
             sleep(1);
