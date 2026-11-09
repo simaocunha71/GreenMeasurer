@@ -1,0 +1,15 @@
+[measurement]
+mode = "standard"
+command = "python3 Languages/Python/Fibonacci/fibonacci.py 42"
+language = "Python"
+program = "fibonacci-42"
+output = "greenmeasurer-test-standard.csv"
+repetitions = 3
+timeout_hours = 4
+sleep_seconds = 60
+variance = 5
+powercap = -1
+calibration_file = "greenmeasurer-test-temperature.txt"
+
+[metrics]
+select = ["system.cores", "cpu.Package", "cpu.Temperature"]

@@ -1,0 +1,16 @@
+[measurement]
+mode = "powercap-calibration"
+command = "python3 Languages/Python/Fibonacci/fibonacci.py 42"
+language = "Python"
+program = "fibonacci-42"
+powercap_min = 1
+powercap_max = 25
+repetitions = 3
+timeout_hours = 4
+variance = 5
+sleep_seconds = 60
+calibration_file = "greenmeasurer-test-temperature.txt"
+output = "greenmeasurer-test-powercap-calibration.csv"
+
+[metrics]
+select = ["cpu.Package", "cpu.Temperature"]
