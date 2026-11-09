@@ -223,6 +223,8 @@ Each backend tracks whether the "before" and "after" samples were read successfu
 Previously, when no GPU sensor existed, the CPU temperature was copied into the GPU temperature column. This produced misleading data (a "GPU temperature" that was not measured). The fallback was removed:
 
 - `Temperature` is a direct sensor reading or `NOT_SUPPORTED`.
+- The Intel CPU backend uses the lm-sensors C library to average readable
+  `Core` temperature inputs from the `coretemp` chip.
 - The Intel integrated GPU backend reads hwmon sensors (`/sys/class/hwmon/*/temp*_label` whose label starts with `GPU`). The CPU package temperature is deliberately **not** used even though the iGPU shares the package, because it is a package-level value and not a GPU sensor.
 - `detect()` for the integrated GPU backend returns 1 if either the PP1 energy counter or a GPU temperature sensor is accessible.
 

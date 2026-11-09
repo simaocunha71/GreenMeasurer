@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <limits.h>
 
 /* sysconf(_SC_NPROCESSORS_ONLN) reads /sys on every call, so the value is cached. */
 int sys_core_count(void) {
@@ -60,14 +61,14 @@ double sys_core_frequency_mhz(int core) {
     return (double)strtoul(text, NULL, 10) / 1000.0;
 }
 
-double sys_running_processes(void) {
+int sys_running_processes(void) {
     int fd = sys_open_once(&sys_loadavg_fd, "/proc/loadavg");
     char text[128];
     if (sys_pread_text(fd, text, sizeof(text)) != 0) return SYS_METRIC_NOT_SUPPORTED;
     double l1, l5, l15;
     unsigned running = 0, total = 0;
     return sscanf(text, "%lf %lf %lf %u/%u", &l1, &l5, &l15, &running, &total) == 5
-        ? (double)running : SYS_METRIC_NOT_SUPPORTED;
+        && running <= INT_MAX ? (int)running : SYS_METRIC_NOT_SUPPORTED;
 }
 
 size_t sys_collect_process_tree(pid_t root_pid, pid_t *ids, size_t capacity) {
@@ -98,16 +99,21 @@ size_t sys_collect_process_tree(pid_t root_pid, pid_t *ids, size_t capacity) {
     return count;
 }
 
-double sys_workload_process_count(pid_t root_pid) {
+int sys_workload_process_count(pid_t root_pid) {
     pid_t ids[SYS_MAX_PROCESS_TREE];
     size_t count = sys_collect_process_tree(root_pid, ids, SYS_MAX_PROCESS_TREE);
-    return count > 0 ? (double)count : SYS_METRIC_NOT_SUPPORTED;
+    return count > 0 ? (int)count : SYS_METRIC_NOT_SUPPORTED;
 }
 
-static double process_rss_kb(pid_t pid) {
+static long process_rss_kb(pid_t pid) {
     /* statm is a single short line: "size resident shared ..." in pages. */
     static long page_kb = 0;
-    if (page_kb == 0) page_kb = sysconf(_SC_PAGESIZE) / 1024;
+    if (page_kb == 0) {
+        long page_size = sysconf(_SC_PAGESIZE);
+        if (page_size <= 0) return SYS_METRIC_NOT_SUPPORTED;
+        page_kb = page_size / 1024;
+        if (page_kb == 0) return SYS_METRIC_NOT_SUPPORTED;
+    }
     char path[64], text[128];
     snprintf(path, sizeof(path), "/proc/%d/statm", pid);
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -116,17 +122,23 @@ static double process_rss_kb(pid_t pid) {
     close(fd);
     unsigned long size = 0, resident = 0;
     if (failed || sscanf(text, "%lu %lu", &size, &resident) != 2) return SYS_METRIC_NOT_SUPPORTED;
-    return (double)(resident * (unsigned long)page_kb);
+    if (resident > (unsigned long)LONG_MAX / (unsigned long)page_kb)
+        return SYS_METRIC_NOT_SUPPORTED;
+    return (long)resident * page_kb;
 }
 
-double sys_workload_memory_kb(pid_t root_pid) {
+long sys_workload_memory_kb(pid_t root_pid) {
     pid_t ids[SYS_MAX_PROCESS_TREE];
     size_t count = sys_collect_process_tree(root_pid, ids, SYS_MAX_PROCESS_TREE);
-    double total = 0.0;
+    long total = 0;
     int found = 0;
     for (size_t i = 0; i < count; i++) {
-        double kb = process_rss_kb(ids[i]);
-        if (kb >= 0.0) { total += kb; found = 1; }
+        long kb = process_rss_kb(ids[i]);
+        if (kb >= 0) {
+            if (total > LONG_MAX - kb) return SYS_METRIC_NOT_SUPPORTED;
+            total += kb;
+            found = 1;
+        }
     }
     return found ? total : SYS_METRIC_NOT_SUPPORTED;
 }

@@ -4,6 +4,7 @@
 __pycache__/
 /src/main
 /src/list-metrics
+/src/greenmeasurer-engine
 /src/metric-adapter-check
 /src/tests/legacy-engine
 /src/tests/intel-powercap-test

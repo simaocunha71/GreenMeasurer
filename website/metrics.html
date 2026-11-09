@@ -25,7 +25,7 @@
 ./src/main --list-metrics cpu intel</code></pre>
         <p>Listing describes compiled plugins without testing each reading. Only load plugins from trusted directories.</p>
       </section>
-      <section id="cpu"><p class="eyebrow">Backend / Intel</p><h2>CPU</h2><p>Energy counters use Intel RAPL MSRs. Temperature comes from Linux coretemp hwmon or <code>sensors</code>; it is not a RAPL metric. <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/platform/linux/cpu/intel/intel.c">View definitions ↗</a></p>
+      <section id="cpu"><p class="eyebrow">Backend / Intel</p><h2>CPU</h2><p>Energy counters use Intel RAPL MSRs. CPU core temperatures are read through the lm-sensors C library and averaged; this is not a RAPL metric. <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/platform/linux/cpu/intel/intel.c">View definitions ↗</a></p>
         <div class="table-wrap"><table><thead><tr><th>TOML name</th><th>Kind</th><th>Reading function</th><th>Meaning</th></tr></thead><tbody>
           <tr><td><code>cpu.Package</code></td><td>window · J</td><td><code>intel_metric_package</code></td><td>Package energy from the package MSR.</td></tr>
           <tr><td><code>cpu.Core</code></td><td>window · J</td><td><code>intel_metric_core</code></td><td>Core-domain energy from RAPL PP0.</td></tr>
@@ -50,6 +50,7 @@
         </tbody></table></div>
       </section>
       <section id="system"><p class="eyebrow">Built into the core</p><h2>System metrics</h2><p>These names do not belong to a hardware plugin. A readable CPU temperature is still required to run a measurement. <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/metrics/system_metrics.h">View system functions ↗</a></p>
+        <p>Memory in KiB, core counts and process counts are emitted as integers in both modes. Frequency in MHz is sampled and averaged in standard mode, so it may be fractional.</p>
         <div class="table-wrap"><table><thead><tr><th>TOML name</th><th>Function</th><th>Meaning</th></tr></thead><tbody>
           <tr><td><code>system.cores</code></td><td><code>sys_core_count</code></td><td>Number of online logical CPU cores.</td></tr>
           <tr><td><code>system.core_frequency</code></td><td><code>sys_core_frequency_mhz</code></td><td>Per-core frequency in MHz.</td></tr>

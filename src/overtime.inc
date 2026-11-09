@@ -10,9 +10,12 @@ struct OvertimeContext {
     const char *program;
     int powercap;
     const char *output_file;
+    int append;
 };
 
-static double ot_scalar_values[OT_SCALAR_COUNT][OT_MAX_SAMPLES];
+static long ot_memory_kb[OT_MAX_SAMPLES];
+static int ot_cores[OT_MAX_SAMPLES];
+static int ot_process_values[2][OT_MAX_SAMPLES];
 static float ot_freq_mhz[OT_MAX_SAMPLES][SYS_MAX_CORES];
 static double ot_backend_values[OT_MAX_METRICS][OT_MAX_SAMPLES];
 static double ot_timestamp_ms[OT_MAX_SAMPLES];
@@ -180,13 +183,13 @@ static int ot_sample(pid_t workload_pid, int finished) {
     }
 
     if (!configured_overtime || configured_system[0])
-        ot_scalar_values[0][slot] = sys_workload_memory_kb(workload_pid);
+        ot_memory_kb[slot] = sys_workload_memory_kb(workload_pid);
     if (!configured_overtime || configured_system[1])
-        ot_scalar_values[1][slot] = (double)sys_core_count();
+        ot_cores[slot] = sys_core_count();
     if (!configured_overtime || configured_system[2])
-        ot_scalar_values[2][slot] = sys_workload_process_count(workload_pid);
+        ot_process_values[0][slot] = sys_workload_process_count(workload_pid);
     if (!configured_overtime || configured_system[3])
-        ot_scalar_values[3][slot] = sys_running_processes();
+        ot_process_values[1][slot] = sys_running_processes();
     if (!configured_overtime || configured_system[4]) {
         for (int core = 0; core < ot_core_count; core++) {
             ot_freq_mhz[slot][core] = (float)sys_core_frequency_mhz(core);
@@ -202,19 +205,36 @@ static int ot_sample(pid_t workload_pid, int finished) {
         }
     }
     if (configured_overtime) {
-        static const char *names[] = {"system.memory", "system.cores",
-            "system.workload_processes", "system.running_processes"};
-        for (int i = 0; i < OT_SCALAR_COUNT; i++) {
-            if (configured_system[i] &&
-                (!isfinite(ot_scalar_values[i][slot]) || ot_scalar_values[i][slot] < 0.0 ||
-                 (i == 1 && ot_scalar_values[i][slot] == 0.0)) &&
-                !(finished && (i == 0 || i == 2))) {
+        static const char *names[] = {
+            "system.memory", "system.cores",
+            "system.workload_processes", "system.running_processes"
+        };
+        for (int i = 0; i < 2; i++) {
+            long value = i == 0 ? ot_memory_kb[slot] : ot_cores[slot];
+            if (configured_system[i] && (value < 0 || (i == 1 && value == 0))) {
                 if (!ot_scalar_warned[i]) {
                     fprintf(stderr, "[WARNING] Failed to read %s; recording NOT_SUPPORTED "
                             "for failed samples.\n", names[i]);
                     ot_scalar_warned[i] = 1;
                 }
-                ot_scalar_values[i][slot] = SYS_METRIC_NOT_SUPPORTED;
+                if (i == 0) ot_memory_kb[slot] = SYS_METRIC_NOT_SUPPORTED;
+                else ot_cores[slot] = SYS_METRIC_NOT_SUPPORTED;
+            }
+        }
+        static const char *process_names[] = {
+            "system.workload_processes", "system.running_processes"
+        };
+        for (int i = 0; i < 2; i++) {
+            int system_index = i + 2;
+            int value = ot_process_values[i][slot];
+            if (configured_system[system_index] && value < 0 &&
+                !(finished && i == 0)) {
+                if (!ot_scalar_warned[system_index]) {
+                    fprintf(stderr, "[WARNING] Failed to read %s; recording NOT_SUPPORTED "
+                            "for failed samples.\n", process_names[i]);
+                    ot_scalar_warned[system_index] = 1;
+                }
+                ot_process_values[i][slot] = SYS_METRIC_NOT_SUPPORTED;
             }
         }
         for (size_t i = 0; i < configured_external_count; i++) {
@@ -276,19 +296,22 @@ static int ot_sample(pid_t workload_pid, int finished) {
 }
 
 static int ot_dump(const struct OvertimeContext *ctx) {
-    FILE *fp = fopen(ctx->output_file, "w");
+    FILE *fp = fopen(ctx->output_file, ctx->append ? "a" : "w");
     if (!fp) {
         perror("[ERROR] Failed to open overtime CSV");
         return -1;
     }
-    energy_backend_write_csv_header(fp, 1);
+    energy_share_output_file(fileno(fp));
+    if (!ctx->append) energy_backend_write_csv_header(fp, 1);
     for (size_t row = 0; row < ot_count; row++) {
         fprintf(fp, "%s, %s, %d, %.6f", ctx->language, ctx->program, ctx->powercap,
                 ot_timestamp_ms[row]);
         for (int i = 0; i < OT_SCALAR_COUNT; i++) {
             if (configured_overtime && !configured_system[i]) continue;
             fprintf(fp, ", ");
-            write_active_metric_value(fp, ot_scalar_values[i][row]);
+            if (i == 0) write_system_integer_value(fp, ot_memory_kb[row]);
+            else if (i == 1) write_system_integer_value(fp, ot_cores[row]);
+            else write_system_integer_value(fp, ot_process_values[i - 2][row]);
         }
         for (int core = 0; (!configured_overtime || configured_system[4]) && core < ot_core_count; core++) {
             fprintf(fp, ", ");

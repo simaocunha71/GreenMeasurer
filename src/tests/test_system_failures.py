@@ -140,6 +140,27 @@ class SystemFailureTest(unittest.TestCase):
                 self.assertEqual(rows[1][column], "NOT_SUPPORTED")
                 self.assertGreater(float(rows[2][column]), 0)
 
+    def test_integer_system_metrics_are_written_as_integers_in_both_modes(self):
+        for mode in ("standard", "overtime"):
+            with self.subTest(mode=mode):
+                result, rows = self.measure(
+                    mode, "none", [
+                        "system.memory", "system.cores",
+                        "system.workload_processes", "system.running_processes",
+                    ],
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                columns = {name: index for index, name in enumerate(rows[0])}
+                expected_columns = (
+                    "CPU_Memory_KB", "Cores",
+                    "Workload_Processes_Peak" if mode == "standard" else "Workload_Processes",
+                    "System_Running_Processes_Peak" if mode == "standard"
+                    else "System_Running_Processes",
+                )
+                for name in expected_columns:
+                    for row in rows[1:]:
+                        self.assertTrue(row[columns[name]].isdigit(), row[columns[name]])
+
 
 if __name__ == "__main__":
     unittest.main()

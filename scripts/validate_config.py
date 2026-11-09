@@ -32,6 +32,7 @@ SYSTEM_METRICS = {
     "system.running_processes",
     "system.core_frequency",
 }
+MAX_POWERCAPS = 128
 MEASUREMENT_FIELDS = {
     "mode", "command", "language", "program", "output", "calibration_file",
     "interval_us", "repetitions", "timeout_hours", "powercap", "variance", "sleep_seconds",
@@ -99,22 +100,37 @@ def validate_config(data, config_path):
         "powercap_max": (1, 2147483646),
     }
     for key, (minimum, maximum) in limits.items():
-        if key in measurement:
-            value = integer(measurement[key], f"measurement.{key}", minimum, maximum)
-            if key == "powercap" and value == 0:
-                fail("measurement.powercap must be -1 or a positive integer")
-    if mode in ("temperature-calibration", "powercap-calibration"):
-        only_fields(data, {"measurement"}, "calibration configuration")
-        allowed = {"mode", "sleep_seconds", "calibration_file"}
-        if mode == "powercap-calibration":
-            allowed |= {"command", "compile_command", "language", "program", "output",
-                        "repetitions", "timeout_hours", "variance", "powercap_min", "powercap_max"}
-            for key in ("command", "powercap_min", "powercap_max"):
-                if key not in measurement:
-                    fail(f"measurement.{key} is required for powercap calibration")
-            if measurement["powercap_min"] > measurement["powercap_max"]:
-                fail("measurement.powercap_min must not exceed powercap_max")
-        only_fields(measurement, allowed, "measurement")
+        if key in measurement and key != "powercap":
+            integer(measurement[key], f"measurement.{key}", minimum, maximum)
+    if "powercap" in measurement:
+        caps = measurement["powercap"]
+        if isinstance(caps, list):
+            if not caps or len(caps) > MAX_POWERCAPS:
+                fail(f"measurement.powercap must list between 1 and {MAX_POWERCAPS} values")
+            if len(set(caps)) != len(caps):
+                fail("measurement.powercap contains duplicate values")
+        for cap in caps if isinstance(caps, list) else [caps]:
+            integer(cap, "measurement.powercap", -1, 2147483647)
+            if cap == 0:
+                fail("measurement.powercap must contain only -1 or positive integers")
+    if mode == "temperature-calibration":
+        only_fields(data, {"measurement"}, "temperature calibration configuration")
+        only_fields(measurement, {"mode", "sleep_seconds", "calibration_file"}, "measurement")
+        if "calibration_file" in measurement and len(os.fsencode(measurement["calibration_file"])) > 511:
+            fail("measurement.calibration_file exceeds 511 bytes")
+        return data
+    if mode == "powercap-calibration":
+        only_fields(measurement, {"mode", "sleep_seconds", "calibration_file", "command",
+                                  "compile_command", "language", "program", "output",
+                                  "repetitions", "timeout_hours", "variance",
+                                  "powercap_min", "powercap_max"}, "measurement")
+        for key in ("command", "powercap_min", "powercap_max"):
+            if key not in measurement:
+                fail(f"measurement.{key} is required for powercap calibration")
+        if measurement["powercap_min"] > measurement["powercap_max"]:
+            fail("measurement.powercap_min must not exceed powercap_max")
+        if measurement["powercap_max"] - measurement["powercap_min"] + 1 >= MAX_POWERCAPS:
+            fail(f"the powercap range must contain fewer than {MAX_POWERCAPS} values")
         for key, limit in (("command", 499), ("compile_command", 499), ("language", 127),
                            ("program", 127), ("output", 511), ("calibration_file", 511)):
             if key in measurement and len(os.fsencode(measurement[key])) > limit:
@@ -122,10 +138,12 @@ def validate_config(data, config_path):
         for key in ("language", "program"):
             if key in measurement and any(c in measurement[key] for c in ',\r\n"'):
                 fail(f"measurement.{key} cannot contain CSV delimiters or newlines")
-        return data
-    for key in ("powercap_min", "powercap_max", "compile_command"):
-        if key in measurement:
-            fail(f"measurement.{key} is only valid in powercap calibration mode")
+        if "metrics" not in data:
+            data["metrics"] = {"select": ["cpu.Package"]}
+    else:
+        for key in ("powercap_min", "powercap_max", "compile_command"):
+            if key in measurement:
+                fail(f"measurement.{key} is only valid in powercap calibration mode")
     if mode == "standard" and "interval_us" in measurement:
         fail("measurement.interval_us is only valid in overtime mode")
     if mode == "overtime" and ("repetitions" in measurement or "timeout_hours" in measurement):

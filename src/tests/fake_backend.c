@@ -61,6 +61,9 @@ static double fake_metric(size_t metric_index, int id, pid_t process_id) {
         return METRIC_NOT_SUPPORTED;
 #elif defined(FAKE_TEMPERATURE_NAN)
         return NAN;
+#elif defined(FAKE_TEMPERATURE_INCREASING)
+        static int temperature_reads;
+        return 40.0 + temperature_reads++;
 #elif defined(FAKE_TEMPERATURE_FAIL_AFTER_ONE)
         static int temperature_reads;
         return temperature_reads++ == 0 ? 42.0 : METRIC_NOT_SUPPORTED;
@@ -80,7 +83,6 @@ static double fake_metric(size_t metric_index, int id, pid_t process_id) {
 }
 static const char *fake_diagnose(void) { return "fake backend is disabled"; }
 #if defined(FAKE_POWER_CAP_FAILURE) || defined(FAKE_POWER_CAP_SUCCESS)
-int energy_backend_commit_powercap(void) { return 0; }
 static int fake_destroy_powercap(void) { return 0; }
 static int fake_set_powercap(int watts) {
     (void)watts;

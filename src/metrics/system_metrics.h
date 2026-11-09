@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <sys/types.h>
 
-#define SYS_METRIC_NOT_SUPPORTED -1.0
+#define SYS_METRIC_NOT_SUPPORTED -1
 #define SYS_MAX_CORES 256
 #define SYS_MAX_PROCESS_TREE 1024
 
@@ -15,15 +15,15 @@ int sys_core_count(void);
 double sys_core_frequency_mhz(int core);
 
 /* Runnable processes system-wide (first field of the /proc/loadavg 4th column). */
-double sys_running_processes(void);
+int sys_running_processes(void);
 
 /* Collects root_pid and all of its descendants. Returns how many were stored. */
 size_t sys_collect_process_tree(pid_t root_pid, pid_t *ids, size_t capacity);
 
 /* Number of live processes in the workload process tree. */
-double sys_workload_process_count(pid_t root_pid);
+int sys_workload_process_count(pid_t root_pid);
 
 /* Resident set size (KiB) summed over the workload process tree. */
-double sys_workload_memory_kb(pid_t root_pid);
+long sys_workload_memory_kb(pid_t root_pid);
 
 #endif

@@ -6,8 +6,27 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #define METRIC_NOT_SUPPORTED -1.0
+
+/* Make a file created by a privileged run usable by the invoking user: apply
+   the normal umask-based mode and, under sudo, hand ownership to SUDO_UID/SUDO_GID. */
+static inline void energy_share_output_file(int fd) {
+    if (fd < 0) return;
+    mode_t mask = umask(0);
+    umask(mask);
+    if (fchmod(fd, (mode_t)(0666 & ~mask)) != 0) return;
+    const char *uid_text = getenv("SUDO_UID"), *gid_text = getenv("SUDO_GID");
+    if (geteuid() != 0 || !uid_text || !gid_text) return;
+    char *uid_end, *gid_end;
+    unsigned long uid = strtoul(uid_text, &uid_end, 10), gid = strtoul(gid_text, &gid_end, 10);
+    if (*uid_text && *gid_text && !*uid_end && !*gid_end) {
+        if (fchown(fd, (uid_t)uid, (gid_t)gid) != 0) { /* best effort */ }
+    }
+}
 
 typedef enum {
     ENERGY_METRIC_WINDOW,
@@ -196,9 +215,6 @@ int platform_measure_memory(const char *command);
 /* Optional plugin symbol: close a window and advance its baseline to the
    previous stop on the next call, without losing energy between windows. */
 #define ENERGY_BACKEND_SAMPLE_NEXT_SYMBOL "energy_backend_sample_next"
-
-/* Commit a successfully applied power cap so backend cleanup keeps it active. */
-#define ENERGY_BACKEND_COMMIT_POWERCAP_SYMBOL "energy_backend_commit_powercap"
 
 /* Write framework metadata columns followed by metrics from selected backends. */
 void energy_backend_write_csv_header(FILE *stream, int overtime);

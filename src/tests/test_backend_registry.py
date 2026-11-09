@@ -274,7 +274,10 @@ static double added_metric(int device, pid_t pid) {
                         self.assertIn("CPU temperature is unavailable", result.stderr)
                         continue
                     self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn("DETAILS", result.stdout)
+                    self.assertIn("  TYPE  BACKEND                       STATUS", result.stdout)
                     self.assertTrue(baseline.exists())
+                    self.assertTrue(output.stat().st_mode & 0o044, "CSV must be readable by other users")
                     with output.open(newline="", encoding="utf-8") as file:
                         rows = list(csv.reader(file, skipinitialspace=True))
                     columns = ["Language", "Program", "Powercap",

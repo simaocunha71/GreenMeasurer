@@ -13,21 +13,21 @@ int __wrap_sys_core_count(void) {
     return selected("cores-preflight") || (selected("cores-runtime") && reads >= 3) ? 0 : 2;
 }
 
-double __wrap_sys_workload_process_count(pid_t pid) {
+int __wrap_sys_workload_process_count(pid_t pid) {
     (void)pid;
     static int reads;
     reads++;
     return selected("workload-runtime") && reads >= 2 ? SYS_METRIC_NOT_SUPPORTED : 2;
 }
 
-double __wrap_sys_workload_memory_kb(pid_t pid) {
+long __wrap_sys_workload_memory_kb(pid_t pid) {
     (void)pid;
     static int reads;
     reads++;
     return selected("memory-runtime") && reads >= 2 ? SYS_METRIC_NOT_SUPPORTED : 1024;
 }
 
-double __wrap_sys_running_processes(void) {
+int __wrap_sys_running_processes(void) {
     static int reads;
     reads++;
     if (selected("running-preflight") || (selected("running-runtime") && reads >= 3) ||

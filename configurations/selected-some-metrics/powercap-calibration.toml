@@ -1,6 +1,6 @@
 [measurement]
 mode = "powercap-calibration"
-command = 'python3 -c "sum(i*i for i in range(5000000))"'
+command = 'python3 -c "sum(i*i for i in range(15000000))"'
 language = "Python"
 program = "cpu-workload"
 powercap_min = 15
@@ -11,3 +11,6 @@ variance = 5
 sleep_seconds = 0
 calibration_file = "greenmeasurer-test-temperature.txt"
 output = "greenmeasurer-test-powercap-calibration.csv"
+
+[metrics]
+select = ["cpu.Package", "cpu.Temperature"]

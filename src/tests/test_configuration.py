@@ -699,6 +699,56 @@ class ConfigurationTest(unittest.TestCase):
         self.assertGreaterEqual(float(rows[1][4]), 3)
         self.assertEqual(float(rows[1][5]), 9)
 
+    def test_standard_records_temperature_before_the_workload(self):
+        plugin = self.directory / "backends" / "cpu" / "fake" / "backend.so"
+        plugin.parent.mkdir(parents=True)
+        subprocess.run(
+            ["cc", "-fPIC", "-shared", '-DFAKE_NAME="CPU"', "-DFAKE_PRIORITY=0",
+             "-DFAKE_DETECT=1", "-DFAKE_TEMPERATURE_INCREASING",
+             str(ROOT / "src" / "tests" / "fake_backend.c"), "-o", str(plugin)],
+            check=True, capture_output=True, text=True,
+        )
+        calibration = self.directory / "calibration.txt"
+        calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
+        output = self.directory / "temperature.csv"
+        result = self.run_configured(
+            '[measurement]\nmode="standard"\ncommand="sleep 0.3"\n'
+            f'output="{output}"\ncalibration_file="{calibration}"\nvariance=100\n'
+            '[metrics]\nselect=["cpu.Temperature"]\n'
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with output.open(newline="", encoding="utf-8") as file:
+            rows = list(csv.reader(file, skipinitialspace=True))
+        temperature_column = rows[0].index("cpu.Temperature_C")
+        self.assertEqual(float(rows[1][temperature_column]), 42.0)
+
+    def test_overtime_temperature_gate_runs_before_each_measurement(self):
+        plugin = self.directory / "backends" / "cpu" / "fake" / "backend.so"
+        plugin.parent.mkdir(parents=True)
+        subprocess.run(
+            ["cc", "-fPIC", "-shared", '-DFAKE_NAME="CPU"', "-DFAKE_PRIORITY=0",
+             "-DFAKE_DETECT=1", "-DFAKE_TEMPERATURE_INCREASING",
+             str(ROOT / "src" / "tests" / "fake_backend.c"), "-o", str(plugin)],
+            check=True, capture_output=True, text=True,
+        )
+        calibration = self.directory / "calibration.txt"
+        calibration.write_text("Average temperature: 42.0\n", encoding="utf-8")
+        output = self.directory / "overtime-temperature.csv"
+        result = self.run_configured(
+            '[measurement]\nmode="overtime"\ncommand="sleep 0.08"\n'
+            f'output="{output}"\ncalibration_file="{calibration}"\n'
+            'variance=0\nsleep_seconds=0\ninterval_us=10000\n'
+            '[metrics]\nselect=["cpu.Package", "cpu.Temperature"]\n'
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with output.open(newline="", encoding="utf-8") as file:
+            rows = list(csv.reader(file, skipinitialspace=True))
+        temperature_column = rows[0].index("cpu.Temperature_C")
+        temperatures = [float(row[temperature_column]) for row in rows[1:]]
+        self.assertGreaterEqual(len(temperatures), 3)
+        self.assertTrue(all(temperature >= 42.0 for temperature in temperatures))
+        self.assertGreater(len(set(temperatures)), 1)
+
     def test_standard_repetitions_with_external_and_system_metrics(self):
         path = self.build_adapter("configured_metric_adapter.c")
         calibration = self.directory / "calibration.txt"

@@ -2,6 +2,7 @@
 #include "../../../../include/energy-counter.h"
 #include <pthread.h>
 #include <regex.h>
+#include <sensors/sensors.h>
 
 static double intel_metric_package(int core, pid_t pid);
 static double intel_metric_core(int core, pid_t pid);
@@ -51,7 +52,7 @@ static const EnergyMetricDefinition intel_metric_definitions[] = {
             .flags = ENERGY_METRIC_FLAG_CPU_TEMPERATURE
         },
         .function = ENERGY_METRIC_FUNCTION(intel_metric_temperature),
-        .info = {.description = "Average CPU core temperature", .origin = "Linux coretemp hwmon or sensors"}
+        .info = {.description = "Average CPU core temperature", .origin = "lm-sensors coretemp"}
     }
 };
 ENERGY_DEFINE_METRIC_TABLE(intel, intel_metric_definitions)
@@ -284,83 +285,58 @@ int energy_backend_sample_next(int core) {
     return result;
 }
 
-#define INTEL_MAX_TEMP_SENSORS 64
-static int intel_temp_fds[INTEL_MAX_TEMP_SENSORS];
-static int intel_temp_fd_count = 0;
-static pthread_once_t intel_temp_once = PTHREAD_ONCE_INIT;
+static pthread_once_t intel_sensors_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t intel_sensors_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int intel_sensors_status = -1;
 
-static int intel_read_small_file(const char *path, char *buffer, size_t size) {
-    int fd = open(path, O_RDONLY);
-    if (fd < 0) return -1;
-    ssize_t n = pread(fd, buffer, size - 1, 0);
-    close(fd);
-    if (n <= 0) return -1;
-    buffer[n] = '\0';
-    return 0;
-}
-
-/* Opens every "Core N" input of the coretemp hwmon device once; later reads are a single pread each. */
-static void intel_temp_discover(void) {
-    for (int hwmon = 0; hwmon < 64 && intel_temp_fd_count < INTEL_MAX_TEMP_SENSORS; hwmon++) {
-        char path[160], text[64];
-        snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/name", hwmon);
-        if (intel_read_small_file(path, text, sizeof(text)) != 0 || strncmp(text, "coretemp", 8) != 0) continue;
-        for (int index = 1; index < 256 && intel_temp_fd_count < INTEL_MAX_TEMP_SENSORS; index++) {
-            snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/temp%d_label", hwmon, index);
-            if (intel_read_small_file(path, text, sizeof(text)) != 0 || strncmp(text, "Core ", 5) != 0) continue;
-            snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon%d/temp%d_input", hwmon, index);
-            int fd = open(path, O_RDONLY);
-            if (fd >= 0) intel_temp_fds[intel_temp_fd_count++] = fd;
-        }
-    }
-}
-
-static float intel_get_temperature_sysfs(void) {
-    pthread_once(&intel_temp_once, intel_temp_discover);
-    double sum = 0.0;
-    int count = 0;
-    for (int i = 0; i < intel_temp_fd_count; i++) {
-        char text[32];
-        ssize_t n = pread(intel_temp_fds[i], text, sizeof(text) - 1, 0);
-        if (n <= 0) continue;
-        text[n] = '\0';
-        long millidegrees = strtol(text, NULL, 10);
-        if (millidegrees > 0) {
-            sum += (double)millidegrees / 1000.0;
-            count++;
-        }
-    }
-    return count > 0 ? (float)(sum / count) : -1.0f;
-}
-
-static float intel_get_temperature_sensors_command(void) {
-    FILE *fp = popen("sensors 2>/dev/null", "r");
-    if (!fp) return -1.0f;
-
-    char line[256];
-    double sum = 0.0;
-    int count = 0;
-
-    while (fgets(line, sizeof(line), fp)) {
-        if (strncmp(line, "Core ", 5) == 0) {
-            char *plus = strchr(line, '+');
-            if (plus) {
-                float temp = 0.0f;
-                if (sscanf(plus + 1, "%f", &temp) == 1 && temp > 0.0f) {
-                    sum += temp;
-                    count++;
-                }
-            }
-        }
-    }
-    pclose(fp);
-    return (count > 0) ? (float)(sum / count) : -1.0f;
+static void intel_sensors_initialize(void) {
+    intel_sensors_status = sensors_init(NULL);
+    if (intel_sensors_status != 0)
+        fprintf(stderr, "[WARNING] Failed to initialize the lm-sensors library.\n");
 }
 
 static float intel_get_temperature(int core) {
     (void)core;
-    float temperature = intel_get_temperature_sysfs();
-    return temperature > 0.0f ? temperature : intel_get_temperature_sensors_command();
+    if (pthread_once(&intel_sensors_once, intel_sensors_initialize) != 0 ||
+        intel_sensors_status != 0) return -1.0f;
+    if (pthread_mutex_lock(&intel_sensors_mutex) != 0) return -1.0f;
+
+    double sum = 0.0;
+    size_t count = 0;
+    int chip_index = 0;
+    const sensors_chip_name *chip;
+    while ((chip = sensors_get_detected_chips(NULL, &chip_index)) != NULL) {
+        if (!chip->prefix || strcmp(chip->prefix, "coretemp") != 0) continue;
+        int feature_index = 0;
+        const sensors_feature *feature;
+        while ((feature = sensors_get_features(chip, &feature_index)) != NULL) {
+            if (feature->type != SENSORS_FEATURE_TEMP) continue;
+            char *label = sensors_get_label(chip, feature);
+            int is_core = label && strncmp(label, "Core ", 5) == 0;
+            free(label);
+            if (!is_core) continue;
+
+            const sensors_subfeature *input = sensors_get_subfeature(
+                chip, feature, SENSORS_SUBFEATURE_TEMP_INPUT);
+            double value;
+            if (input && (input->flags & SENSORS_MODE_R) &&
+                sensors_get_value(chip, input->number, &value) == 0 &&
+                isfinite(value) && value > 0.0) {
+                sum += value;
+                count++;
+            }
+        }
+    }
+
+    pthread_mutex_unlock(&intel_sensors_mutex);
+    return count ? (float)(sum / (double)count) : -1.0f;
+}
+
+static void intel_sensors_cleanup(void) {
+    if (intel_sensors_status == 0) {
+        sensors_cleanup();
+        intel_sensors_status = -1;
+    }
 }
 
 static double intel_metric_package(int core, pid_t pid) {
@@ -498,6 +474,7 @@ static int intel_destroy_powercap(void) {
 
 static void intel_cleanup(void) {
     intel_destroy_powercap();
+    intel_sensors_cleanup();
 }
 
 static int initialize_calibration_csv(const char *filename) {
@@ -562,6 +539,7 @@ int intel_calibrate_powercap(int ntimes, int core, const char *command, const ch
         perror("[ERROR] Failed to open calibration CSV for writing");
         return -1;
     }
+    energy_share_output_file(fileno(outputFile));
 
     energy_backend_write_csv_header(outputFile, 0);
 

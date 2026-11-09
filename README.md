@@ -73,13 +73,13 @@ src/
 ### 2. Dependencies
 * `build-essential` (`gcc`, `make`)
 * `lm-sensors`
-* `libpowercap` and `raplcap` headers and libraries (required to build the Intel CPU backend, including its power-capping support)
+* `libpowercap` and `raplcap` headers and libraries, plus `libsensors` development headers and library (required to build the Intel CPU backend)
 * NVML headers and `libnvidia-ml` (required to build the NVIDIA GPU backend)
 
 On Ubuntu/Debian:
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential lm-sensors libpowercap-dev libraplcap-dev
+sudo apt-get install -y build-essential lm-sensors libsensors-dev libpowercap-dev libraplcap-dev
 ```
 
 ---
@@ -93,7 +93,7 @@ The `Makefile` checks each optional backend's build dependencies and skips backe
 make -C src
 ```
 
-For example, the Intel CPU backend is skipped when the powercap/raplcap development files are absent, while dependency-free backends can still be built. The NVIDIA backend requires both the NVML header and library. Use `make -C src VERBOSE=1` to see skipped optional backend reasons; the build continues with the remaining available plugins.
+For example, the Intel CPU backend is skipped when the powercap, raplcap or libsensors development files are absent, while dependency-free backends can still be built. The NVIDIA backend requires both the NVML header and library. Use `make -C src VERBOSE=1` to see skipped optional backend reasons; the build continues with the remaining available plugins.
 
 ---
 
@@ -120,21 +120,29 @@ when the configuration changes. The old measurement CLI is no longer available.
 
 ### Hardware test configurations
 
-The TOML files in [`configurations/`](configurations/) exercise temperature
-calibration, standard and overtime measurements with and without a requested
-2 W limit, and a 15–16 W powercap calibration. They use the same short CPU-bound
+The TOML files in [`configurations/`](configurations/) are split in three folders:
+
+| Folder | Contents |
+|--------|----------|
+| [`selected-some-metrics/`](configurations/selected-some-metrics/) | Temperature calibration, standard and overtime measurements with and without a requested 2 W limit, and a 15–16 W powercap calibration, each selecting a few metrics |
+| [`all-metrics/`](configurations/all-metrics/) | Standard and overtime runs with `select = "all"` |
+| [`new-metrics/`](configurations/new-metrics/) | Standard and overtime runs that add system uptime, a metric GreenMeasurer does not provide, from [`system_uptime.c`](configurations/new-metrics/system_uptime.c) and [`system_uptime.h`](configurations/new-metrics/system_uptime.h) |
+
+They use the same short CPU-bound
 Python workload and do not depend on the `Languages` directory. Run commands
 from the repository root so that the shared temperature baseline and CSV files
 are written there. For each configuration, generate into a new directory:
 
 ```bash
-./src/main --config configurations/temperature.toml --directory generated-temperature-test
+./src/main --config configurations/selected-some-metrics/temperature.toml --directory generated-temperature-test
 ./generated-temperature-test/greenmeasurer
-./src/main --config configurations/standard.toml --directory generated-standard-test
+./src/main --config configurations/selected-some-metrics/standard.toml --directory generated-standard-test
 sudo ./generated-standard-test/greenmeasurer
 ```
 
 Replace the configuration and generated directory names to run the other files.
+
+When run with `sudo`, output files (CSVs and calibration files) are made world-readable and, if `SUDO_UID`/`SUDO_GID` are set, owned by the invoking user, so no `sudo` is needed to open them.
 The output CSV is overwritten on a successful run. Access to Intel RAPL MSRs and
 powercap controls may require elevated privileges.
 
@@ -202,8 +210,14 @@ errors are reported and abrupt termination can leave modified limits in place.
 Cleanup has not been verified on hardware; inspect the actual state before and
 after a run. Firmware or other power limits can still apply.
 `powercap = -1` does not change existing limits; it does not disable them.
-The current Intel backend lacks the commit callback required to run standard or
-overtime measurements with a positive powercap.
+`powercap` accepts one value or a list (for example `powercap = [-1, 5, 10]`);
+each value is measured in turn and written to the same CSV with a `Powercap`
+column. Every applied limit is restored to its previous value as soon as its
+measurement ends, so no limit remains after the run (after the last value, for a list).
+`temperature-calibration` needs no `--directory`: `./src/main --config <file>`
+writes the `.txt` directly. `powercap-calibration` accepts an optional
+`[metrics]` section (selected, `select = "all"` or `[[external_metrics]]`;
+default `cpu.Package`) and sweeps `-1, powercap_min..powercap_max`.
 
 As in the original RAPL implementation, Intel powercapping
 sets the same wattage for the package's long- and short-term limits, leaves
@@ -257,7 +271,9 @@ core's mean frequency over the run (all sampled every 50 ms). A metric without a
 Metric behavior is declared by each backend:
 
 * **Window metrics** are measured between `sample_start` and `sample_stop`.
-* **Gauge metrics** are read at the end of a standard run.
+* **Gauge metrics** are read at the end of a standard run, except CPU
+  temperature, which is recorded immediately before the workload after the
+  thermal gate passes. Overtime keeps sampling temperature during execution.
 * **Peak metrics** are polled during standard runs; process-scoped metrics are
   aggregated across the workload process tree. Polling is every 50 ms, so brief
   allocations may be missed.

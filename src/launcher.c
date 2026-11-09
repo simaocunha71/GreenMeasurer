@@ -7,13 +7,18 @@
 int main(int argc, char **argv) {
     if (argc == 2 && (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h"))) {
         printf("Usage: %s [--config <file.toml>] --directory <new-directory>\n"
+               "       %s --config <temperature-calibration.toml>\n"
                "       %s --list-metrics [cpu|gpu [backend-directory]]\n"
-               "Generate and compile a configured executable; run it separately.\n", argv[0], argv[0]);
+               "Generate and compile a configured executable; run it separately.\n"
+               "A temperature-calibration TOML runs directly and needs no directory.\n",
+               argv[0], argv[0], argv[0]);
         return 0;
     }
     int listing = argc >= 2 && !strcmp(argv[1], "--list-metrics");
     int default_config = argc == 3 && !strcmp(argv[1], "--directory");
-    if (!listing && !default_config && (argc != 5 || strcmp(argv[1], "--config") || strcmp(argv[3], "--directory"))) {
+    int direct_config = argc == 3 && !strcmp(argv[1], "--config");
+    if (!listing && !default_config && !direct_config &&
+        (argc != 5 || strcmp(argv[1], "--config") || strcmp(argv[3], "--directory"))) {
         fprintf(stderr, "[ERROR] A TOML configuration and new output directory are required.\n"
                         "Usage: %s [--config <file.toml>] --directory <new-directory>\n", argv[0]);
         return 1;
@@ -50,6 +55,7 @@ int main(int argc, char **argv) {
     }
     char *arguments[] = {"python3", script, default_config ? configuration : argv[2],
                          "--directory", default_config ? argv[2] : argv[4], NULL};
+    if (direct_config) arguments[3] = NULL;
     execvp(arguments[0], arguments);
     perror("[ERROR] Unable to start Python configuration generator");
     return 1;

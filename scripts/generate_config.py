@@ -147,16 +147,29 @@ def build_external_metrics(config, config_path, output, log=sys.stdout):
     return configuration
 
 
+def run_temperature_calibration(config, config_path, log=sys.stdout):
+    """Calibrate the baseline temperature directly; no executable is generated."""
+    subprocess.run(["make", "-C", str(ROOT / "src"), "all"], check=True, stdout=log)
+    environment = os.environ.copy()
+    environment.setdefault("GREENMEASURER_BACKEND_DIR", str(ROOT / "src" / "platform" / "linux"))
+    arguments = [str(ROOT / "src" / "greenmeasurer-engine"), *configured_arguments(config, config_path)]
+    log.flush()
+    result = subprocess.run(arguments, env=environment)
+    if result.returncode != 0:
+        raise ValueError("temperature calibration failed; see the diagnostics above")
+
+
 def generate_configured(config, config_path, output, log=sys.stdout):
     validate_config(config, config_path)
-    calibration = config["measurement"]["mode"] in ("temperature-calibration", "powercap-calibration")
-    if not calibration and "command" not in config["measurement"]:
+    if config["measurement"]["mode"] == "temperature-calibration":
+        run_temperature_calibration(config, config_path, log)
+        return None
+    if "command" not in config["measurement"]:
         raise ValueError("measurement.command is required for execution")
     if not config.get("external_metrics"):
         configured_arguments(config, config_path)
     output.mkdir()
-    if not calibration:
-        config = build_external_metrics(config, config_path, output, log)
+    config = build_external_metrics(config, config_path, output, log)
     arguments = configured_arguments(config, config_path)
     source = output / "greenmeasurer.c"
     binary = output / "greenmeasurer"
@@ -184,8 +197,9 @@ def generate_configured(config, config_path, output, log=sys.stdout):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
-    parser.add_argument("--directory", type=Path, required=True,
-                        help="new directory for greenmeasurer.c and the executable")
+    parser.add_argument("--directory", type=Path,
+                        help="new directory for greenmeasurer.c and the executable "
+                             "(not used by temperature calibration)")
     args = parser.parse_args()
     if tomllib is None:
         print("Error: Python 3.11+ or the 'tomli' package is required for TOML parsing", file=sys.stderr)
@@ -194,7 +208,13 @@ def main():
         config_path = args.config.resolve()
         with config_path.open("rb") as source:
             config = tomllib.load(source)
-        generate_configured(config, config_path, args.directory.absolute())
+        is_temperature = config.get("measurement", {}).get("mode") == "temperature-calibration"
+        if args.directory is None and not is_temperature:
+            raise ValueError("--directory is required to generate an executable")
+        if args.directory is not None and is_temperature:
+            print("[INFO] Temperature calibration runs directly; --directory is ignored.")
+        generate_configured(config, config_path,
+                            args.directory.absolute() if args.directory else None)
         return 0
     except (OSError, ValueError, UnicodeError, subprocess.CalledProcessError) as error:
         print(f"Error: {error}", file=sys.stderr)

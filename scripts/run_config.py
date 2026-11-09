@@ -24,20 +24,9 @@ OPTIONS = {
 
 def configured_arguments(config, config_path):
     measurement = config["measurement"]
-    if measurement["mode"] in ("temperature-calibration", "powercap-calibration"):
-        command = [f'--{measurement["mode"]}']
-        options = {
-            "command": "-command", "compile_command": "-compile_cmd",
-            "language": "-language", "program": "-program", "output": "-output",
-            "calibration_file": "-calib-file", "sleep_seconds": "-secs_to_sleep",
-            "variance": "-variance", "repetitions": "-n_times",
-            "timeout_hours": "-time_out_limit",
-        }
-        if measurement["mode"] == "temperature-calibration":
-            options["sleep_seconds"] = "-sleep-secs"
-        else:
-            command.extend(("-range", f'{measurement["powercap_min"]}-{measurement["powercap_max"]}'))
-        for key, option in options.items():
+    if measurement["mode"] == "temperature-calibration":
+        command = ["--temperature-calibration"]
+        for key, option in (("calibration_file", "-calib-file"), ("sleep_seconds", "-sleep-secs")):
             if key in measurement:
                 command.extend((option, str(measurement[key])))
         return command
@@ -54,11 +43,19 @@ def configured_arguments(config, config_path):
         if key in measurement and any(c in measurement[key] for c in ',\r\n"'):
             raise ValueError(f"measurement.{key} cannot contain CSV delimiters or newlines")
 
-    command = [f'--configured-{measurement["mode"]}']
+    calibrating = measurement["mode"] == "powercap-calibration"
+    command = ["--configured-standard" if calibrating else f'--configured-{measurement["mode"]}']
     for key, option in OPTIONS.items():
         if key in measurement:
             value = measurement[key] * 3600 if key == "timeout_hours" else measurement[key]
+            if key == "powercap":
+                value = ",".join(str(cap) for cap in value) if isinstance(value, list) else value
             command.extend(("-timeout-seconds" if key == "timeout_hours" else option, str(value)))
+    if "compile_command" in measurement:
+        command.extend(("-compile_cmd", measurement["compile_command"]))
+    if calibrating:
+        caps = [-1, *range(measurement["powercap_min"], measurement["powercap_max"] + 1)]
+        command.extend(("-powercap", ",".join(map(str, caps)), "--powercap-report"))
     adapters = {item["name"]: item for item in config.get("adapters", [])}
     if selected == "all":
         command.append("--configured-all")

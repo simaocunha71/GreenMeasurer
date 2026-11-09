@@ -14,8 +14,8 @@ typedef struct {
     double *values;
     unsigned char *available;
     unsigned char *failed;
-    double workload_processes;
-    double running_processes;
+    int workload_processes;
+    int running_processes;
     double freq_sum[SYS_MAX_CORES];
     unsigned long freq_samples[SYS_MAX_CORES];
     unsigned char freq_failed[SYS_MAX_CORES];
@@ -48,7 +48,11 @@ static int configured_standard_prepare_backends(ConfiguredStandardBackends *stat
         state->available[i] = 1;
         state->ready[metric->backend_type] = 1;
         if (metric->descriptor->kind != ENERGY_METRIC_GAUGE ||
-            metric->descriptor->scope == ENERGY_METRIC_PROCESS) state->periodic = 1;
+            metric->descriptor->scope == ENERGY_METRIC_PROCESS ||
+            (metric->descriptor->flags & (ENERGY_METRIC_FLAG_CPU_TEMPERATURE |
+                                          ENERGY_METRIC_FLAG_GPU_TEMPERATURE))) {
+            state->periodic = 1;
+        }
         if (metric->descriptor->kind == ENERGY_METRIC_WINDOW)
             state->window[metric->backend_type] = 1;
     }
@@ -134,7 +138,9 @@ static int configured_standard_sample(ConfiguredStandardBackends *state, pid_t p
                 (int)active_metrics[i].backend_type != type) continue;
             const EnergyMetricDescriptor *metric = active_metrics[i].descriptor;
             if (metric->kind == ENERGY_METRIC_GAUGE && !finished &&
-                metric->scope != ENERGY_METRIC_PROCESS) continue;
+                metric->scope != ENERGY_METRIC_PROCESS &&
+                !(metric->flags & (ENERGY_METRIC_FLAG_CPU_TEMPERATURE |
+                                   ENERGY_METRIC_FLAG_GPU_TEMPERATURE))) continue;
             if (finished && metric->scope == ENERGY_METRIC_PROCESS) continue;
             double value = metric->scope == ENERGY_METRIC_PROCESS
                 ? read_process_tree_metric(i, pid) : read_active_metric(i, 0);
@@ -200,8 +206,8 @@ static int configured_standard_sample(ConfiguredStandardBackends *state, pid_t p
 
 static int configured_standard_sample_system(ConfiguredStandardBackends *state, pid_t pid) {
     if (standard_system_selected(2)) {
-        double value = sys_workload_process_count(pid);
-        if (configured_overtime && (!isfinite(value) || value < 0)) {
+        int value = sys_workload_process_count(pid);
+        if (configured_overtime && value < 0) {
             if (!state->workload_processes_failed)
                 fprintf(stderr, "[WARNING] Failed to read system.workload_processes; "
                         "recording NOT_SUPPORTED for this repetition.\n");
@@ -211,8 +217,8 @@ static int configured_standard_sample_system(ConfiguredStandardBackends *state, 
             state->workload_processes = value;
     }
     if (standard_system_selected(3)) {
-        double value = sys_running_processes();
-        if (configured_overtime && (!isfinite(value) || value < 0)) {
+        int value = sys_running_processes();
+        if (configured_overtime && value < 0) {
             if (!state->running_processes_failed)
                 fprintf(stderr, "[WARNING] Failed to read system.running_processes; "
                         "recording NOT_SUPPORTED for this repetition.\n");
@@ -388,9 +394,11 @@ restore:
 static int configured_standard_run(int argc, char **argv) {
     const char *command = NULL, *language = "C", *program = "Target";
     const char *output = "measurements.csv";
-    int repetitions = 1, timeout = 3600, variance = 0, sleep_time = 5, powercap = -1;
+    int repetitions = 1, timeout = 3600, variance = 0, sleep_time = 5;
+    int powercaps[MAX_POWERCAPS] = {-1}, powercap_count = 1, powercap = -1;
+    int powercap_report = 0, any_cap = 0;
+    const char *compile_command = NULL;
     int status = 1, cap_applied = 0, fd = -1, temporary_created = 0;
-    int (*commit_powercap)(void) = NULL;
     char *temporary = NULL;
     FILE *stream = NULL;
     ConfiguredStandardBackends backends = {0};
@@ -402,12 +410,20 @@ static int configured_standard_run(int argc, char **argv) {
         if (!strcmp(argv[i], "--configured-adapter")) { i += 2; continue; }
         if (!strcmp(argv[i], "--configured-external")) { i += 3; continue; }
         if (!strcmp(argv[i], "--configured-backend")) { i++; continue; }
+        if (!strcmp(argv[i], "--powercap-report")) { powercap_report = 1; continue; }
         const char *option = argv[i];
         if (++i >= argc) return fprintf(stderr, "[ERROR] Missing option value.\n"), 1;
         const char *value = argv[i];
         if (!strcmp(option, "-command") || !strcmp(option, "-run_cmd")) command = value;
         else if (!strcmp(option, "-language")) language = value;
         else if (!strcmp(option, "-program")) program = value;
+        else if (!strcmp(option, "-compile_cmd")) compile_command = value;
+        else if (!strcmp(option, "-powercap")) {
+            powercap_count = parse_powercap_list(value, powercaps, MAX_POWERCAPS);
+            if (powercap_count < 0)
+                return fprintf(stderr, "[ERROR] -powercap must be a comma-separated list of unique values, "
+                                       "each -1 (no GreenMeasurer cap) or at least 1 W.\n"), 1;
+        }
         else if (!strcmp(option, "-output") || !strcmp(option, "-measurements-file")) output = value;
         else if (!strcmp(option, "-calib-file")) {
             if (strlen(value) >= sizeof(calib_file)) return fprintf(stderr, "[ERROR] Calibration path is too long.\n"), 1;
@@ -418,7 +434,6 @@ static int configured_standard_run(int argc, char **argv) {
             else if (!strcmp(option, "-timeout-seconds")) { target = &timeout; minimum = 1; }
             else if (!strcmp(option, "-variance")) target = &variance;
             else if (!strcmp(option, "-sleep-secs") || !strcmp(option, "-sleep_time")) target = &sleep_time;
-            else if (!strcmp(option, "-powercap")) { target = &powercap; minimum = -1; }
             else if (!strcmp(option, "-time_out_limit")) {
                 int hours;
                 if (configured_standard_integer(value, 1, &hours) != 0 || hours > INT_MAX / 3600)
@@ -426,10 +441,7 @@ static int configured_standard_run(int argc, char **argv) {
                 timeout = hours * 3600;
                 continue;
             }
-            if (!target || configured_standard_integer(value, minimum, target) != 0 ||
-                (target == &powercap && powercap == 0)) {
-                if (target == &powercap)
-                    return fprintf(stderr, "[ERROR] -powercap must be -1 (no GreenMeasurer cap) or at least 1 W.\n"), 1;
+            if (!target || configured_standard_integer(value, minimum, target) != 0) {
                 fprintf(stderr, "[ERROR] Invalid configured standard option '%s'.\n", option);
                 return 1;
             }
@@ -438,6 +450,13 @@ static int configured_standard_run(int argc, char **argv) {
     if (!command || !*command) return fprintf(stderr, "[ERROR] Standard workload command is required.\n"), 1;
     if (strpbrk(language, ",\"\r\n") || strpbrk(program, ",\"\r\n"))
         return fprintf(stderr, "[ERROR] Invalid CSV metadata.\n"), 1;
+    if (compile_command && *compile_command) {
+        printf("[INFO] Compiling benchmark target: %s\n", compile_command);
+        if (system(compile_command) != 0) {
+            fprintf(stderr, "[ERROR] Compilation command failed.\n");
+            return 1;
+        }
+    }
     if (configured_overtime) probe_configured_system();
     if (configured_overtime && probe_configured_external() != 0) return 1;
     if (!configured_overtime && (standard_system_selected(1) || standard_system_selected(4)) && sys_core_count() <= 0) {
@@ -462,23 +481,17 @@ static int configured_standard_run(int argc, char **argv) {
     if (standard_system_selected(2) || standard_system_selected(3) || standard_system_selected(4))
         backends.periodic = 1;
     if (access(calib_file, F_OK) != 0 && calibrateTemperature(calib_file, sleep_time) < 0) goto cleanup;
-    float baseline = getInitialTemperature(calib_file);
-    if (baseline <= 0.0f) baseline = get_current_cpu_temp(0);
-    if (powercap > 0) {
-        commit_powercap = get_powercap_commit();
+    float baseline;
+    if (resolve_cpu_temperature_baseline(calib_file, &baseline) != 0) goto cleanup;
+    for (int c = 0; c < powercap_count; c++) if (powercaps[c] > 0) any_cap = 1;
+    if (any_cap) {
         if (!active_cpu_backend || !active_cpu_backend->set_powercap ||
-            !active_cpu_backend->destroy_powercap || !commit_powercap) {
+            !active_cpu_backend->destroy_powercap) {
             fprintf(stderr, "[ERROR] Active CPU backend does not support powercapping.\n");
             goto cleanup;
         }
-        if (active_cpu_backend->set_powercap(powercap) != 0) {
-            fprintf(stderr, "[ERROR] Failed to set powercap to %d W; measurement aborted.\n", powercap);
-            if (active_cpu_backend->destroy_powercap && active_cpu_backend->destroy_powercap() != 0)
-                fprintf(stderr, "[ERROR] Failed to destroy powercap context.\n");
-            goto cleanup;
-        }
-        cap_applied = active_cpu_backend->destroy_powercap != NULL;
     }
+    /* Every applied limit is restored as soon as its measurements end. */
     temporary = malloc(strlen(output) + sizeof(".tmp.XXXXXX"));
     if (!temporary) {
         fprintf(stderr, "[ERROR] Unable to allocate temporary output path.\n");
@@ -486,73 +499,97 @@ static int configured_standard_run(int argc, char **argv) {
     }
     sprintf(temporary, "%s.tmp.XXXXXX", output);
     fd = mkstemp(temporary);
-    if (fd >= 0) temporary_created = 1;
+    if (fd >= 0) {
+        temporary_created = 1;
+        energy_share_output_file(fd);
+    }
     if (fd < 0 || !(stream = fdopen(fd, "w"))) {
         perror("[ERROR] Failed to create temporary measurement CSV");
         if (fd >= 0) close(fd);
         goto cleanup;
     }
     energy_backend_write_csv_header(stream, 0);
-    for (int repetition = 0; repetition < repetitions; repetition++) {
-        float temperature;
-        if (require_cpu_temperature(&temperature) != 0) goto cleanup;
-        while (temperature > baseline + variance && !global_terminate) {
-            sleep(1);
-            if (require_cpu_temperature(&temperature) != 0) goto cleanup;
+    for (int cap_index = 0; cap_index < powercap_count; cap_index++) {
+        powercap = powercaps[cap_index];
+        if (powercap > 0) {
+            if (active_cpu_backend->set_powercap(powercap) != 0) {
+                fprintf(stderr, "[ERROR] Failed to set powercap to %d W; measurement aborted.\n", powercap);
+                if (active_cpu_backend->destroy_powercap() != 0)
+                    fprintf(stderr, "[ERROR] Failed to destroy powercap context.\n");
+                goto cleanup;
+            }
+            cap_applied = 1;
         }
-        if (global_terminate) {
-            fprintf(stderr, "[ERROR] Standard measurement interrupted.\n");
-            goto cleanup;
-        }
-        double elapsed;
-        if (configured_standard_command(command, timeout, &elapsed, &backends) != 0) goto cleanup;
-        fprintf(stream, "%s, %s, %d, %.6f", language, program, powercap, elapsed);
-        if (standard_system_selected(0)) fprintf(stream, ", %ld", backends.memory_kb);
-        if (standard_system_selected(1)) {
-            int cores = sys_core_count();
-            if (cores <= 0) {
-                if (!configured_overtime) {
-                    fprintf(stderr, "[ERROR] Failed to read system.cores.\n");
-                    goto cleanup;
+        for (int repetition = 0; repetition < repetitions; repetition++) {
+            float measurement_temperature;
+            if (wait_for_cpu_temperature(baseline, variance, "Standard",
+                                         &measurement_temperature) != 0) goto cleanup;
+            double elapsed;
+            if (configured_standard_command(command, timeout, &elapsed, &backends) != 0) goto cleanup;
+            for (size_t i = 0; i < active_metric_count; i++) {
+                if (standard_backend_selected(i) &&
+                    active_metrics[i].backend_type == ENERGY_BACKEND_CPU &&
+                    (active_metrics[i].descriptor->flags & ENERGY_METRIC_FLAG_CPU_TEMPERATURE) &&
+                    backends.available[i]) {
+                    backends.values[i] = measurement_temperature;
                 }
-                fprintf(stderr, "[WARNING] Failed to read system.cores; recording NOT_SUPPORTED.\n");
-                fprintf(stream, ", NOT_SUPPORTED");
-            } else {
-                fprintf(stream, ", %d", cores);
             }
-        }
-        if (standard_system_selected(2)) {
-            fprintf(stream, ", ");
-            write_active_metric_value(stream, backends.workload_processes);
-        }
-        if (standard_system_selected(3)) {
-            fprintf(stream, ", ");
-            write_active_metric_value(stream, backends.running_processes);
-        }
-        if (standard_system_selected(4)) {
-            for (int core = 0; core < backends.cores; core++) {
+            fprintf(stream, "%s, %s, %d, %.6f", language, program, powercap, elapsed);
+            if (standard_system_selected(0)) fprintf(stream, ", %ld", backends.memory_kb);
+            if (standard_system_selected(1)) {
+                int cores = sys_core_count();
+                if (cores <= 0) {
+                    if (!configured_overtime) {
+                        fprintf(stderr, "[ERROR] Failed to read system.cores.\n");
+                        goto cleanup;
+                    }
+                    fprintf(stderr, "[WARNING] Failed to read system.cores; recording NOT_SUPPORTED.\n");
+                    fprintf(stream, ", NOT_SUPPORTED");
+                } else {
+                    fprintf(stream, ", %d", cores);
+                }
+            }
+            if (standard_system_selected(2)) {
                 fprintf(stream, ", ");
-                write_active_metric_value(stream, !backends.freq_failed[core] && backends.freq_samples[core]
-                    ? backends.freq_sum[core] / (double)backends.freq_samples[core]
-                    : SYS_METRIC_NOT_SUPPORTED);
+                write_system_integer_value(stream, backends.workload_processes);
+            }
+            if (standard_system_selected(3)) {
+                fprintf(stream, ", ");
+                write_system_integer_value(stream, backends.running_processes);
+            }
+            if (standard_system_selected(4)) {
+                for (int core = 0; core < backends.cores; core++) {
+                    fprintf(stream, ", ");
+                    write_active_metric_value(stream, !backends.freq_failed[core] && backends.freq_samples[core]
+                        ? backends.freq_sum[core] / (double)backends.freq_samples[core]
+                        : SYS_METRIC_NOT_SUPPORTED);
+                }
+            }
+            for (size_t i = 0; i < active_metric_count; i++) {
+                if (!standard_backend_selected(i)) continue;
+                fprintf(stream, ", ");
+                write_active_metric_value(stream, backends.values[i]);
+            }
+            for (size_t i = 0; i < configured_external_count; i++) {
+                ConfiguredExternalMetric *metric = &configured_external_metrics[i];
+                double value;
+                if (read_configured_external(metric, &value) != 0) {
+                    fprintf(stderr, "[WARNING] Recording NOT_SUPPORTED for the failed external metric sample.\n");
+                    value = NAN;
+                }
+                fprintf(stream, ", ");
+                write_external_metric_value(stream, value);
+            }
+            fputc('\n', stream);
+        }
+        if (cap_applied) {
+            cap_applied = 0;
+            if (active_cpu_backend->destroy_powercap() != 0) {
+                fprintf(stderr, "[ERROR] Failed to destroy powercap context.\n");
+                goto cleanup;
             }
         }
-        for (size_t i = 0; i < active_metric_count; i++) {
-            if (!standard_backend_selected(i)) continue;
-            fprintf(stream, ", ");
-            write_active_metric_value(stream, backends.values[i]);
-        }
-        for (size_t i = 0; i < configured_external_count; i++) {
-            ConfiguredExternalMetric *metric = &configured_external_metrics[i];
-            double value;
-            if (read_configured_external(metric, &value) != 0) {
-                fprintf(stderr, "[WARNING] Recording NOT_SUPPORTED for the failed external metric sample.\n");
-                value = NAN;
-            }
-            fprintf(stream, ", ");
-            write_external_metric_value(stream, value);
-        }
-        fputc('\n', stream);
+        if (cap_index + 1 < powercap_count) sleep(1);
     }
     if (ferror(stream)) {
         fprintf(stderr, "[ERROR] Failed to write standard CSV.\n");
@@ -568,14 +605,8 @@ static int configured_standard_run(int argc, char **argv) {
         perror("[ERROR] Failed to publish standard CSV");
         goto cleanup;
     }
-    if (cap_applied) {
-        if (commit_powercap() != 0) {
-            fprintf(stderr, "[ERROR] Failed to retain powercap.\n");
-            goto cleanup;
-        }
-        cap_applied = 0;
-    }
     printf("[INFO] Execution Details: Standard session finished -> %s\n", output);
+    if (powercap_report) run_powercap_processor(output);
     status = 0;
 cleanup:
     if (stream && fclose(stream) != 0) perror("[ERROR] Failed to close standard CSV");

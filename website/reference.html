@@ -39,7 +39,6 @@
       <section id="symbols"><h2>Optional plugin symbols</h2>
         <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Purpose</th></tr></thead><tbody>
           <tr><td><code>energy_backend_sample_next(int device)</code></td><td>Finish a window and advance the baseline for contiguous overtime samples. Without it, the engine uses separate stop/start windows, which can leave gaps.</td></tr>
-          <tr><td><code>energy_backend_commit_powercap(void)</code></td><td>Optional callback looked up by configured capped measurements to retain an applied limit on success. A positive cap is rejected if the required callbacks are unavailable. The current Intel backend does not export this symbol.</td></tr>
           <tr><td><code>energy_metric_function_map</code></td><td>Maps metric indices to reading functions and allows selecting by function name.</td></tr>
           <tr><td><code>energy_metric_info_map</code></td><td>Provides descriptions and origins for <code>--list-metrics</code>.</td></tr>
         </tbody></table></div>

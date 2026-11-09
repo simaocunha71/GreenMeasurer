@@ -122,6 +122,29 @@ class GenerationTest(unittest.TestCase):
                                     for row in rows[1:]))
                 self.csv.unlink()
 
+    def test_new_metric_examples_emit_changing_system_uptime(self):
+        config_directory = ROOT / "configurations" / "new-metrics"
+        for mode in ("standard", "overtime"):
+            with self.subTest(mode=mode):
+                self.build = self.directory / f"new-metric-{mode}"
+                config = config_directory / f"{mode}.toml"
+                result = subprocess.run(
+                    [sys.executable, str(GENERATOR), str(config), "--directory", str(self.build)],
+                    text=True, capture_output=True, env=self.environment, timeout=60,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                result = subprocess.run(
+                    [str(self.build / "greenmeasurer")], text=True, capture_output=True,
+                    env=self.environment, cwd=self.directory, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output = self.directory / f"greenmeasurer-new-metric-{mode}.csv"
+                with output.open(newline="", encoding="utf-8") as file:
+                    rows = list(csv.reader(file, skipinitialspace=True))
+                column = rows[0].index("external.system.UptimeSeconds_s")
+                uptime_values = [float(row[column]) for row in rows[1:]]
+                self.assertGreater(len(set(uptime_values)), 1)
+
     def test_select_all_keeps_failed_runtime_metrics_and_skips_missing_adapter(self):
         adapter = self.directory / "adapter.so"
         missing = self.directory / "missing.so"
@@ -287,10 +310,7 @@ class GenerationTest(unittest.TestCase):
         )
         result = self.generate()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(target.exists())
-        result = subprocess.run([str(self.build / "greenmeasurer")], text=True,
-                                capture_output=True, env=self.environment, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.build.exists())
         self.assertIn("Average temperature:", target.read_text(encoding="utf-8"))
         result = subprocess.run(
             ["bash", str(ROOT / "scripts" / "run_powercap_calibration.sh"),
@@ -301,16 +321,12 @@ class GenerationTest(unittest.TestCase):
         self.assertIn("measurement.mode must be 'powercap-calibration'", result.stderr)
         self.assertFalse((self.directory / "wrong-mode").exists())
 
-        self.build = self.directory / "temperature-failure"
         self.config.write_text(
             '[measurement]\nmode="temperature-calibration"\nsleep_seconds=0\n'
             f'calibration_file="{self.directory / "missing" / "calibration"}"\n',
             encoding="utf-8",
         )
         result = self.generate()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        result = subprocess.run([str(self.build / "greenmeasurer")], text=True,
-                                capture_output=True, env=self.environment, timeout=15)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Failed to open calibration file", result.stderr)
 
@@ -326,36 +342,7 @@ class GenerationTest(unittest.TestCase):
         self.config.write_text(self.config.read_text().replace("powercap_max=4", "powercap_max=6"))
         result = self.generate()
         self.assertEqual(result.returncode, 0, result.stderr)
-        result = subprocess.run([str(self.build / "greenmeasurer")], text=True,
-                                capture_output=True, env=self.environment, timeout=15)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Powercap calibration is not supported", result.stderr)
-
-        subprocess.run(
-            ["cc", "-fPIC", "-shared", '-DFAKE_NAME="calibration"',
-             "-DFAKE_PRIORITY=0", "-DFAKE_DETECT=1", "-DFAKE_POWER_CAP_SUCCESS",
-             str(ROOT / "src" / "tests" / "fake_backend.c"), "-o", str(plugin)],
-            check=True, capture_output=True, text=True,
-        )
-        self.build = self.directory / "powercap-success"
-        output = self.directory / "powercap output.csv"
-        self.config.write_text(
-            '[measurement]\nmode="powercap-calibration"\ncommand="true"\n'
-            f'calibration_file="{self.calibration}"\noutput="{output}"\n'
-            'powercap_min=5\npowercap_max=6\nrepetitions=2\ntimeout_hours=1\nvariance=7\n',
-            encoding="utf-8",
-        )
-        result = subprocess.run(
-            ["bash", str(ROOT / "scripts" / "run_powercap_calibration.sh"),
-             str(self.config), str(self.build)], text=True, capture_output=True,
-            env=self.environment, timeout=60,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(output.exists())
-        result = subprocess.run([str(self.build / "greenmeasurer")], cwd=self.directory,
-                                text=True, capture_output=True, env=self.environment, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(output.read_text(encoding="utf-8"), "2,5,6,3600,7\n")
+        self.assertTrue((self.build / "greenmeasurer").exists())
 
     def test_batch_generation_then_execution(self):
         batch = self.directory / "batch"

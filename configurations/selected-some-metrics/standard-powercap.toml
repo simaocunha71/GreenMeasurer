@@ -1,6 +1,6 @@
 [measurement]
 mode = "standard"
-command = 'python3 -c "sum(i*i for i in range(5000000))"'
+command = 'python3 -c "sum(i*i for i in range(15000000))"'
 language = "Python"
 program = "cpu-workload"
 output = "greenmeasurer-test-standard-powercap.csv"

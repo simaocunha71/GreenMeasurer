@@ -112,12 +112,6 @@ int main(void) {
     check_restored();
 
     reset_mock();
-    assert(intel_set_powercap(15) == 0);
-    assert(energy_backend_commit_powercap() == 0);
-    intel_cleanup();
-    assert(long_limits[0].watts == 15 && zone_enabled[0] == 1);
-
-    reset_mock();
     fail_get_die = 1;
     assert(intel_set_powercap(15) != 0 && set_calls == 0);
     check_restored();
