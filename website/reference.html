@@ -19,6 +19,7 @@
     <div class="doc-content">
       <section id="overview"><h2>How it fits together</h2>
         <p>Each compiled plugin exports an <code>energy_backend_descriptor</code> containing its CPU or GPU backend and detection priority. The engine selects the highest-priority detected backend independently for each category. It then uses callbacks and metric definitions to read values.</p>
+        <p>Detection and metric access are separate: for example, the Intel integrated GPU is detected through PCI device information, while reading its RAPL energy counter requires MSR access. A backend can be selected even if some of its metrics are unavailable.</p>
         <p>The interface lives in <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/include/energy-backend.h">energy-backend.h ↗</a>. The <a href="metrics.html">metric catalogue</a> maps each built-in metric to its reading function.</p>
       </section>
       <section id="callbacks"><h2>Backend callbacks</h2><p>Both <code>CpuBackend</code> and <code>GpuBackend</code> share the callbacks below. A <code>device</code> is the core or device index supplied by the engine.</p>

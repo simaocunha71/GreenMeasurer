@@ -185,6 +185,7 @@ error_value = -1</code></pre>
       </section>
       <section id="troubleshooting"><h2>When a metric is missing</h2>
         <p>Run <code>./src/main --list-metrics</code> to inspect compiled plugins. To see runtime detection details, run a generated executable with <code>GREENMEASURER_VERBOSE_BACKENDS=1</code>. Check backend build dependencies, hardware support and permissions.</p>
+        <p>Intel integrated GPUs are detected from PCI device information, independently of MSR permissions. The Intel GPU backend may therefore be reported as <code>selected</code> even when GPU energy readings are unavailable: its RAPL counter still requires access to the MSR device. GPU temperature readings also depend on a supported sensor being present.</p>
         <p>Metrics unavailable at preflight are skipped with a warning; readings that fail later are recorded as <code>NOT_SUPPORTED</code>. CPU package energy includes other activity in the same hardware domain. It is not process-exclusive, and overlapping domains should not be added together.</p>
         <div class="page-links"><a href="metrics.html">Metric catalogue →</a><a href="reference.html">Backend API →</a></div>
       </section>
