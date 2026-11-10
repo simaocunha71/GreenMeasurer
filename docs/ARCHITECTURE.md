@@ -298,11 +298,16 @@ Set `GREENMEASURER_VERBOSE_BACKENDS=1` to see every backend folder, for example:
 
 ```
 [INFO] Energy backends (<root>)
-  TYPE  BACKEND               STATUS        DETAILS
+  TYPE  BACKEND               STATUS
   cpu   Intel RAPL CPU        selected
-  gpu   Intel Integrated GPU  not detected  no read access to /dev/cpu/0/msr (run with sudo)
-  gpu   nvidia                not built     backend.so missing (skipped or failed at build time)
+  gpu   Intel Integrated GPU  selected
+  gpu   nvidia                not built
 ```
+
+Intel GPU hardware is detected from PCI/sysfs independently of MSR permissions.
+The GPU backend can therefore be selected without root even when its RAPL energy
+counter cannot be read; in that case GPU energy metrics are unavailable until
+the process has MSR access.
 
 | Status | Meaning |
 |---|---|
@@ -343,8 +348,8 @@ Result: 13 assertions passed, 0 failed.
 
 ### 9.2 Hardware validation
 On a Lenovo ThinkPad T14 Gen 4 (Intel CPU with integrated GPU, no NVIDIA GPU):
-- With root: the Intel CPU and Intel integrated GPU backends were loaded and selected.
-- Without root: MSR access is denied; the table explains why (`no read access to /dev/cpu/0/msr (run with sudo)`) and energy metrics degrade to `NOT_SUPPORTED`.
+- With or without root: the Intel CPU and Intel integrated GPU backends are detected and selected.
+- Without root: MSR access is denied, so energy metrics degrade to `NOT_SUPPORTED`.
 - The hwmon "GPU" label was not populated on this laptop, so `Temperature` is `NOT_SUPPORTED`, as intended.
 
 ### 9.3 Static invariants

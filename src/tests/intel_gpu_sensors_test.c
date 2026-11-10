@@ -14,7 +14,28 @@ static void write_value(const char *path, const char *value) {
 int main(void) {
     char root[] = "/tmp/greenmeasurer-gpu-sensors-XXXXXX";
     assert(mkdtemp(root));
+    char pci_root[128], pci_device[160], vendor[192], device_class[192];
     char device[128], label[160], input[160];
+    assert(snprintf(pci_root, sizeof(pci_root), "%s/pci", root) > 0);
+    assert(mkdir(pci_root, 0700) == 0);
+    assert(intel_gpu_device_present(pci_root) == 0);
+    assert(snprintf(pci_device, sizeof(pci_device), "%s/0000:00:02.0", pci_root) > 0);
+    assert(mkdir(pci_device, 0700) == 0);
+    assert(snprintf(vendor, sizeof(vendor), "%s/vendor", pci_device) > 0);
+    assert(snprintf(device_class, sizeof(device_class), "%s/class", pci_device) > 0);
+    write_value(vendor, "0x8086\n");
+    write_value(device_class, "0x030000\n");
+    assert(intel_gpu_device_present(pci_root) == 1);
+    write_value(vendor, "0x10de\n");
+    assert(intel_gpu_device_present(pci_root) == 0);
+    write_value(vendor, "0x8086\n");
+    write_value(device_class, "0x060000\n");
+    assert(intel_gpu_device_present(pci_root) == 0);
+    assert(unlink(vendor) == 0);
+    assert(unlink(device_class) == 0);
+    assert(rmdir(pci_device) == 0);
+    assert(rmdir(pci_root) == 0);
+
     assert(snprintf(device, sizeof(device), "%s/hwmon0", root) > 0);
     assert(snprintf(label, sizeof(label), "%s/temp1_label", device) > 0);
     assert(snprintf(input, sizeof(input), "%s/temp1_input", device) > 0);
@@ -37,6 +58,6 @@ int main(void) {
     assert(rmdir(device) == 0);
     assert(rmdir(root) == 0);
     assert(read_hwmon_temperature(root) == -1.0f);
-    puts("Intel GPU sensor tests passed.");
+    puts("Intel GPU sensor and detection tests passed.");
     return 0;
 }

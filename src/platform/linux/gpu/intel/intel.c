@@ -52,6 +52,7 @@ static uint64_t read_msr(int fd, int which) {
 
 static int intel_gpu_detect(void) {
     int has_gpu_temperature = intel_gpu_read_hwmon_temperature() > 0.0f;
+    int has_intel_gpu = intel_gpu_hardware_present();
     int fd = open_msr(0);
     if (fd >= 0) {
         uint64_t pwr_unit = read_msr(fd, MSR_RAPL_POWER_UNIT);
@@ -63,7 +64,7 @@ static int intel_gpu_detect(void) {
         }
     }
 
-    return igpu_supported || has_gpu_temperature;
+    return igpu_supported || has_gpu_temperature || has_intel_gpu;
 }
 
 static const char *intel_gpu_diagnose(void) {
