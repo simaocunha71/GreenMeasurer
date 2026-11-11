@@ -120,7 +120,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         )
         result = self.run_script(COMPARE, "--config", config)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("measurement.mode must be 'overtime'", result.stderr)
+        self.assertIn("measurement.mode must be 'overtime' (over-time sampling)", result.stderr)
         result = self.run_script(COMPARE, "--command", "true")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--config", result.stderr)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare workload elapsed time with and without overtime sampling."""
+"""Compare workload elapsed time with and without over-time sampling."""
 
 import argparse
 from pathlib import Path
@@ -45,7 +45,7 @@ def run_timed(command):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True,
-                        help="TOML configuration for an overtime measurement")
+                        help="TOML configuration for an over-time measurement")
     parser.add_argument("--runs", type=positive_int, default=5, help="Pairs of runs (default: 5)")
     parser.add_argument("--seed", type=int, default=0, help="Seed for randomized order (default: 0)")
     args = parser.parse_args()
@@ -58,7 +58,7 @@ def main():
         validate_config(config, config_path)
         measurement = config["measurement"]
         if measurement["mode"] != "overtime":
-            raise ValueError("measurement.mode must be 'overtime' for this comparison")
+            raise ValueError("measurement.mode must be 'overtime' (over-time sampling) for this comparison")
         if "command" not in measurement:
             raise ValueError("measurement.command is required")
         if measurement.get("powercap", -1) != -1:
@@ -100,7 +100,7 @@ def main():
                         elapsed = run_timed([str(executable)])
                         runs = read_runs(output)
                         if len(runs) != 1:
-                            raise ValueError("expected exactly one overtime run in generated CSV")
+                            raise ValueError("expected exactly one over-time run in generated CSV")
                         workload_ms = runs[0][1][-1]
                         measured.append(workload_ms)
                         print(f"{order},{pair},overtime,{workload_ms:.6f},{elapsed:.6f}")
@@ -111,10 +111,10 @@ def main():
     base_mean = statistics.mean(baseline)
     measured_mean = statistics.mean(measured)
     print(f"\nMean baseline workload: {base_mean:.6f} ms")
-    print(f"Mean overtime workload: {measured_mean:.6f} ms")
+    print(f"Mean over-time workload: {measured_mean:.6f} ms")
     print(f"Mean difference: {measured_mean - base_mean:.6f} ms "
           f"({100 * (measured_mean - base_mean) / base_mean:.2f}%)")
-    print("Workload timing uses the final overtime timestamp; wrapper_ms includes startup, waiting and CSV dump.")
+    print("Workload timing uses the final over-time timestamp; wrapper_ms includes startup, waiting and CSV dump.")
     print("This compares wall time only; it does not measure energy overhead or prove causation.")
     return 0
 

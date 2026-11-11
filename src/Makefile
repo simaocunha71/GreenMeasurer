@@ -14,7 +14,7 @@ else
     $(error [BUILD] Unsupported operating system: $(UNAME_S))
 endif
 
-SRCS = main.c utils/memory.c metrics/system_metrics.c metrics/metric_adapter_loader.c
+SRCS = main.c platform/$(PLATFORM)/memory.c platform/$(PLATFORM)/system_metrics.c metric_adapters/metric_adapter_loader.c
 OBJS = $(SRCS:.c=.o)
 TARGET = main
 BACKEND_DIRS := $(shell find platform/$(PLATFORM) -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort)
@@ -85,22 +85,22 @@ all: $(TARGET) metric-adapter-check list-metrics greenmeasurer-engine
 $(TARGET): launcher.o list-metrics $(BACKEND_TARGETS)
 	$(CC) $(CFLAGS) -o $@ launcher.o
 
-main.o: overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h metrics/system_metrics.h metrics/metric_adapter_loader.h
+main.o: overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h include/system_metrics.h metric_adapters/metric_adapter_loader.h
 
-tests/legacy-engine.o: main.c overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h metrics/system_metrics.h metrics/metric_adapter_loader.h
+tests/legacy-engine.o: main.c overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h include/system_metrics.h metric_adapters/metric_adapter_loader.h
 	$(CC) $(CFLAGS) -DGREENMEASURER_TEST_ENGINE -c main.c -o $@
 
 tests/legacy-engine: tests/legacy-engine.o $(filter-out main.o,$(OBJS)) $(BACKEND_TARGETS)
 	$(CC) $(CFLAGS) $(HOST_EXPORT_FLAGS) -o $@ tests/legacy-engine.o $(filter-out main.o,$(OBJS)) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) $(DL_LIBS)
 
-list-metrics: list_metrics.c main.c overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h metrics/system_metrics.h metrics/metric_adapter_loader.h $(filter-out main.o,$(OBJS)) $(BACKEND_TARGETS)
+list-metrics: list_metrics.c main.c overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h include/system_metrics.h metric_adapters/metric_adapter_loader.h $(filter-out main.o,$(OBJS)) $(BACKEND_TARGETS)
 	$(CC) $(CFLAGS) $(HOST_EXPORT_FLAGS) -o $@ list_metrics.c $(filter-out main.o,$(OBJS)) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) $(DL_LIBS)
 
-greenmeasurer-engine: engine.c main.c overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h metrics/system_metrics.h metrics/metric_adapter_loader.h $(filter-out main.o,$(OBJS)) $(BACKEND_TARGETS)
+greenmeasurer-engine: engine.c main.c overtime.inc standard.inc include/energy-backend.h include/metric-guidance.h include/system_metrics.h metric_adapters/metric_adapter_loader.h $(filter-out main.o,$(OBJS)) $(BACKEND_TARGETS)
 	$(CC) $(CFLAGS) $(HOST_EXPORT_FLAGS) -o $@ engine.c $(filter-out main.o,$(OBJS)) $(LDFLAGS) $(BACKEND_HOST_LDLIBS) $(DL_LIBS)
 
-metric-adapter-check: metrics/metric_adapter_check.c metrics/metric_adapter_loader.c metrics/metric_adapter_loader.h include/metric-adapter.h include/metric-guidance.h
-	$(CC) $(CFLAGS) -o $@ metrics/metric_adapter_check.c metrics/metric_adapter_loader.c $(LDFLAGS) $(DL_LIBS)
+metric-adapter-check: metric_adapters/metric_adapter_check.c metric_adapters/metric_adapter_loader.c metric_adapters/metric_adapter_loader.h include/metric-adapter.h include/metric-guidance.h
+	$(CC) $(CFLAGS) -o $@ metric_adapters/metric_adapter_check.c metric_adapters/metric_adapter_loader.c $(LDFLAGS) $(DL_LIBS)
 
 print-configured-host-libs:
 	@printf '%s\n' '$(BACKEND_HOST_LDLIBS)'
@@ -111,7 +111,7 @@ print-configured-host-libs:
 
 clean:
 	rm -f $(TARGET) list-metrics greenmeasurer-engine metric-adapter-check $(OBJS) launcher.o tests/legacy-engine.o tests/legacy-engine tests/intel-powercap-test tests/intel-temperature-test tests/nvidia-metric-test tests/intel-gpu-sensors-test $(ALL_BACKEND_TARGETS)
-	find platform/ utils/ -name "*.o" -delete 2>/dev/null || true
+	find platform/ -name "*.o" -delete 2>/dev/null || true
 
 ifeq ($(BACKEND_AVAILABLE_platform_linux_cpu_intel),yes)
 tests/intel-powercap-test: tests/intel_powercap_test.c platform/linux/cpu/intel/intel.c platform/linux/cpu/intel/intel.h include/energy-backend.h include/energy-counter.h

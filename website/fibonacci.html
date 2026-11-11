@@ -13,7 +13,7 @@
   <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="guide.html">Guide</a><a aria-current="page" href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a href="reference.html">Backend API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
 </div></header>
 <main id="main" class="wrap">
-  <header class="doc-header"><p class="eyebrow">Getting started / Walkthrough</p><h1>Using GreenMeasurer</h1><p class="lead">Follow a complete measurement: configure a program, run it in standard and overtime modes, and inspect the resulting CSVs.</p></header>
+  <header class="doc-header"><p class="eyebrow">Getting started / Walkthrough</p><h1>Using GreenMeasurer</h1><p class="lead">Follow a complete measurement: configure a program, run it in standard and over-time modes, and inspect the resulting CSVs.</p></header>
   <div class="doc-layout">
     <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#before">Before you start</a><a href="#program">1. Write the program</a><a href="#config">2. Configure</a><a href="#run">3. Generate &amp; run</a><a href="#results">4. Read the CSVs</a><a href="#your-program">Use your own program</a></nav>
     <div class="doc-content">
@@ -58,7 +58,7 @@ calibration_file = "fibonacci-temperature.txt"
 [metrics]
 select = ["system.cores", "cpu.Package", "cpu.Temperature"]
 TOML</code></pre>
-        <p>Now configure overtime sampling for one execution of the same program. It uses the same temperature baseline and writes a separate CSV.</p>
+        <p>Now configure over-time sampling for one execution of the same program. It uses the same temperature baseline and writes a separate CSV.</p>
         <pre><code>cat &gt; fibonacci-overtime.toml &lt;&lt;'TOML'
 [measurement]
 mode = "overtime"
@@ -98,12 +98,12 @@ Python, fibonacci, -1, 12000.000000, 12, 150.000000000000000000, 55.000000000000
 Python, fibonacci, -1, 12100.000000, 12, 152.000000000000000000, 56.000000000000000000
 Python, fibonacci, -1, 11900.000000, 12, 149.000000000000000000, 55.000000000000000000</code></pre>
         <p>Standard contains three data rows on a successful run. <code>Time_ms</code> is the elapsed time for each run, and <code>cpu.Package_J</code>, when available, is the package energy over that run.</p>
-        <h3>Overtime: first three samples</h3>
+        <h3>Over-time: first three samples</h3>
         <pre><code>Language,Program,Powercap,Timestamp_ms,Cores,cpu.Package_J,cpu.Temperature_C
 Python, fibonacci, -1, 10.200000, 12.000000000000000000, 0.125000000000000000, 50.000000000000000000
 Python, fibonacci, -1, 20.500000, 12.000000000000000000, 0.130000000000000000, 50.000000000000000000
 Python, fibonacci, -1, 30.800000, 12.000000000000000000, 0.128000000000000000, 51.000000000000000000</code></pre>
-        <p>Overtime contains a row per sampling window. <code>Timestamp_ms</code> is elapsed time, and <code>cpu.Package_J</code> is energy in that window, not cumulative energy or instantaneous power. The 10,000 µs interval is a pause between cycles, not a guaranteed sampling period.</p>
+        <p>Over-time mode contains a row per sampling window. <code>Timestamp_ms</code> is elapsed time, and <code>cpu.Package_J</code> is energy in that window, not cumulative energy or instantaneous power. The 10,000 µs interval is a pause between cycles, not a guaranteed sampling period.</p>
         <p>Column availability and values vary with hardware and permissions. Package energy includes other activity and may overlap with other domains; it is not the energy of the Python process alone. A later failed reading is recorded as <code>NOT_SUPPORTED</code>.</p>
       </section>
       <section id="your-program"><h2>Use your own program</h2>

@@ -207,7 +207,7 @@ typedef struct energy_backend_descriptor {
     } backend;
 } EnergyBackendDescriptor;
 
-/* Linux Resident Set Size memory profiler */
+/* Platform-specific peak resident-set-size measurement for a command. */
 int platform_measure_memory(const char *command);
 
 #define ENERGY_BACKEND_DESCRIPTOR_SYMBOL "energy_backend_descriptor"

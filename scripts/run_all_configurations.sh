@@ -18,7 +18,7 @@ while getopts "o:s" opt; do
     esac
 done
 shift $((OPTIND - 1))
-[[ $# -eq 0 ]] && set -- "$root/configurations"
+[[ $# -eq 0 ]] && set -- "$root/configurations-paper"
 # Each run changes directory, so every input path must be absolute.
 inputs=()
 for path in "$@"; do
@@ -69,6 +69,8 @@ for config in "${ordered[@]}"; do
     mkdir -p "$work"
     [[ -f "$results/greenmeasurer-test-temperature.txt" ]] &&
         cp -n "$results/greenmeasurer-test-temperature.txt" "$work/"
+    # Workload commands in the TOML are relative to the repo root (e.g. Languages/...).
+    [[ -e "$work/Languages" ]] || ln -s "$root/Languages" "$work/Languages"
     echo "[RUN ] $name"
     status=PASS
     # Generation, compilation and execution all use the result directory as cwd

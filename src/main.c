@@ -23,8 +23,8 @@
 
 #include "include/energy-backend.h"
 #include "include/metric-guidance.h"
-#include "metrics/metric_adapter_loader.h"
-#include "metrics/system_metrics.h"
+#include "metric_adapters/metric_adapter_loader.h"
+#include "system_metrics.h"
 
 typedef struct {
     void *handle;
@@ -506,7 +506,7 @@ void energy_backend_write_csv_header(FILE *fp, int overtime) {
         return;
     }
     fprintf(fp, ",CPU_Memory_KB,Cores");
-    /* Standard rows summarise the run (peak / average); overtime rows are instantaneous. */
+    /* Standard rows summarise the run (peak / average); over-time rows are instantaneous. */
     fprintf(fp, overtime ? ",Workload_Processes,System_Running_Processes"
                          : ",Workload_Processes_Peak,System_Running_Processes_Peak");
     int cores = sys_core_count();
@@ -1782,7 +1782,7 @@ int main(int argc, char **argv) {
     }
 
     /* ========================================================
-       3. MODE: OVERTIME
+       3. MODE: OVER-TIME
        ======================================================== */
     if (argc >= 2 && (!strcmp(argv[1], "--overtime") || !strcmp(argv[1], "--over-time") || configured_overtime)) {
         char command[500] = "", language[128] = "", program[128] = "";
@@ -1863,7 +1863,7 @@ int main(int argc, char **argv) {
         if (any_cap) {
             if (!active_cpu_backend || !active_cpu_backend->set_powercap ||
                 !active_cpu_backend->destroy_powercap) {
-                fprintf(stderr, "[ERROR] Active CPU backend does not support powercapping; overtime measurement aborted.\n");
+                fprintf(stderr, "[ERROR] Active CPU backend does not support powercapping; over-time measurement aborted.\n");
                 return 1;
             }
         }
@@ -1873,7 +1873,7 @@ int main(int argc, char **argv) {
             int powercap = powercaps[c];
             if (powercap > 0) {
                 if (active_cpu_backend->set_powercap(powercap) != 0) {
-                    fprintf(stderr, "[ERROR] Failed to set powercap to %d W; overtime measurement aborted.\n",
+                    fprintf(stderr, "[ERROR] Failed to set powercap to %d W; over-time measurement aborted.\n",
                             powercap);
                     if (active_cpu_backend->destroy_powercap() != 0)
                         fprintf(stderr, "[ERROR] Failed to restore powercap after setup failure.\n");
@@ -1881,7 +1881,7 @@ int main(int argc, char **argv) {
                 }
             }
 
-            if (wait_for_cpu_temperature(ref_temp, variance, "Overtime", NULL) != 0)
+            if (wait_for_cpu_temperature(ref_temp, variance, "Over-time", NULL) != 0)
                 command_status = -1;
 
             struct OvertimeContext ctx = {
@@ -1903,7 +1903,7 @@ int main(int argc, char **argv) {
             }
             if (command_status == 0 && c + 1 < powercap_count) sleep(1);
         }
-        if (command_status == 0) printf("[INFO] Overtime session finished -> %s\n", ot_csv);
+        if (command_status == 0) printf("[INFO] Over-time session finished -> %s\n", ot_csv);
         return command_status == 0 ? 0 : 1;
     }
 

@@ -48,6 +48,8 @@ Tools that hard-code these interfaces in their core are difficult to extend, and
 
 ## 2. System Overview
 
+Editable high-level folder map and extension points: [GreenMeasurer architecture diagram](./architecture.drawio).
+
 ```
                     +-----------------------------+
                     |           main.c            |
@@ -66,10 +68,13 @@ Directory convention (`src/`):
 
 ```
 platform/linux/
+  memory.c                     Linux workload peak RSS via wait4()/ru_maxrss
+  system_metrics.c             Linux implementation of the shared system-metrics API
   cpu/<implementation>/{<source>.c, <header>.h, backend.so}
   gpu/<implementation>/{<source>.c, <header>.h, backend.so}
 include/energy-backend.h     shared API
-utils/memory.c               RSS memory profiler
+include/system_metrics.h     system-metrics interface
+metric_adapters/             external metric adapter loader and validator
 tests/                       fake backends and test runner
 ```
 
@@ -109,7 +114,7 @@ its native constructors, so inspect only trusted libraries.
 Plugins can also export the optional `energy_backend_sample_next(int id)` symbol.
 After `sample_start`, each call closes the current window, exposes its metric
 values through `get_metric`, and uses that stop snapshot as the next baseline.
-This avoids gaps between successive overtime energy windows without changing the
+This avoids gaps between successive over-time energy windows without changing the
 backend descriptor ABI. Legacy plugins still work, but the core warns that their
 separate stop/start windows omit energy between windows.
 
@@ -259,7 +264,7 @@ the current runtime schema, and the measurement wrapper uses that header when
 aggregating output from multiple workloads.
 
 ### 6.7 Over-time sampling
-`--overtime` records each window metric's delta since the previous backend
+`--overtime` performs over-time sampling, recording each window metric's delta since the previous backend
 snapshot, rather than accumulated energy. The parent samples all metrics
 sequentially without sampler threads, using a configurable pause (`-interval-us`,
 default 1000 microseconds); a final partial window is sampled on workload
@@ -321,7 +326,7 @@ the process has MSR access.
 When a category has no active backend a warning states that its backend metrics
 are unavailable and points to verbose diagnostics, which may explain a
 permission failure. The legacy runner exits if neither category is active;
-configured system/external overtime can run without either. Wrapper scripts
+configured system/external over-time measurements can run without either. Wrapper scripts
 (`scripts/measure.sh`) and Makefile messages were also made vendor-neutral.
 Vendor-specific logic remains only where it is inherently vendor-specific
 (the dependency installer `scripts/install.sh`, backend sources and build settings in `src/Makefile`).

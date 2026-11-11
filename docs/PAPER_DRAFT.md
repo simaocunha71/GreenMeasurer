@@ -91,7 +91,7 @@ src/
     cpu/<implementation>/
     gpu/<implementation>/
   tests/
-  utils/memory.c
+  platform/linux/memory.c
 scripts/
 Languages/                 example workload directories and Makefiles
 Utils/                     calibration post-processing utilities
@@ -225,7 +225,7 @@ The timeout value is expressed in hours by the current command-line implementati
 
 ### E. Over-Time Measurements
 
-The `--overtime` mode runs the target command while the parent periodically samples the active backends and system metrics without sampler threads. The default pause is 1 ms. Each row reports energy for the interval since the preceding backend snapshot and the latest sequentially read gauges; the final row covers a partial interval. `Timestamp_ms` is the monotonic elapsed time at the beginning of each sample's backend reads. The pause does not guarantee that each hardware update is captured.
+The `--overtime` mode (over-time sampling) runs the target command while the parent periodically samples the active backends and system metrics without sampler threads. The default pause is 1 ms. Each row reports energy for the interval since the preceding backend snapshot and the latest sequentially read gauges; the final row covers a partial interval. `Timestamp_ms` is the monotonic elapsed time at the beginning of each sample's backend reads. The pause does not guarantee that each hardware update is captured.
 
 ```sh
 sudo ./src/main --overtime \
@@ -248,7 +248,7 @@ Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,Sy
 The example shows one possible selection; exact columns vary by hardware and
 backend. Window energy fields are joules consumed over each interval.
 Process-scoped peak metrics are polled on standard
-runs, while process-scoped values in overtime mode are sampled at each tick.
+runs, while process-scoped values in over-time mode are sampled at each tick.
 Unsupported counters or sensors are emitted as `NOT_SUPPORTED`. Short sampling
 windows also reduce the chance of multiple counter wraps occurring between
 observations, though this does not remove all hardware-counter limitations.
@@ -287,7 +287,7 @@ domains may overlap. The NVIDIA implementation uses per-process NVML data; if
 that is unavailable, the CSV contains `NOT_SUPPORTED` rather than whole-device
 usage that could include other Slurm jobs.
 
-At startup the executable prints a backend table (by default selected backends and plugin load/descriptor errors; `GREENMEASURER_VERBOSE_BACKENDS=1` lists all) with diagnostic states such as `available`, `not detected`, `not built`, `load failed` and `invalid`. If a category has no selected backend, it warns that the corresponding backend metrics are unavailable. The legacy runner exits if neither category is usable; configured system/external overtime measurements can run without either.
+At startup the executable prints a backend table (by default selected backends and plugin load/descriptor errors; `GREENMEASURER_VERBOSE_BACKENDS=1` lists all) with diagnostic states such as `available`, `not detected`, `not built`, `load failed` and `invalid`. If a category has no selected backend, it warns that the corresponding backend metrics are unavailable. The legacy runner exits if neither category is usable; configured system/external over-time measurements can run without either.
 
 The fake-backend tests can be run with:
 
@@ -343,7 +343,7 @@ The repository's `scripts/merda.sh` is a convenience smoke-test script that invo
 
 ### C. Evaluation Plan: Comparison with CodeCarbon and EnergiBridge
 
-**Workload.** A recursive Fibonacci implementation in Python (`Languages/Python/Fibonacci`, run with `make standard` and `make overtime`). It is deterministic, CPU-bound and needs no external dependencies. Choose the input (default 35) so that a run lasts long enough (several seconds) for the counters to be meaningful, and keep it identical across tools. The C version (`Languages/C/Fibonacci`) can be added as a second language to show language independence.
+**Workload.** A recursive Fibonacci implementation in Python (`Languages/Python/Fibonacci`, run with `make standard` and `make overtime` for over-time sampling). It is deterministic, CPU-bound and needs no external dependencies. Choose the input (default 35) so that a run lasts long enough (several seconds) for the counters to be meaningful, and keep it identical across tools. The C version (`Languages/C/Fibonacci`) can be added as a second language to show language independence.
 
 **Tools under comparison.** GreenMeasurer, EnergiBridge and CodeCarbon, all on the same machine, with the same workload, input and number of repetitions (e.g. 30). CodeCarbon must wrap the Python call (`EmissionsTracker`), while GreenMeasurer and EnergiBridge execute the command externally. Record the version of every tool.
 

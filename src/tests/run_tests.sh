@@ -253,7 +253,7 @@ expect "legacy backend reports gaps" "CPU backend does not support contiguous ov
 }
 build_fake cpu high "Fake CPU High" 10 1 -DFAKE_POWER_CAP_FAILURE
 if cc -O2 -Wall -Wextra -pthread -I../include -DGREENMEASURER_TEST_ENGINE -DOT_MAX_SAMPLES=2 -rdynamic \
-    ../main.c ../utils/memory.c ../metrics/system_metrics.c ../metrics/metric_adapter_loader.c -o "$WORK/main-small" \
+    ../main.c ../platform/linux/memory.c ../platform/linux/system_metrics.c ../metric_adapters/metric_adapter_loader.c -o "$WORK/main-small" \
     -pthread -lm -ldl; then
     GREENMEASURER_BACKEND_DIR="$ROOT" "$WORK/main-small" --overtime \
         -command "sleep 1; touch '$WORK/finished'" -language C -program t \
@@ -343,7 +343,7 @@ echo "[TEST] External metric adapter"
 if cc -O2 -Wall -Wextra -fPIC -shared \
     fixtures/custom_metric/adapter.c fixtures/custom_metric/processes.c \
     -o "$WORK/metric-adapter.so" &&
-   cc -O2 -Wall -Wextra metric_adapter_test.c ../metrics/metric_adapter_loader.c \
+   cc -O2 -Wall -Wextra metric_adapter_test.c ../metric_adapters/metric_adapter_loader.c \
     -o "$WORK/metric-adapter-test" -ldl -lm &&
    cc -O2 -Wall -Wextra -fPIC -shared invalid_metric_adapter.c \
     -o "$WORK/invalid-metric-adapter.so" &&

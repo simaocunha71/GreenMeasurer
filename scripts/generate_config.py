@@ -183,9 +183,9 @@ def generate_configured(config, config_path, output, log=sys.stdout):
     subprocess.run(
         ["cc", "-O2", "-Wall", "-Wextra", "-pthread", "-rdynamic",
          "-I", str(ROOT / "src"), "-I", str(ROOT / "src" / "include"),
-         str(source), str(ROOT / "src" / "utils" / "memory.c"),
-         str(ROOT / "src" / "metrics" / "system_metrics.c"),
-         str(ROOT / "src" / "metrics" / "metric_adapter_loader.c"),
+         str(source), str(ROOT / "src" / "platform" / "linux" / "memory.c"),
+         str(ROOT / "src" / "platform" / "linux" / "system_metrics.c"),
+         str(ROOT / "src" / "metric_adapters" / "metric_adapter_loader.c"),
          "-o", str(binary), *shlex.split(flags), "-pthread", "-lm", "-ldl"],
         check=True,
     )

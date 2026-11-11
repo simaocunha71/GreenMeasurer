@@ -1,4 +1,4 @@
-#include "../metrics/metric_adapter_loader.h"
+#include "../metric_adapters/metric_adapter_loader.h"
 
 #include <stdio.h>
 #include <string.h>

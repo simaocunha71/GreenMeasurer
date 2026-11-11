@@ -39,7 +39,7 @@
       </section>
       <section id="symbols"><h2>Optional plugin symbols</h2>
         <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Purpose</th></tr></thead><tbody>
-          <tr><td><code>energy_backend_sample_next(int device)</code></td><td>Finish a window and advance the baseline for contiguous overtime samples. Without it, the engine uses separate stop/start windows, which can leave gaps.</td></tr>
+          <tr><td><code>energy_backend_sample_next(int device)</code></td><td>Finish a window and advance the baseline for contiguous over-time samples. Without it, the engine uses separate stop/start windows, which can leave gaps.</td></tr>
           <tr><td><code>energy_metric_function_map</code></td><td>Maps metric indices to reading functions and allows selecting by function name.</td></tr>
           <tr><td><code>energy_metric_info_map</code></td><td>Provides descriptions and origins for <code>--list-metrics</code>.</td></tr>
         </tbody></table></div>
@@ -92,9 +92,9 @@ static double read_load(int device, pid_t pid) {
           <tr><td><code>python3 scripts/validate_config.py FILE</code></td><td>Validate a TOML file without executing its workload.</td></tr>
           <tr><td><code>python3 scripts/generate_config.py FILE --directory DIR</code></td><td>Generate and compile a configured executable.</td></tr>
           <tr><td><code>bash scripts/measure.sh generate DIR FILE...</code></td><td>Generate a batch; use <code>bash scripts/measure.sh run DIR</code> to execute it.</td></tr>
-          <tr><td><code>make -C src test</code></td><td>Run the test suite. The current checkout has an unresolved Intel powercap mock compilation failure.</td></tr>
+          <tr><td><code>make -C src test</code></td><td>Run the C, integration and Python test suites. Hardware-specific mock tests may be skipped when their development dependencies are unavailable.</td></tr>
         </tbody></table></div>
-        <p>Utilities for overtime analysis are described in <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/scripts/README.md">scripts/README.md</a>.</p>
+        <p>Utilities for over-time analysis are described in <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/scripts/README.md">scripts/README.md</a>.</p>
       </section>
     </div>
   </div>

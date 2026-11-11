@@ -1,4 +1,4 @@
-/* Overtime runs the sampler in the parent process, without sampling threads. */
+/* Over-time mode runs the sampler in the parent process, without sampling threads. */
 #ifndef OT_MAX_SAMPLES
 #define OT_MAX_SAMPLES 262144
 #endif
@@ -54,7 +54,7 @@ static void ot_find_next_callbacks(void) {
 
 static int ot_prepare(void) {
     if ((!configured_overtime || configured_backend_name_count || configured_all) && active_metric_count > OT_MAX_METRICS) {
-        fprintf(stderr, "[ERROR] Too many metrics for overtime sampling (max %d).\n", OT_MAX_METRICS);
+        fprintf(stderr, "[ERROR] Too many metrics for over-time sampling (max %d).\n", OT_MAX_METRICS);
         return -1;
     }
     ot_count = 0;
@@ -97,7 +97,7 @@ static int ot_prepare(void) {
                 skip_configured_backend_type((EnergyBackendType)type);
                 continue;
             }
-            fprintf(stderr, "[WARNING] Failed to start overtime %s backend window; "
+            fprintf(stderr, "[WARNING] Failed to start over-time %s backend window; "
                     "window metrics are unavailable.\n", type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
         }
         if (ot_backend_ready[type]) {
@@ -110,7 +110,7 @@ static int ot_prepare(void) {
                     ot_backend_ready[type] = 0;
                     continue;
                 }
-                fprintf(stderr, "[WARNING] Failed to probe overtime %s backend window.\n",
+                fprintf(stderr, "[WARNING] Failed to probe over-time %s backend window.\n",
                         type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
                 ot_backend_ready[type] = 0;
                 continue;
@@ -136,7 +136,7 @@ static int ot_prepare(void) {
             }
         }
         if (ot_backend_ready[type] && !ot_sample_next[type]) {
-            fprintf(stderr, "[WARNING] %s backend does not support contiguous overtime windows; "
+            fprintf(stderr, "[WARNING] %s backend does not support contiguous over-time windows; "
                     "energy between windows will not be recorded.\n", type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
         }
     }
@@ -150,7 +150,7 @@ static int ot_prepare(void) {
                 ot_backend_ready[type] = 0;
                 continue;
             }
-            fprintf(stderr, "[WARNING] Failed to restart overtime %s backend after probe.\n",
+            fprintf(stderr, "[WARNING] Failed to restart over-time %s backend after probe.\n",
                     type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
             ot_backend_ready[type] = 0;
         }
@@ -164,12 +164,12 @@ static int ot_prepare(void) {
 
 static int ot_sample(pid_t workload_pid, int finished) {
     if (ot_count >= OT_MAX_SAMPLES) {
-        fprintf(stderr, "[ERROR] Overtime sample capacity (%d) exceeded; measurement aborted.\n", OT_MAX_SAMPLES);
+        fprintf(stderr, "[ERROR] Over-time sample capacity (%d) exceeded; measurement aborted.\n", OT_MAX_SAMPLES);
         return -1;
     }
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-        perror("[ERROR] Failed to timestamp overtime sample");
+        perror("[ERROR] Failed to timestamp over-time sample");
         return -1;
     }
     size_t slot = ot_count++;
@@ -298,7 +298,7 @@ static int ot_sample(pid_t workload_pid, int finished) {
 static int ot_dump(const struct OvertimeContext *ctx) {
     FILE *fp = fopen(ctx->output_file, ctx->append ? "a" : "w");
     if (!fp) {
-        perror("[ERROR] Failed to open overtime CSV");
+        perror("[ERROR] Failed to open over-time CSV");
         return -1;
     }
     energy_share_output_file(fileno(fp));
@@ -330,7 +330,7 @@ static int ot_dump(const struct OvertimeContext *ctx) {
     }
     int failed = ferror(fp);
     if (fclose(fp) != 0) failed = 1;
-    if (failed) fprintf(stderr, "[ERROR] Failed to write overtime CSV.\n");
+    if (failed) fprintf(stderr, "[ERROR] Failed to write over-time CSV.\n");
     return failed ? -1 : 0;
 }
 
@@ -374,7 +374,7 @@ static int ot_run(const char *command, const struct OvertimeContext *ctx,
     int result = -1;
     pid_t pid = -1;
     if (ot_prepare() != 0 || clock_gettime(CLOCK_MONOTONIC, &ot_start_time) != 0) {
-        fprintf(stderr, "[ERROR] Failed to initialize overtime sampling.\n");
+        fprintf(stderr, "[ERROR] Failed to initialize over-time sampling.\n");
         goto restore_mask;
     }
     pid = ot_start_command(command, &old_mask);
@@ -443,7 +443,7 @@ static int ot_run(const char *command, const struct OvertimeContext *ctx,
             goto abort_workload;
         }
         if (global_terminate) {
-            fprintf(stderr, "[ERROR] Overtime measurement interrupted.\n");
+            fprintf(stderr, "[ERROR] Over-time measurement interrupted.\n");
             goto abort_workload;
         }
     }

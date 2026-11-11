@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize observed overtime sample intervals."""
+"""Summarize observed over-time sample intervals."""
 
 import argparse
 import csv
@@ -41,7 +41,7 @@ def read_runs(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv", help="Overtime CSV containing Timestamp_ms")
+    parser.add_argument("csv", help="Over-time CSV containing Timestamp_ms")
     parser.add_argument("--threshold-ms", type=float, default=1.0,
                         help="Report intervals greater than this threshold (default: 1 ms)")
     args = parser.parse_args()

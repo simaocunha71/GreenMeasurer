@@ -4,10 +4,15 @@ The website is a dependency-free static site:
 
 - `index.html`: overview and links to the documentation.
 - `guide.html`: installation, configuration, modes and powercap warnings.
-- `fibonacci.html`: a GreenMeasurer usage walkthrough with a Python sample workload and standard/overtime CSVs.
+- `fibonacci.html`: a GreenMeasurer usage walkthrough with a Python sample workload and standard/over-time CSVs.
 - `metrics.html`: metric names, reading functions and sources.
 - `reference.html`: backend callbacks, metric definitions and developer tools.
 - `styles.css`, `favicon.svg` and `logo.svg`: shared presentation and assets.
+
+The documentation describes the current Linux implementation. macOS and
+Windows are not currently supported; adding the shared interfaces alone does
+not provide the OS-specific measurements, build support or validation needed
+for those platforms.
 
 ## Preview
 

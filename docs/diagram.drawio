@@ -1,0 +1,168 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Página-1" id="-shXb073D-YPpiYF9s4R">
+    <mxGraphModel dx="2634" dy="1147" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="W00KPzn58JGH5EbS7u5r-84" edge="1" parent="1" source="W00KPzn58JGH5EbS7u5r-92" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;curved=0;">
+          <mxGeometry relative="1" x="-0.0167" as="geometry">
+            <mxPoint x="-1161.75" y="-30" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-85" connectable="0" parent="W00KPzn58JGH5EbS7u5r-84" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];inheritText=1;defaultLabelBackgroundColor=page;" value="mode = &quot;powercap-calibration&quot;" vertex="1">
+          <mxGeometry relative="1" x="-0.0653" y="2" as="geometry">
+            <mxPoint x="81" y="12" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-222" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2D8;strokeColor=#C79A42;fontColor=#5A4318;fontSize=13;spacing=9;verticalAlign=bottom;" value="Generated entry point that includes &lt;i&gt;main.c&lt;/i&gt; and passes it the arguments derived from configuration.toml" vertex="1">
+          <mxGeometry height="190" width="180" x="-815" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-223" parent="1" style="swimlane;html=1;startSize=36;horizontal=1;rounded=1;arcSize=8;fillColor=#E8F1FA;swimlaneFillColor=#F5F9F5;strokeColor=#6c8ebf;fontSize=15;fontStyle=1;collapsible=0;labelBackgroundColor=none;" value="&lt;i&gt;src/ &lt;/i&gt;— measurement engine and extension points" vertex="1">
+          <mxGeometry height="700" width="648" x="-609" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-224" edge="1" parent="W00KPzn58JGH5EbS7u5r-223" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="167.52" y="535" />
+              <mxPoint x="124.52" y="535" />
+            </Array>
+            <mxPoint x="124.5" y="545" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-225" edge="1" parent="W00KPzn58JGH5EbS7u5r-223" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="167.52" y="535" />
+              <mxPoint x="207.52" y="535" />
+            </Array>
+            <mxPoint x="207.5" y="545" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-226" parent="W00KPzn58JGH5EbS7u5r-223" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2D8;strokeColor=#C79A42;fontColor=#5A4318;fontSize=13;spacing=9;verticalAlign=bottom;" value="Provides examples for adding CPU and GPU backends" vertex="1">
+          <mxGeometry height="142.5" width="180" x="14" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-227" parent="W00KPzn58JGH5EbS7u5r-223" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;" value="&lt;i&gt;backend-templates/&lt;/i&gt;" vertex="1">
+          <mxGeometry height="45" width="130" x="39" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-228" parent="W00KPzn58JGH5EbS7u5r-223" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DDF0E0;strokeColor=#5D9367;fontColor=#17324D;fontSize=14;fontStyle=1;spacing=10;" value="&lt;i&gt;main.c&lt;/i&gt;&lt;div&gt;&lt;span style=&quot;font-weight: normal;&quot;&gt;&lt;br&gt;Responsible for orchestrating GreenMeasurer&lt;/span&gt;&lt;br&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="110" width="340" x="154" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-229" parent="W00KPzn58JGH5EbS7u5r-223" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2D8;strokeColor=#C79A42;fontColor=#5A4318;fontSize=13;spacing=9;verticalAlign=bottom;" value="Loads external metric adapters selected in &lt;i&gt;configuration.toml&lt;/i&gt;" vertex="1">
+          <mxGeometry height="142.5" width="180" x="454" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-230" parent="W00KPzn58JGH5EbS7u5r-223" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;" value="&lt;i&gt;metric-adapters/&lt;/i&gt;" vertex="1">
+          <mxGeometry height="45" width="117.5" x="485.25" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-231" parent="W00KPzn58JGH5EbS7u5r-223" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2D8;strokeColor=#C79A42;fontColor=#5A4318;fontSize=13;spacing=9;verticalAlign=bottom;" value="Defines shared interfaces for CPU/GPU backends and system metrics. Each operating system needs its own implementation" vertex="1">
+          <mxGeometry height="142.5" width="235" x="206.5" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-232" parent="W00KPzn58JGH5EbS7u5r-223" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;" value="&lt;i&gt;include/&lt;/i&gt;" vertex="1">
+          <mxGeometry height="45" width="117.5" x="265.25" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-233" edge="1" parent="1" source="W00KPzn58JGH5EbS7u5r-235" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Helvetica;fontSize=14;fontColor=#17324D;fontStyle=1;" target="W00KPzn58JGH5EbS7u5r-222" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-234" connectable="0" parent="W00KPzn58JGH5EbS7u5r-233" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontFamily=Helvetica;fontSize=11;fontColor=#000000;fontStyle=0;labelBackgroundColor=light-dark(#ffffff, #161916);" value="1.&amp;nbsp;Provides configuration for" vertex="1">
+          <mxGeometry relative="1" x="-0.375" y="-4" as="geometry">
+            <mxPoint y="45" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-235" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E8;strokeColor=#C79A42;fontColor=#5A4318;fontSize=15;spacing=10;verticalAlign=bottom;" value="Select the measurement mode, workload command and metrics" vertex="1">
+          <mxGeometry height="190" width="190" x="-820" y="46.15999999999997" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-236" edge="1" parent="1" source="W00KPzn58JGH5EbS7u5r-222" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;fontColor=#000000;labelBackgroundColor=#F5F9F5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="W00KPzn58JGH5EbS7u5r-228" value="2. Invokes the&amp;nbsp;&lt;div&gt;measurement engine&lt;/div&gt;">
+          <mxGeometry relative="1" x="0.6385" y="-5" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="-619" y="615" />
+              <mxPoint x="-619" y="275" />
+            </Array>
+            <mxPoint x="-631.5" y="235" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-237" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document" value="&lt;i&gt;greenmeasurer.c&lt;/i&gt;" vertex="1">
+          <mxGeometry height="70" width="100" x="-775" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-238" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;verticalAlign=top;fontStyle=2" value="platform/" vertex="1">
+          <mxGeometry height="330" width="613" x="-591.5" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-239" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;verticalAlign=top;" value="&lt;i&gt;linux/&lt;/i&gt;" vertex="1">
+          <mxGeometry height="240" width="595.5" x="-581.5" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-240" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;verticalAlign=top;fontStyle=2" value="gpu/" vertex="1">
+          <mxGeometry height="182.5" width="250" x="-428.5" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-241" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;verticalAlign=top;fontStyle=2" value="cpu/" vertex="1">
+          <mxGeometry height="182.5" width="130" x="-568.5" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-242" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;verticalAlign=top;fontStyle=2" value="intel/" vertex="1">
+          <mxGeometry height="125" width="110" x="-558.5" y="495" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-243" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;verticalAlign=top;fontStyle=2" value="intel/" vertex="1">
+          <mxGeometry height="125" width="110" x="-418.5" y="495" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-244" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F1FA;strokeColor=#4A7BA7;fontColor=#17324D;fontSize=13;spacing=9;verticalAlign=top;fontStyle=2" value="nvidia/" vertex="1">
+          <mxGeometry height="125" width="110" x="-300" y="495" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-245" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="nvidia.c" vertex="1">
+          <mxGeometry height="37" width="45" x="-292.5" y="532.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-246" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="nvidia.h" vertex="1">
+          <mxGeometry height="37" width="45" x="-242.5" y="532.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-247" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="sensors.c" vertex="1">
+          <mxGeometry height="37" width="60" x="-272.5" y="577.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-248" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="sensors.c" vertex="1">
+          <mxGeometry height="37" width="60" x="-391" y="577.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-249" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="intel.h" vertex="1">
+          <mxGeometry height="37" width="45" x="-361" y="532.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-250" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="intel.c" vertex="1">
+          <mxGeometry height="37" width="45" x="-411" y="532.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-251" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="sensors.c" vertex="1">
+          <mxGeometry height="37" width="60" x="-531" y="577.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-252" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="intel.h" vertex="1">
+          <mxGeometry height="37" width="45" x="-501" y="532.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-253" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="intel.c" vertex="1">
+          <mxGeometry height="37" width="45" x="-551" y="532.5" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-254" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="system_metrics.c" vertex="1">
+          <mxGeometry height="45" width="100" x="-96" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-255" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document;fontStyle=2" value="memory.c" vertex="1">
+          <mxGeometry height="45" width="60" x="-168.5" y="518.75" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-256" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;div&gt;&lt;font color=&quot;#17324d&quot;&gt;&lt;span style=&quot;font-size: 13px;&quot;&gt;To support another operating system, implement its CPU/GPU backends and&amp;nbsp;&lt;/span&gt;&lt;/font&gt;&lt;/div&gt;&lt;div&gt;&lt;font color=&quot;#17324d&quot;&gt;&lt;span style=&quot;font-size: 13px;&quot;&gt;system-metric helpers using the shared interfaces&lt;/span&gt;&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="30" width="613" x="-591.5" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-257" parent="1" style="whiteSpace=wrap;html=1;shape=mxgraph.basic.document" value="&lt;i&gt;configuration.toml&lt;/i&gt;" vertex="1">
+          <mxGeometry height="70" width="100" x="-775" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-258" parent="1" style="shape=image;html=1;verticalAlign=top;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;imageAspect=0;aspect=fixed;image=https://icons.diagrams.net/assets/integration/1/CSV_File.svg;rounded=1;strokeColor=#5D9367;align=center;spacing=10;fontFamily=Helvetica;fontSize=13;fontColor=default;fontStyle=0;fillColor=#DDF0E0;" value="Selected&amp;nbsp;&lt;div&gt;measurement results&lt;/div&gt;" vertex="1">
+          <mxGeometry height="77.68" width="60" x="81" y="236.15999999999985" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-259" edge="1" parent="1" source="W00KPzn58JGH5EbS7u5r-228" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontFamily=Helvetica;fontSize=14;fontColor=#17324D;fontStyle=1;" target="W00KPzn58JGH5EbS7u5r-258">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-260" connectable="0" parent="W00KPzn58JGH5EbS7u5r-259" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontFamily=Helvetica;fontSize=11;fontColor=#000000;fontStyle=0;labelBackgroundColor=#F5F9F5;" value="4. writes measurements" vertex="1">
+          <mxGeometry relative="1" x="-0.0742" y="-1" as="geometry">
+            <mxPoint x="-1" y="-1" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-261" edge="1" parent="1" source="W00KPzn58JGH5EbS7u5r-228" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Helvetica;fontSize=14;fontColor=#17324D;fontStyle=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="W00KPzn58JGH5EbS7u5r-238" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="W00KPzn58JGH5EbS7u5r-262" connectable="0" parent="W00KPzn58JGH5EbS7u5r-261" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontFamily=Helvetica;fontSize=11;fontColor=#000000;fontStyle=0;labelBackgroundColor=#F5F9F5;" value="&lt;span style=&quot;color: rgb(0, 0, 0); font-size: 11px; font-weight: 400; background-color: rgb(245, 249, 245);&quot;&gt;3. Discovers and selects available CPU/GPU backends&lt;/span&gt;" vertex="1">
+          <mxGeometry relative="1" x="-0.15" y="-2" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

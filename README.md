@@ -1,8 +1,8 @@
-# GreenMeasurer: A Hardware-Agnostic Energy Telemetry & Benchmarking Framework
+# GreenMeasurer: An Extensible Linux Framework for Software Energy Measurement
 
-GreenMeasurer is a modular, low-overhead measurement framework designed to profile software energy consumption, power capping curves, and execution telemetry across diverse architectures.
+GreenMeasurer is a modular framework for measuring software energy consumption, power-cap behavior, and execution telemetry on Linux. Its CPU and GPU backend interfaces are designed to make additional hardware implementations possible without adding vendor-specific logic to the measurement engine.
 
-The tool coordinates platform-specific telemetry drivers behind a generic **Hardware Abstraction Layer (HAL)** in C, capturing unified energy readouts (Joules), peak memory usage, and thermal states across CPU and GPU hardware domains.
+The C measurement engine coordinates platform-specific telemetry plugins through shared interfaces. It records hardware-domain energy (joules), execution time, memory use, temperatures, and other selected metrics as CSV data. Linux is the currently implemented platform; other operating systems would require their own platform-specific implementations.
 
 | Authors      | Contacts                 |
 |:------------:|:------------------------:|
@@ -15,16 +15,19 @@ The tool coordinates platform-specific telemetry drivers behind a generic **Hard
 
 ## Architecture & Directory Layout
 
-The project isolates platform access from measurement orchestration. All platform implementations reside under a modular hierarchy:
+The project isolates platform access from measurement orchestration. In the current Linux implementation, platform-specific code resides under this hierarchy:
 
 ```text
 src/
 ├── include/
 │   ├── energy-backend.h                # HAL definition for CPU & GPU energy backends
 │   ├── metric-adapter.h                # External gauge adapter interface
-│   └── sensors.h                       # Abstraction drivers for thermal sensors
+│   ├── system_metrics.h                # Shared system-metrics interface
+│   └── sensors.h                       # Shared declarations for sensor helpers
 ├── platform/
 │   └── linux/
+│       ├── memory.c                   # Linux workload peak RSS via wait4()
+│       ├── system_metrics.c            # Linux system/process metrics (/proc, /sys)
 │       ├── cpu/
 │       │   └── intel/
 │       │       ├── intel.c             # Intel RAPL MSR telemetry & raplcap powercapping
@@ -36,15 +39,12 @@ src/
 │           │   ├── intel.h             # Backend and sensor declarations
 │           │   └── sensors.c           # GPU hwmon temperature reader
 │           └── nvidia/                 # NVIDIA NVML backend
-├── sensors/
-│   └── sensors.c                       # Shared runtime sensor dispatcher & calibration
-├── metrics/
-│   ├── system_metrics.c                # Core count, per-core frequency, process counts, RSS
+├── metric_adapters/
 │   └── metric_adapter_loader.c         # External gauge adapter loader
 ├── launcher.c                          # TOML generator launcher
 ├── main.c                              # Measurement engine included in generated C
-├── overtime.inc                        # Sequential overtime sampler
-└── Makefile                            # Architecture-aware dynamic build system
+├── overtime.inc # Sequential over-time sampler
+└── Makefile                            # Builds backends whose Linux dependencies are available
 ```
 
 ---
@@ -100,7 +100,7 @@ For example, the Intel CPU backend is skipped when the powercap, raplcap or libs
 ## TOML configuration and execution
 
 GreenMeasurer requires a TOML file. Set `measurement.mode` to `standard`
-for repeated aggregate measurements or `overtime` for interval sampling, and
+for repeated aggregate measurements or `overtime` (over-time sampling) for interval sampling, and
 select the metrics in `[metrics]`. Generate and compile first, then execute
 the generated binary separately:
 
@@ -124,9 +124,9 @@ The TOML files in [`configurations/`](configurations/) are split in three folder
 
 | Folder | Contents |
 |--------|----------|
-| [`selected-some-metrics/`](configurations/selected-some-metrics/) | Temperature calibration, standard and overtime measurements with and without a requested 2 W limit, and a 15–16 W powercap calibration, each selecting a few metrics |
-| [`all-metrics/`](configurations/all-metrics/) | Standard and overtime runs with `select = "all"` |
-| [`new-metrics/`](configurations/new-metrics/) | Standard and overtime runs that add system uptime, a metric GreenMeasurer does not provide, from [`system_uptime.c`](configurations/new-metrics/system_uptime.c) and [`system_uptime.h`](configurations/new-metrics/system_uptime.h) |
+| [`selected-some-metrics/`](configurations/selected-some-metrics/) | Temperature calibration, standard and over-time measurements with and without a requested 2 W limit, and a 15–16 W powercap calibration, each selecting a few metrics |
+| [`all-metrics/`](configurations/all-metrics/) | Standard and over-time runs with `select = "all"` |
+| [`new-metrics/`](configurations/new-metrics/) | Standard and over-time runs that add system uptime, a metric GreenMeasurer does not provide, from [`system_uptime.c`](configurations/new-metrics/system_uptime.c) and [`system_uptime.h`](configurations/new-metrics/system_uptime.h) |
 
 They use the same short CPU-bound
 Python workload and do not depend on the `Languages` directory. Run commands
@@ -148,13 +148,13 @@ powercap controls may require elevated privileges.
 
 **Powercap tests change real hardware settings.** Check the host's supported
 limits and adjust `powercap`, `powercap_min` and `powercap_max` before running;
-2 W and 15–16 W are test values, not guaranteed to be supported or applied exactly.
-The current Intel backend does not export the commit callback required for
-positive caps in standard and overtime modes, so those runs are rejected.
-Calibration attempts to restore the previous limits after each sweep point;
-it does not disable the zones at the end. A `-1` measurement leaves existing
-limits unchanged. Check package settings before and after each run: cleanup
-has not been verified on hardware, and other limits may also apply.
+example watt values are not guaranteed to be supported or applied exactly.
+The Intel backend provides powercap callbacks for standard, over-time and
+calibration measurements. It attempts to restore previous limits and zone
+state after each applied cap and reports restoration errors, but restoration
+has not been verified on all hardware and abrupt termination can leave limits
+changed. A `-1` measurement leaves existing limits unchanged. Check package
+settings before and after each run; firmware and other controls may also apply.
 
 ### Over-time sampling
 The parent process samples the backends and system metrics sequentially while the
@@ -171,7 +171,7 @@ perform I/O and, depending on the backend, allocate memory. At exactly 1000
 samples per second, the capacity covers approximately 4 minutes and 22 seconds.
 
 For scripts to analyze observed sample intervals, probe RAPL update behavior,
-and compare workload timing overhead, see [scripts/README.md](scripts/README.md#evaluating-overtime-sampling).
+and compare workload timing overhead, see [scripts/README.md](scripts/README.md#evaluating-over-time-sampling).
 
 ### Calibration
 
@@ -179,8 +179,8 @@ Calibration also requires TOML. Use `mode = "temperature-calibration"` with
 `sleep_seconds` and `calibration_file`, or `mode = "powercap-calibration"`
 with `command`, `powercap_min`, `powercap_max` and optional `compile_command`,
 `language`, `program`, `output`, `repetitions`, `timeout_hours`, `variance`,
-`sleep_seconds` and `calibration_file`. Calibration does not use a `[metrics]`
-table.
+`sleep_seconds` and `calibration_file`. Temperature calibration does not use a
+`[metrics]` table; powercap calibration accepts an optional one.
 
 The [website](website/index.html) provides a configuration and execution guide.
 
@@ -216,8 +216,9 @@ after a run. Firmware or other power limits can still apply.
 `powercap = -1` does not change existing limits; it does not disable them.
 `powercap` accepts one value or a list (for example `powercap = [-1, 5, 10]`);
 each value is measured in turn and written to the same CSV with a `Powercap`
-column. Every applied limit is restored to its previous value as soon as its
-measurement ends, so no limit remains after the run (after the last value, for a list).
+column. The backend attempts to restore the previous limits and zone state
+after each applied cap and reports restoration errors. Verify the actual
+hardware state after runs, especially after interruption.
 `temperature-calibration` needs no `--directory`: `./src/main --config <file>`
 writes the `.txt` directly. `powercap-calibration` accepts an optional
 `[metrics]` section (selected, `select = "all"` or `[[external_metrics]]`;
@@ -277,7 +278,7 @@ Metric behavior is declared by each backend:
 * **Window metrics** are measured between `sample_start` and `sample_stop`.
 * **Gauge metrics** are read at the end of a standard run, except CPU
   temperature, which is recorded immediately before the workload after the
-  thermal gate passes. Overtime keeps sampling temperature during execution.
+  thermal gate passes. Over-time sampling continues to collect temperature during execution.
 * **Peak metrics** are polled during standard runs; process-scoped metrics are
   aggregated across the workload process tree. Polling is every 50 ms, so brief
   allocations may be missed.
@@ -315,7 +316,7 @@ reflects the selected metrics that are available at runtime.
 
 An experimental interface for additional, independent gauge metrics is defined
 in [`src/include/metric-adapter.h`](src/include/metric-adapter.h), with a
-loader in [`src/metrics/metric_adapter_loader.c`](src/metrics/metric_adapter_loader.c)
+loader in [`src/metric_adapters/metric_adapter_loader.c`](src/metric_adapters/metric_adapter_loader.c)
 and an example in [`src/tests/fixtures/custom_metric/`](src/tests/fixtures/custom_metric/). The
 adapter exports a versioned descriptor with names and units, optional
 initialization and cleanup, and a read callback that returns a status and writes
@@ -364,7 +365,7 @@ against the actual libraries by the validator.
 
 Generation requires `command`. Optional measurement fields are `language`, `program`, `output`,
 `calibration_file`, `powercap`, `variance`, and `sleep_seconds`. Additionally,
-`interval_us` is specific to overtime, while `repetitions` and `timeout_hours`
+`interval_us` is specific to over-time sampling, while `repetitions` and `timeout_hours`
 are specific to standard mode. A power cap must be `-1` or positive.
 
 External metrics refer to named adapter tables. For example, after building the
@@ -550,7 +551,7 @@ the selected external gauge. A GPU backend is optional; a CPU backend providing
 a readable temperature is required even for system and external metrics.
 
 The workload command is required and runs through the shell, as in the existing
-overtime mode. Use only trusted commands and adapters: adapters execute native
+over-time mode. Use only trusted commands and adapters: adapters execute native
 code in the measurement process. The adapter is initialized once, checked
 before the workload starts, read once per sample and cleaned up on exit.
 Multiple metrics can use one adapter alias; the same resolved adapter path
@@ -559,7 +560,7 @@ Backend device metrics that fail the preflight probe are skipped; if none of
 the selected metrics remain, the run fails. A backend read failure during the
 run is recorded as `NOT_SUPPORTED`; in standard mode a failed energy window
 invalidates the entire repetition for the affected metric. A process-scoped
-metric may be unavailable in the final overtime sample after the workload
+metric may be unavailable in the final over-time sample after the workload
 exits; in standard, a run with no valid process reading reports `NOT_SUPPORTED`.
 Default unconfigured runs retain `NOT_SUPPORTED` for
 unavailable metrics rather than requiring every backend metric to work.
@@ -568,14 +569,14 @@ the measurement fails if no selected metrics remain.
 Device-scoped metrics are probed before the workload; process-scoped metrics can
 only be checked during it. A negative or non-finite CPU/GPU value is treated as
 unavailable; external gauges can report negative values. Configured hardware
-overtime sampling currently supports at most 64 total metrics registered by the active
+over-time sampling currently supports at most 64 total metrics registered by the active
 backends, including unselected metrics. Timestamps precede sequential metric reads and do not imply that
 the reads were simultaneous. The configured interval is a pause between
 samples, not a guaranteed sampling period.
 
 Set execution fields in TOML before generating; runtime overrides are not
 accepted. `repetitions` and `timeout_hours` apply to standard mode, and
-`interval_us` applies to overtime.
+`interval_us` applies to over-time sampling.
 Relative output and calibration paths are relative to the current working
 directory; adapter paths are relative to the configuration file.
 
@@ -627,10 +628,10 @@ metric marked `ENERGY_METRIC_FLAG_CPU_TEMPERATURE`.
 `sample_start` opens an energy window and `sample_stop` closes it; a window
 metric must return its energy delta in joules. If implemented, the optional
 `energy_backend_sample_next` closes a window and moves its baseline to the
-same ending snapshot, avoiding unmeasured gaps in overtime. The CPU and GPU
+same ending snapshot, avoiding unmeasured gaps in over-time sampling. The CPU and GPU
 examples illustrate that lifecycle; their modeled energy does not demonstrate
 hardware counter wraparound. Standard mode collects window segments and
-aggregates them, while overtime writes a value per interval. A gauge is a
+aggregates them, while over-time sampling writes a value per interval. A gauge is a
 current value; process-scoped metrics receive a process ID. The backend
 descriptor's type and priority control discovery and selection. Check
 [`energy-backend.h`](src/include/energy-backend.h) and an existing hardware

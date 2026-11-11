@@ -1,11 +1,11 @@
 ### Scripts
 
-- `install.sh`: Installs all prerequisites for the study, such as `git`, `cmake`, `lm-sensors`, etc.
+- `install.sh`: Installs build and telemetry dependencies. Linux is the currently supported platform; installing tools on another OS does not provide a GreenMeasurer port.
 - `measure.sh`: Generates a batch from TOML files, then runs it in a separate step.
 - `run_powercap_calibration.sh`: Generates a powercap calibration executable from TOML.
-- `analyze_overtime.py`: Reports observed overtime sampling intervals.
+- `analyze_overtime.py`: Reports observed over-time sampling intervals.
 - `probe_rapl_frequency.py`: Measures observed Intel package RAPL counter changes.
-- `compare_overtime_overhead.py`: Compares workload wall time with and without overtime sampling.
+- `compare_overtime_overhead.py`: Compares workload wall time with and without over-time sampling.
 - `validate_config.py`: Validates the TOML configuration. Optional
   `--check-adapters` loads trusted selected adapters and tests their readings.
 - `run_config.py`: Internal configuration-to-engine argument translation.
@@ -55,7 +55,7 @@ GREENMEASURER_VERBOSE_BACKENDS=1 ./generated-diagnostics/greenmeasurer
 The command runs a measurement and overwrites the example's output CSV in the
 current directory. It does not merely list backends.
 
-## Evaluating overtime sampling
+## Evaluating over-time sampling
 
 These scripts use Python 3's standard library. Run them from the repository root.
 
@@ -92,7 +92,7 @@ These scripts use Python 3's standard library. Run them from the repository root
    operating system, workload, and probe settings. This standalone probe measures
    the counter under its own polling load, not simultaneously with the workload.
 
-3. Compare wall-clock times for the same workload with and without overtime:
+3. Compare wall-clock times for the same workload with and without over-time sampling:
 
    ```sh
    python3 scripts/compare_overtime_overhead.py \
@@ -108,7 +108,7 @@ These scripts use Python 3's standard library. Run them from the repository root
    output to a temporary CSV, without changing `measurement.output` in the
    file or overwriting its configured CSV. Source paths and adapter paths are
    resolved relative to the original configuration. Both modes run under the same
-   user as the script. The baseline uses shell elapsed time; overtime workload
+   user as the script. The baseline uses shell elapsed time; over-time workload
    time is approximated by its final sample timestamp, and `wrapper_ms` also
    includes initialization, possible temperature waiting and CSV output.
    The script prints every run in execution order and the difference in mean
@@ -127,7 +127,7 @@ These scripts use Python 3's standard library. Run them from the repository root
    remove a cap previously applied outside this run; verify the system's
    actual power limits before comparing.
 
-Overtime reads the backends and system metrics sequentially. `Timestamp_ms` is
+Over-time sampling reads the backends and system metrics sequentially. `Timestamp_ms` is
 captured before the backend reads and is not their exact simultaneous read time.
 The configured 1 ms pause begins after completing a cycle, so it is not a
 guaranteed 1 ms period. RAPL window values are interval energy, not

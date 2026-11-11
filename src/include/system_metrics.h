@@ -14,7 +14,7 @@ int sys_core_count(void);
 /* Current frequency of a logical core in MHz, or SYS_METRIC_NOT_SUPPORTED. */
 double sys_core_frequency_mhz(int core);
 
-/* Runnable processes system-wide (first field of the /proc/loadavg 4th column). */
+/* Number of runnable processes system-wide. */
 int sys_running_processes(void);
 
 /* Collects root_pid and all of its descendants. Returns how many were stored. */

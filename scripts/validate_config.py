@@ -85,7 +85,8 @@ def validate_config(data, config_path):
     only_fields(measurement, MEASUREMENT_FIELDS, "measurement")
     mode = measurement.get("mode")
     if mode not in ("standard", "overtime", "temperature-calibration", "powercap-calibration"):
-        fail("measurement.mode must be 'standard', 'overtime', 'temperature-calibration' or 'powercap-calibration'")
+        fail("measurement.mode must be 'standard', 'overtime' (over-time sampling), "
+             "'temperature-calibration' or 'powercap-calibration'")
     for key in ("command", "language", "program", "output", "calibration_file", "compile_command"):
         if key in measurement:
             string(measurement[key], f"measurement.{key}")
@@ -145,7 +146,7 @@ def validate_config(data, config_path):
             if key in measurement:
                 fail(f"measurement.{key} is only valid in powercap calibration mode")
     if mode == "standard" and "interval_us" in measurement:
-        fail("measurement.interval_us is only valid in overtime mode")
+        fail("measurement.interval_us is only valid in over-time mode")
     if mode == "overtime" and ("repetitions" in measurement or "timeout_hours" in measurement):
         fail("measurement.repetitions and timeout_hours are only valid in standard mode")
 

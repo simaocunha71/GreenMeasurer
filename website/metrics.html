@@ -49,17 +49,17 @@
           <tr><td><code>gpu.VRAM</code></td><td>peak · MiB</td><td><code>nvidia_metric_vram</code></td><td>Workload process GPU memory from NVML process lists.</td></tr>
         </tbody></table></div>
       </section>
-      <section id="system"><p class="eyebrow">Built into the core</p><h2>System metrics</h2><p>These names do not belong to a hardware plugin. A readable CPU temperature is still required to run a measurement. <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/metrics/system_metrics.h">View system functions ↗</a></p>
+      <section id="system"><p class="eyebrow">Built into the core</p><h2>System metrics</h2><p>These names do not belong to a hardware plugin. A readable CPU temperature is still required to run a measurement. <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/include/system_metrics.h">View system functions ↗</a></p>
         <p>Memory in KiB, core counts and process counts are emitted as integers in both modes. Frequency in MHz is sampled and averaged in standard mode, so it may be fractional.</p>
         <div class="table-wrap"><table><thead><tr><th>TOML name</th><th>Function</th><th>Meaning</th></tr></thead><tbody>
           <tr><td><code>system.cores</code></td><td><code>sys_core_count</code></td><td>Number of online logical CPU cores.</td></tr>
           <tr><td><code>system.core_frequency</code></td><td><code>sys_core_frequency_mhz</code></td><td>Per-core frequency in MHz.</td></tr>
           <tr><td><code>system.running_processes</code></td><td><code>sys_running_processes</code></td><td>Runnable system processes from <code>/proc/loadavg</code>.</td></tr>
           <tr><td><code>system.workload_processes</code></td><td><code>sys_workload_process_count</code></td><td>Live processes in the workload tree.</td></tr>
-          <tr><td><code>system.memory</code></td><td><code>sys_workload_memory_kb</code> (overtime)</td><td>Workload memory in KiB; standard uses <code>wait4</code> maximum RSS, not a simultaneous tree sum.</td></tr>
+          <tr><td><code>system.memory</code></td><td><code>sys_workload_memory_kb</code> (over-time)</td><td>Workload memory in KiB; standard uses <code>wait4</code> maximum RSS, not a simultaneous tree sum.</td></tr>
         </tbody></table></div>
       </section>
-      <section id="output"><h2>Understand the CSV</h2><p>Standard uses <code>Time_ms</code> per run; overtime uses <code>Timestamp_ms</code> relative to the run start. The <code>Language</code>, <code>Program</code> and <code>Powercap</code> columns record configured labels and the requested cap. <code>-1</code> means existing limits were left unchanged.</p>
+      <section id="output"><h2>Understand the CSV</h2><p>Standard uses <code>Time_ms</code> per run; over-time uses <code>Timestamp_ms</code> relative to the run start. The <code>Language</code>, <code>Program</code> and <code>Powercap</code> columns record configured labels and the requested cap. <code>-1</code> means existing limits were left unchanged.</p>
         <p>Unavailable metrics may be skipped at preflight. If a later read fails, its value is recorded as <code>NOT_SUPPORTED</code>. With <code>select = "all"</code>, the resulting schema can differ between machines and runs.</p>
         <div class="page-links"><a href="guide.html">Measurement guide →</a><a href="reference.html">Backend API →</a></div>
       </section>

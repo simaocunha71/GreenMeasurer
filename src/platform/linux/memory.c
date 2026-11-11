@@ -8,8 +8,8 @@
 #include <unistd.h>
 #include "../include/energy-backend.h"
 
-/* Runs the command once and returns the peak RSS (KiB) of the process tree
-   reported by the kernel, or -1 on failure. No external tools are required. */
+/* Runs the command once and returns the peak RSS (KiB) reported by Linux,
+   or -1 on failure. No external tools are required. */
 int platform_measure_memory(const char *command) {
     if (!command || strlen(command) == 0) return -1;
 
