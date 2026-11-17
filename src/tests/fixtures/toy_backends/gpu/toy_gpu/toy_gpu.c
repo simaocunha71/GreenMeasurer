@@ -89,6 +89,15 @@ int energy_backend_sample_next(int device) {
     return result;
 }
 
+double energy_backend_read_counter(size_t metric_index, int device, pid_t pid) {
+    (void)device;
+    (void)pid;
+    if (!window_valid || metric_index >= energy_metric_function_map.count ||
+        toy_gpu_metric_functions[metric_index].read != toy_gpu_metric_energy)
+        return METRIC_NOT_SUPPORTED;
+    return TOY_GPU_WATTS * ((double)window_end.tv_sec + (double)window_end.tv_nsec / 1e9);
+}
+
 /* Resident memory of one process, in MiB (Linux only). */
 static double process_memory_mib(pid_t process_id) {
     char path[64], line[256];

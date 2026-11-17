@@ -55,8 +55,9 @@ int main(int argc, char **argv) {{
 """
 
 def numeric_literal(typ, value):
-    if typ == "double":
-        return float(value).hex()
+    if typ in ("float", "double"):
+        literal = float(value).hex()
+        return f"(float){literal}" if typ == "float" else literal
     if typ == "unsigned int":
         return f"{value}u"
     return str(value)
@@ -69,7 +70,18 @@ def generate_external_adapter(metric, config_path):
     values = ", ".join(numeric_literal(item["type"], item["value"]) for item in arguments)
     sentinel = ""
     if "error_value" in metric:
-        sentinel = f"    if (result == {float(metric['error_value']).hex()}) return -1;\n"
+        value = float(metric["error_value"]).hex()
+        if metric["return_type"] == "float":
+            value = f"(double)(float){value}"
+        sentinel = f"    if (result == {value}) return -1;\n"
+    value_type, field = {
+        "int": ("GREEN_METRIC_INT", "integer"),
+        "unsigned int": ("GREEN_METRIC_UNSIGNED_INT", "unsigned_integer"),
+        "float": ("GREEN_METRIC_FLOAT", "real"),
+        "double": ("GREEN_METRIC_DOUBLE", "double_real"),
+    }[metric["return_type"]]
+    finite_check = ("    if (!isfinite(result)) return -1;\n"
+                    if metric["return_type"] in ("float", "double") else "")
     return f"""\
 #include <math.h>
 #include {c_string(header)}
@@ -79,11 +91,18 @@ typedef {metric["return_type"]} (*expected_function)({types});
 _Static_assert(_Generic(&{metric["function"]}, expected_function: 1, default: 0),
                "configured function signature does not match the header");
 
-static int read_metric(size_t index, double *value) {{
+int greenmeasurer_metric_read_typed(size_t index, GreenMetricValue *value) {{
     if (index != 0 || !value) return -1;
-    double result = (double){metric["function"]}({values});
-    if (!isfinite(result)) return -1;
-{sentinel}    *value = result;
+    {metric["return_type"]} result = {metric["function"]}({values});
+{finite_check}{sentinel}    value->type = {value_type};
+    value->value.{field} = result;
+    return 0;
+}}
+
+static int read_metric(size_t index, double *value) {{
+    GreenMetricValue result;
+    if (!value || greenmeasurer_metric_read_typed(index, &result) != 0) return -1;
+    *value = (double)result.value.{field};
     return 0;
 }}
 
@@ -140,7 +159,9 @@ def build_external_metrics(config, config_path, output, log=sys.stdout):
             if not select_all:
                 configuration["metrics"]["select"].remove(name)
             continue
-        configuration.setdefault("adapters", []).append({"name": metric["name"], "path": str(library)})
+        configuration.setdefault("adapters", []).append({
+            "name": metric["name"], "path": str(library), "output_type": metric["return_type"]
+        })
         print(f"Built external metric '{name}': {library}", file=log)
     if not configuration["metrics"]["select"]:
         raise ValueError("no selected metrics remain after building external metrics")

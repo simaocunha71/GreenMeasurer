@@ -31,31 +31,52 @@ class OvertimeScriptsTest(unittest.TestCase):
     def test_analysis_statistics_and_run_boundaries(self):
         source = self.directory / "samples.csv"
         source.write_text(
-            "Language,Program,Powercap,Timestamp_ms\n"
-            "C,test,-1,1\nC,test,-1,2\nC,test,-1,5\n"
-            "C,test,-1,0.5\nC,test,-1,2.5\nC,test,5,4\n",
+            "Language,Program,Powercap,Timestamp_us\n"
+            "C,test,-1,1000\nC,test,-1,2000\nC,test,-1,5000\n"
+            "C,test,-1,500\nC,test,-1,2500\nC,test,5,4000\n",
             encoding="utf-8",
         )
         result = self.run_script(ANALYZE, source)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Samples: 3; first=1.000000 ms; last=5.000000 ms", result.stdout)
-        self.assertIn("mean=2.000000 ms; median=2.000000 ms", result.stdout)
-        self.assertIn("p95=2.900000 ms", result.stdout)
-        self.assertIn("Above 1 ms: 1/2 (50.00%)", result.stdout)
+        self.assertIn("Samples: 3; first=1000.000000 us; last=5000.000000 us", result.stdout)
+        self.assertIn("mean=2000.000000 us; median=2000.000000 us", result.stdout)
+        self.assertIn("p95=2900.000000 us", result.stdout)
+        self.assertIn("Above 1000 us: 1/2 (50.00%)", result.stdout)
         self.assertIn("Run 2:", result.stdout)
         self.assertIn("Run 3:", result.stdout)
         self.assertIn("No consecutive sample intervals available", result.stdout)
+        result = self.run_script(ANALYZE, source, "--threshold-us", 3000)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Above 3000 us: 0/2", result.stdout)
 
-    def test_analysis_rejects_legacy_and_invalid_data(self):
+    def test_analysis_rejects_invalid_data(self):
         source = self.directory / "samples.csv"
         source.write_text("Language,Program,Powercap,Time_ms\nC,test,-1,3\n", encoding="utf-8")
         result = self.run_script(ANALYZE, source)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Timestamp_ms", result.stderr)
-        source.write_text("Language,Program,Powercap,Timestamp_ms\nC,test,-1,nan\n", encoding="utf-8")
+        self.assertIn("Timestamp_us", result.stderr)
+        source.write_text("Language,Program,Powercap,Timestamp_us\nC,test,-1,nan\n", encoding="utf-8")
         result = self.run_script(ANALYZE, source)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("finite", result.stderr)
+
+    def test_analysis_supports_legacy_millisecond_csv_and_threshold(self):
+        source = self.directory / "legacy.csv"
+        source.write_text(
+            "Language,Program,Powercap,Timestamp_ms\nC,test,-1,1\nC,test,-1,3\n",
+            encoding="utf-8",
+        )
+        result = self.run_script(ANALYZE, source, "--threshold-ms", 1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("mean=2000.000000 us", result.stdout)
+        self.assertIn("Above 1000 us: 1/1", result.stdout)
+        source.write_text(
+            "Language,Program,Powercap,Timestamp_ms,Timestamp_us\nC,test,-1,1,1000\n",
+            encoding="utf-8",
+        )
+        result = self.run_script(ANALYZE, source)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one", result.stderr)
 
     def test_probe_rejects_invalid_duration(self):
         result = self.run_script(PROBE, "--duration", "nan")
@@ -77,7 +98,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         output.write_text("preserved\n", encoding="utf-8")
         config = self.directory / "config.toml"
         config.write_text(
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.03"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
             f'calibration_file="{calibration}"\noutput="{output}"\n'
             'variance=100\nsleep_seconds=0\ninterval_us=5000\n'
             '[metrics]\nselect=["cpu.Energy"]\n', encoding="utf-8",
@@ -90,6 +111,11 @@ class OvertimeScriptsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count(",baseline,"), 2)
         self.assertEqual(result.stdout.count(",overtime,"), 2)
+        for line in result.stdout.splitlines():
+            if ",overtime," in line:
+                fields = line.split(",")
+                self.assertGreater(float(fields[3]), 10)
+                self.assertLess(float(fields[3]), float(fields[4]) + 50)
         self.assertIn("Mean difference:", result.stdout)
         self.assertIn("does not measure energy overhead", result.stdout)
         self.assertEqual(output.read_text(encoding="utf-8"), "preserved\n")
@@ -120,12 +146,12 @@ class OvertimeScriptsTest(unittest.TestCase):
         )
         result = self.run_script(COMPARE, "--config", config)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("measurement.mode must be 'overtime' (over-time sampling)", result.stderr)
+        self.assertIn("measurement.mode must be 'over-time'", result.stderr)
         result = self.run_script(COMPARE, "--command", "true")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--config", result.stderr)
         config.write_text(
-            '[measurement]\nmode="overtime"\ncommand="true"\npowercap=5\n'
+            '[measurement]\nmode="over-time"\ncommand="true"\npowercap=5\n'
             f'calibration_file="{calibration}"\n'
             '[metrics]\nselect=["system.cores"]\n', encoding="utf-8",
         )
@@ -147,7 +173,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         env["GREENMEASURER_BACKEND_DIR"] = str(backends)
         config = self.directory / "config.toml"
         config.write_text(
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.03"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
             f'calibration_file="{calibration}"\n'
             'variance=100\nsleep_seconds=0\ninterval_us=5000\n'
             '[metrics]\nselect=["external.demo.Value"]\n'

@@ -1,15 +1,16 @@
 [measurement]
-mode = "standard"
+mode = "powercap-calibration"
 command = "python3 Languages/Python/Fibonacci/fibonacci.py 42"
 language = "Python"
 program = "fibonacci-42"
-output = "greenmeasurer-all-metrics-standard.csv"
-repetitions = 3
+output = "paper_data/powercap-calibration.csv"
+repetitions = 10
 timeout_hours = 4
 sleep_seconds = 60
 variance = 5
-powercap = -1
-calibration_file = "greenmeasurer-test-temperature.txt"
+powercap_min = 1
+powercap_max = 25
+calibration_file = "paper_data/temperature-baseline.txt"
 
 [metrics]
 select = "all"

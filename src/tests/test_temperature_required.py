@@ -26,7 +26,7 @@ class TemperatureRequiredTest(unittest.TestCase):
             output = root / "output.csv"
             env = os.environ.copy()
             env["GREENMEASURER_BACKEND_DIR"] = str(backends)
-            for mode in ("--configured-standard", "--configured-overtime",
+            for mode in ("--configured-standard", "--configured-over-time",
                          "--temperature-calibration", "--powercap-calibration"):
                 with self.subTest(mode=mode):
                     arguments = [str(ENGINE), mode, "-command", f"touch {marker}",

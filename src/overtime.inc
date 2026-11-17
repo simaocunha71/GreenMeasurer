@@ -3,6 +3,7 @@
 #define OT_MAX_SAMPLES 262144
 #endif
 #define OT_MAX_METRICS 64
+#define OT_MAX_EXTERNAL_METRICS 30
 #define OT_SCALAR_COUNT 4
 
 struct OvertimeContext {
@@ -18,13 +19,17 @@ static int ot_cores[OT_MAX_SAMPLES];
 static int ot_process_values[2][OT_MAX_SAMPLES];
 static float ot_freq_mhz[OT_MAX_SAMPLES][SYS_MAX_CORES];
 static double ot_backend_values[OT_MAX_METRICS][OT_MAX_SAMPLES];
-static double ot_timestamp_ms[OT_MAX_SAMPLES];
+static GreenMetricValue ot_external_values[OT_MAX_EXTERNAL_METRICS][OT_MAX_SAMPLES];
+static double ot_timestamp_us[OT_MAX_SAMPLES];
 static size_t ot_count;
 static int ot_core_count;
 static unsigned char ot_scalar_warned[OT_SCALAR_COUNT];
 static unsigned char ot_frequency_warned[SYS_MAX_CORES];
 static int ot_backend_ready[2];
 static int (*ot_sample_next[2])(int);
+static EnergyBackendReadCounter ot_read_counter[2];
+static unsigned char ot_counter_warned[2];
+static unsigned char ot_counter_metric_warned[OT_MAX_METRICS];
 static struct timespec ot_start_time;
 
 static int ot_backend_start(EnergyBackendType type) {
@@ -40,6 +45,8 @@ static int ot_backend_stop(EnergyBackendType type) {
 }
 
 static void ot_find_next_callbacks(void) {
+    memset(ot_sample_next, 0, sizeof(ot_sample_next));
+    memset(ot_read_counter, 0, sizeof(ot_read_counter));
     for (size_t i = 0; i < loaded_backend_count; i++) {
         const EnergyBackendDescriptor *descriptor = loaded_backends[i].descriptor;
         if (!descriptor) continue;
@@ -48,6 +55,8 @@ static void ot_find_next_callbacks(void) {
             (type == ENERGY_BACKEND_GPU && descriptor->backend.gpu == active_gpu_backend)) {
             ot_sample_next[type] = dlsym(loaded_backends[i].handle,
                                          ENERGY_BACKEND_SAMPLE_NEXT_SYMBOL);
+            ot_read_counter[type] = dlsym(loaded_backends[i].handle,
+                                          ENERGY_BACKEND_READ_COUNTER_SYMBOL);
         }
     }
 }
@@ -60,19 +69,18 @@ static int ot_prepare(void) {
     ot_count = 0;
     memset(ot_scalar_warned, 0, sizeof(ot_scalar_warned));
     memset(ot_frequency_warned, 0, sizeof(ot_frequency_warned));
+    memset(ot_counter_warned, 0, sizeof(ot_counter_warned));
+    memset(ot_counter_metric_warned, 0, sizeof(ot_counter_metric_warned));
     if (configured_overtime) probe_configured_system();
     ot_core_count = sys_core_count();
     if (configured_overtime && configured_system[4]) ot_core_count = configured_frequency_cores;
     if (ot_core_count > SYS_MAX_CORES) ot_core_count = SYS_MAX_CORES;
     if (configured_overtime) {
         if (probe_configured_external() != 0) return -1;
-        for (size_t i = 0; i < configured_external_count; i++) {
-            ConfiguredExternalMetric *metric = &configured_external_metrics[i];
-            metric->values = malloc(OT_MAX_SAMPLES * sizeof(*metric->values));
-            if (!metric->values) {
-                fprintf(stderr, "[ERROR] Unable to allocate external metric samples.\n");
-                return -1;
-            }
+        if (configured_external_count > OT_MAX_EXTERNAL_METRICS) {
+            fprintf(stderr, "[ERROR] Too many external metrics for over-time sampling (max %d).\n",
+                    OT_MAX_EXTERNAL_METRICS);
+            return -1;
         }
     }
     ot_find_next_callbacks();
@@ -135,10 +143,6 @@ static int ot_prepare(void) {
                 }
             }
         }
-        if (ot_backend_ready[type] && !ot_sample_next[type]) {
-            fprintf(stderr, "[WARNING] %s backend does not support contiguous over-time windows; "
-                    "energy between windows will not be recorded.\n", type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
-        }
     }
     for (int type = 0; type < 2; type++) {
         if (ot_backend_ready[type] && ot_backend_start((EnergyBackendType)type) != 0) {
@@ -162,6 +166,25 @@ static int ot_prepare(void) {
     return 0;
 }
 
+static double ot_counter_value(const ActiveMetric *metric, pid_t workload_pid) {
+    EnergyBackendReadCounter read_counter = ot_read_counter[metric->backend_type];
+    if (metric->descriptor->scope != ENERGY_METRIC_PROCESS)
+        return read_counter(metric->backend_metric_index, 0, 0);
+
+    pid_t processes[SYS_MAX_PROCESS_TREE];
+    size_t count = sys_collect_process_tree(workload_pid, processes, SYS_MAX_PROCESS_TREE);
+    double total = 0.0;
+    int found = 0;
+    for (size_t i = 0; i < count; i++) {
+        double value = read_counter(metric->backend_metric_index, 0, processes[i]);
+        if (isfinite(value) && value >= 0.0) {
+            total += value;
+            found = 1;
+        }
+    }
+    return found ? total : METRIC_NOT_SUPPORTED;
+}
+
 static int ot_sample(pid_t workload_pid, int finished) {
     if (ot_count >= OT_MAX_SAMPLES) {
         fprintf(stderr, "[ERROR] Over-time sample capacity (%d) exceeded; measurement aborted.\n", OT_MAX_SAMPLES);
@@ -173,8 +196,8 @@ static int ot_sample(pid_t workload_pid, int finished) {
         return -1;
     }
     size_t slot = ot_count++;
-    ot_timestamp_ms[slot] = (double)(now.tv_sec - ot_start_time.tv_sec) * 1000.0 +
-                            (double)(now.tv_nsec - ot_start_time.tv_nsec) / 1000000.0;
+    ot_timestamp_us[slot] = (double)(now.tv_sec - ot_start_time.tv_sec) * 1000000.0 +
+                            (double)(now.tv_nsec - ot_start_time.tv_nsec) / 1000.0;
     int stopped[2] = {0, 0};
     for (int type = 0; type < 2; type++) {
         if (!ot_backend_ready[type]) continue;
@@ -239,9 +262,9 @@ static int ot_sample(pid_t workload_pid, int finished) {
         }
         for (size_t i = 0; i < configured_external_count; i++) {
             ConfiguredExternalMetric *metric = &configured_external_metrics[i];
-            if (read_configured_external(metric, &metric->values[slot]) != 0) {
+            if (read_configured_external(metric, &ot_external_values[i][slot]) != 0) {
                 fprintf(stderr, "[WARNING] Recording NOT_SUPPORTED for the failed external metric sample.\n");
-                metric->values[slot] = NAN;
+                ot_external_values[i][slot].type = GREEN_METRIC_INVALID;
             }
         }
     }
@@ -249,12 +272,30 @@ static int ot_sample(pid_t workload_pid, int finished) {
         if (configured_overtime && (!configured_backend_selected || !configured_backend_selected[i])) continue;
         const ActiveMetric *metric = &active_metrics[i];
         int type = metric->backend_type;
-        ot_backend_values[i][slot] =
-            !stopped[type] && (configured_overtime ||
-                               metric->descriptor->kind == ENERGY_METRIC_WINDOW)
-                ? METRIC_NOT_SUPPORTED
+        if (metric->descriptor->kind == ENERGY_METRIC_WINDOW) {
+            if (!ot_read_counter[type] && !ot_counter_warned[type]) {
+                fprintf(stderr, "[WARNING] %s backend does not expose counter readings; "
+                        "its window metrics will be recorded as NOT_SUPPORTED.\n",
+                        type == ENERGY_BACKEND_CPU ? "CPU" : "GPU");
+                ot_counter_warned[type] = 1;
+            }
+            ot_backend_values[i][slot] = stopped[type] && ot_read_counter[type]
+                ? ot_counter_value(metric, workload_pid)
+                : METRIC_NOT_SUPPORTED;
+            if (stopped[type] && ot_read_counter[type] &&
+                (!isfinite(ot_backend_values[i][slot]) || ot_backend_values[i][slot] < 0.0) &&
+                !ot_counter_metric_warned[i]) {
+                fprintf(stderr, "[WARNING] Counter reading for '%s.%s' is unavailable; "
+                        "recording NOT_SUPPORTED.\n",
+                        type == ENERGY_BACKEND_CPU ? "cpu" : "gpu", metric->descriptor->name);
+                ot_counter_metric_warned[i] = 1;
+            }
+        } else {
+            ot_backend_values[i][slot] =
+                !stopped[type] && configured_overtime ? METRIC_NOT_SUPPORTED
                 : metric->descriptor->scope == ENERGY_METRIC_PROCESS
                     ? read_process_tree_metric(i, workload_pid) : read_active_metric(i, 0);
+        }
         double value = ot_backend_values[i][slot];
         if (configured_overtime && (!isfinite(value) || value < 0.0) &&
             !(finished && metric->descriptor->scope == ENERGY_METRIC_PROCESS && stopped[type])) {
@@ -305,7 +346,7 @@ static int ot_dump(const struct OvertimeContext *ctx) {
     if (!ctx->append) energy_backend_write_csv_header(fp, 1);
     for (size_t row = 0; row < ot_count; row++) {
         fprintf(fp, "%s, %s, %d, %.6f", ctx->language, ctx->program, ctx->powercap,
-                ot_timestamp_ms[row]);
+                ot_timestamp_us[row]);
         for (int i = 0; i < OT_SCALAR_COUNT; i++) {
             if (configured_overtime && !configured_system[i]) continue;
             fprintf(fp, ", ");
@@ -324,7 +365,8 @@ static int ot_dump(const struct OvertimeContext *ctx) {
         }
         for (size_t i = 0; configured_overtime && i < configured_external_count; i++) {
             fprintf(fp, ", ");
-            write_external_metric_value(fp, configured_external_metrics[i].values[row]);
+            write_external_metric_value(fp, &configured_external_metrics[i],
+                                        ot_external_values[i][row]);
         }
         fputc('\n', fp);
     }

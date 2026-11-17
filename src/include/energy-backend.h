@@ -216,6 +216,10 @@ int platform_measure_memory(const char *command);
    previous stop on the next call, without losing energy between windows. */
 #define ENERGY_BACKEND_SAMPLE_NEXT_SYMBOL "energy_backend_sample_next"
 
+/* Optional plugin symbol: read the latest counter snapshot in the metric's unit. */
+typedef double (*EnergyBackendReadCounter)(size_t metric_index, int device, pid_t process_id);
+#define ENERGY_BACKEND_READ_COUNTER_SYMBOL "energy_backend_read_counter"
+
 /* Write framework metadata columns followed by metrics from selected backends. */
 void energy_backend_write_csv_header(FILE *stream, int overtime);
 

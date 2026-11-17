@@ -128,7 +128,7 @@ ENERGY_DEFINE_METRICS(toy_cpu, LEGACY_METRICS)
         self.assertIn("Function: added_metric", listing.stdout)
         self.assertIn("Description: Example extra metric", listing.stdout)
         self.assertIn("Origin: Test source", listing.stdout)
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             for selection in ("cpu.Extra", "cpu.added_metric"):
                 with self.subTest(mode=mode, selection=selection):
                     output = self.directory / "result.csv"
@@ -178,7 +178,7 @@ static double added_metric(int device, pid_t pid) {
         self.assertIn("Function: added_metric", listing.stdout)
         self.assertIn("Description: Example extra metric", listing.stdout)
         self.assertIn("Origin: Test source", listing.stdout)
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             for selection in ("cpu.Extra", "cpu.added_metric"):
                 with self.subTest(mode=mode, selection=selection):
                     output = self.directory / "structured.csv"
@@ -204,8 +204,15 @@ static double added_metric(int device, pid_t pid) {
 
     def test_intel_structured_metric_can_be_added(self):
         intel = SRC / "platform" / "linux" / "cpu" / "intel"
-        if not (intel / "backend.so").exists():
-            self.skipTest("Intel backend development dependencies are unavailable")
+        config = subprocess.run(
+            ["make", "-s", "-C", str(SRC), "--eval",
+             "print-intel-test-config: ; @printf '%s\\n%s\\n' '$(BACKEND_TARGETS)' '$(SENSORS_LIBRARY)'",
+             "print-intel-test-config"],
+            check=True, capture_output=True, text=True,
+        )
+        targets, sensors_library = config.stdout.splitlines()
+        if "platform/linux/cpu/intel/backend.so" not in targets.split():
+            self.skipTest("Intel backend hardware or development dependencies are unavailable")
         source = (intel / "intel.c").read_text(encoding="utf-8")
         declaration = "static const EnergyMetricDefinition intel_metric_definitions[] = {"
         self.assertIn(declaration, source)
@@ -227,7 +234,8 @@ static double added_metric(int device, pid_t pid) {
         plugin.parent.mkdir(parents=True)
         subprocess.run(
             ["cc", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared",
-             "-I", str(SRC / "include"), "-I", str(intel), str(file), "-o", str(plugin), "-lm"],
+             "-I", str(SRC / "include"), "-I", str(intel), str(file), "-o", str(plugin),
+             "-lm", sensors_library],
             check=True, capture_output=True, text=True,
         )
         listing = subprocess.run([str(SRC / "main"), "--list-metrics", "cpu", "intel-test"],
@@ -249,9 +257,11 @@ static double added_metric(int device, pid_t pid) {
                              '-DFAKE_NAME="Fake"', "-DFAKE_PRIORITY=0", "-DFAKE_DETECT=1")
         empty_backends = self.directory / "empty-backends"
         empty_backends.mkdir()
-        for mode in ("standard", "overtime"):
-            example = ROOT / "src" / "tests" / "fixtures" / "configurations" / f"fibonacci-{mode}.toml"
-            output = self.directory / f"fibonacci-{mode}.csv"
+        for mode in ("standard", "over-time"):
+            example_mode = "overtime" if mode == "over-time" else mode
+            example = ROOT / "src" / "tests" / "fixtures" / "configurations" / f"fibonacci-{example_mode}.toml"
+            output_mode = "overtime" if mode == "over-time" else mode
+            output = self.directory / f"fibonacci-{output_mode}.csv"
             build = self.directory / f"build-{mode}"
             result = self.generate(example, build)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -281,7 +291,7 @@ static double added_metric(int device, pid_t pid) {
                     with output.open(newline="", encoding="utf-8") as file:
                         rows = list(csv.reader(file, skipinitialspace=True))
                     columns = ["Language", "Program", "Powercap",
-                               "Time_ms" if mode == "standard" else "Timestamp_ms", "Cores"]
+                               "Time_ms" if mode == "standard" else "Timestamp_us", "Cores"]
                     if package_available:
                         columns.append("cpu.Package_J")
                     self.assertEqual(rows[0], columns)

@@ -114,9 +114,12 @@ its native constructors, so inspect only trusted libraries.
 Plugins can also export the optional `energy_backend_sample_next(int id)` symbol.
 After `sample_start`, each call closes the current window, exposes its metric
 values through `get_metric`, and uses that stop snapshot as the next baseline.
-This avoids gaps between successive over-time energy windows without changing the
-backend descriptor ABI. Legacy plugins still work, but the core warns that their
-separate stop/start windows omit energy between windows.
+This avoids gaps when accumulating successive energy windows without changing
+the backend descriptor ABI. Plugins may also export
+`energy_backend_read_counter(size_t metric_index, int device, pid_t pid)`, which
+returns the latest counter snapshot in the metric's declared unit or
+`METRIC_NOT_SUPPORTED`. Over-time mode uses this optional symbol for window
+metrics and reports `NOT_SUPPORTED` with a warning when it is unavailable.
 
 ### 3.2 GPU interface
 
@@ -174,15 +177,15 @@ Implemented in `main.c` (`get_backend_root`, `load_backend_category`, `load_back
 6. **Clean up** at exit: active backends' `cleanup()`, then `dlclose` of all handles.
 
 Adding hardware support therefore consists of creating a new folder with a
-source file, backend-owned metric descriptors, a generic getter and the
-descriptor export. No change to `main.c`, the Makefile logic or any registry is
-required.
+source file, backend-owned metric descriptors, a generic getter, the descriptor
+export and a build-time detection command configured in the Makefile. No change
+to `main.c` or any registry is required.
 
 ---
 
 ## 5. Build System
 
-`src/Makefile` discovers `platform/linux/*/*` directories and builds one `backend.so` per directory using `-fPIC -shared`. The core is linked with `-rdynamic -ldl`.
+`src/Makefile` discovers `platform/linux/*/*` directories and builds a `backend.so` for each detected backend with available dependencies using `-fPIC -shared`. The core is linked with `-rdynamic -ldl`.
 
 Backend-specific build settings live in `src/Makefile`, using the naming convention `BACKEND_<KEY>_<path with / replaced by _>`:
 
@@ -191,13 +194,24 @@ Backend-specific build settings live in `src/Makefile`, using the naming convent
 | `BACKEND_SOURCE_*` | Source file (default: first `*.c` not named `sensors.c`) |
 | `BACKEND_EXTRA_SOURCES_*` | Additional source files linked into the plugin |
 | `BACKEND_AVAILABLE_*` | `yes`/`no`; `no` skips the plugin and prints a `[BUILD] ... skipped` line |
+| `BACKEND_DETECT_*` | Build-time hardware detection command |
 | `BACKEND_CFLAGS_*` | Extra compile flags/include paths |
 | `BACKEND_LDLIBS_*` | Libraries linked into the plugin |
 | `BACKEND_HOST_LDLIBS_*` | Libraries linked into the main executable |
 
 `BACKEND_HOST_LDLIBS` exists for a practical reason: some dependencies (e.g. the Intel RAPL powercap libraries on the test machine) are installed only as non-PIC static archives, which cannot be linked into a shared object. They are linked into the executable with `--whole-archive`, and exposed to plugins through `-rdynamic`.
 
-Optional dependencies are checked per backend at build time. For example, the Intel CPU plugin is skipped unless both powercap/raplcap headers and libraries are present, and the NVIDIA plugin is skipped unless both the NVML header and library are present. A missing optional dependency therefore does not prevent the core or other eligible plugins from building. Plugins that build still perform hardware detection at runtime, so only compatible hardware is selected.
+Built-in detectors inspect the CPU vendor and PCI display devices. Configure a
+new backend's `BACKEND_DETECT_*` command in the Makefile, reusing
+`detect_cpu_vendor` or `detect_pci_gpu_vendor` where applicable, or implementing
+another command there. Exit 0 means detected, 1 means absent, and any other
+status indicates an error. A missing or failing detector produces a warning and
+prevents that backend from being built. Optional
+dependencies are also checked per backend. For example, the Intel CPU plugin
+requires powercap/raplcap and sensor development files, while NVIDIA requires
+NVML. Missing dependencies do not prevent other eligible plugins from building.
+Existing shared libraries are not removed when the hardware changes; runtime
+detection still prevents incompatible plugins from being selected.
 
 ---
 
@@ -253,25 +267,25 @@ separate VRAM through the current backend.
 ### 6.6 Dynamic CSV schema
 
 The standard CSV starts with `Language,Program,Powercap,Time_ms,CPU_Memory_KB`;
-over-time uses `Timestamp_ms` instead, the monotonic elapsed time at the start
+over-time uses `Timestamp_us` instead, the monotonic elapsed time in microseconds at the start
 of each sample's backend readings. These common
 metadata fields are followed by columns declared by the selected plugins, in
 CPU-then-GPU order. A metric column is named
 `<category>.<metric-name>_<unit>`, for example `cpu.Package_J` or
 `gpu.VRAM_MiB`. Thus, machines with different selected backends can have
-different headers. The `--csv-header` and `--overtime-csv-header` modes print
+different headers. The `--csv-header` and `--over-time-csv-header` modes print
 the current runtime schema, and the measurement wrapper uses that header when
 aggregating output from multiple workloads.
 
 ### 6.7 Over-time sampling
-`--overtime` performs over-time sampling, recording each window metric's delta since the previous backend
-snapshot, rather than accumulated energy. The parent samples all metrics
+`--over-time` records counter snapshots in their declared units for window
+metrics; older plugins without the optional counter reader report
+`NOT_SUPPORTED` with a warning. Counter values can wrap or reset. The parent samples all metrics
 sequentially without sampler threads, using a configurable pause (`-interval-us`,
 default 1000 microseconds); a final partial window is sampled on workload
 completion. Samples are buffered and dumped after completion. Times vary with
 metric overhead and scheduling; the interval does not synchronize polling with
-hardware updates. Intel counter
-deltas handle one 32-bit wrap between readings, but cannot detect multiple wraps.
+hardware updates.
 Gauge and process-scoped metrics are recorded at each tick. Standard-mode metric behavior is declared by each backend: window metrics
 use start/stop samples, gauges are read after the workload, and peak metrics are
 polled during execution.

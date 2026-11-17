@@ -62,6 +62,8 @@ def configured_arguments(config, config_path):
         for alias, adapter in adapters.items():
             path = (config_path.parent / adapter["path"]).resolve()
             command.extend(("--configured-adapter", alias, str(path)))
+            if "output_type" in adapter:
+                command.extend(("--configured-format", alias, adapter["output_type"]))
         return command
     for name in selected:
         if name.startswith("system."):
@@ -72,6 +74,8 @@ def configured_arguments(config, config_path):
             _, alias, metric = name.split(".")
             path = (config_path.parent / adapters[alias]["path"]).resolve()
             command.extend(("--configured-external", alias, str(path), metric))
+            if "output_type" in adapters[alias]:
+                command.extend(("--configured-format", alias, adapters[alias]["output_type"]))
     return command
 
 

@@ -23,8 +23,10 @@ C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 NUMERIC_TYPES = {
     "int": (-(2**31), 2**31 - 1),
     "unsigned int": (0, 2**32 - 1),
+    "float": None,
     "double": None,
 }
+FLOAT_MAX = float.fromhex("0x1.fffffep+127")
 SYSTEM_METRICS = {
     "system.memory",
     "system.cores",
@@ -84,8 +86,8 @@ def validate_config(data, config_path):
     measurement = data.get("measurement")
     only_fields(measurement, MEASUREMENT_FIELDS, "measurement")
     mode = measurement.get("mode")
-    if mode not in ("standard", "overtime", "temperature-calibration", "powercap-calibration"):
-        fail("measurement.mode must be 'standard', 'overtime' (over-time sampling), "
+    if mode not in ("standard", "over-time", "temperature-calibration", "powercap-calibration"):
+        fail("measurement.mode must be 'standard', 'over-time' (over-time sampling), "
              "'temperature-calibration' or 'powercap-calibration'")
     for key in ("command", "language", "program", "output", "calibration_file", "compile_command"):
         if key in measurement:
@@ -147,7 +149,7 @@ def validate_config(data, config_path):
                 fail(f"measurement.{key} is only valid in powercap calibration mode")
     if mode == "standard" and "interval_us" in measurement:
         fail("measurement.interval_us is only valid in over-time mode")
-    if mode == "overtime" and ("repetitions" in measurement or "timeout_hours" in measurement):
+    if mode == "over-time" and ("repetitions" in measurement or "timeout_hours" in measurement):
         fail("measurement.repetitions and timeout_hours are only valid in standard mode")
 
     metrics = data.get("metrics")
@@ -213,22 +215,28 @@ def validate_config(data, config_path):
                     path = Path(config_path).parent / value
                     if not (path.is_dir() if field == "include_dirs" else path.is_file()):
                         fail(f"{location}.{field} path does not exist: {value}")
-        if not isinstance(metric.get("return_type"), str) or metric["return_type"] not in NUMERIC_TYPES:
-            fail(f"{location}.return_type must be int, unsigned int, or double")
+        return_type = string(metric.get("return_type"), f"{location}.return_type")
+        if return_type not in NUMERIC_TYPES:
+            print(f"[WARNING] Unknown {location}.return_type '{return_type}'; using double.",
+                  file=sys.stderr)
+            metric["return_type"] = "double"
         arguments = metric.get("arguments", [])
         if not isinstance(arguments, list):
             fail(f"{location}.arguments must be an array")
         for argument in arguments:
             only_fields(argument, {"type", "value"}, f"{location}.arguments entry")
-            typ = argument.get("type")
-            if not isinstance(typ, str) or typ not in NUMERIC_TYPES:
-                fail(f"{location} argument type must be int, unsigned int, or double")
+            typ = string(argument.get("type"), f"{location} argument type")
+            if typ not in NUMERIC_TYPES:
+                print(f"[WARNING] Unknown {location} argument type '{typ}'; using double.",
+                      file=sys.stderr)
+                argument["type"] = typ = "double"
             value = argument.get("value")
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 fail(f"{location} argument value must be numeric")
-            if typ == "double":
+            if typ in ("float", "double"):
                 try:
-                    valid = math.isfinite(float(value))
+                    number = float(value)
+                    valid = math.isfinite(number) and (typ != "float" or abs(number) <= FLOAT_MAX)
                 except OverflowError:
                     valid = False
             else:
@@ -241,11 +249,14 @@ def validate_config(data, config_path):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 fail(f"{location}.error_value must be numeric")
             try:
-                valid = math.isfinite(float(value))
+                number = float(value)
+                valid = math.isfinite(number) and (
+                    metric["return_type"] != "float" or abs(number) <= FLOAT_MAX
+                )
             except OverflowError:
                 valid = False
             if not valid:
-                fail(f"{location}.error_value must be finite")
+                fail(f"{location}.error_value must be finite and in range for the return type")
         if isinstance(selected, list):
             references = {f"external.{name}.{metric_name}", f"external.{name}.{function}"}
             selected_references = references.intersection(selected)

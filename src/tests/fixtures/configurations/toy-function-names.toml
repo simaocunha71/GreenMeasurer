@@ -1,5 +1,5 @@
 [measurement]
-mode = "overtime"
+mode = "over-time"
 command = "sleep 1"
 language = "Shell"
 program = "toy-function-names"

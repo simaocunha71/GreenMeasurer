@@ -55,6 +55,9 @@ p { margin: 0 0 1rem; }
 .terminal-comment { color: #91aa96; }
 .terminal-prompt, .terminal-result { color: var(--accent); }
 .overview-section { padding: 82px 0; border-bottom: 1px solid var(--line); }
+.diagram { margin: 32px 0 0; }
+.diagram img { display: block; width: 100%; height: auto; background: white; border: 1px solid var(--line); border-radius: 6px; }
+.diagram figcaption { margin-top: 10px; color: var(--muted); font-size: .85rem; }
 .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 30px; margin-bottom: 32px; }
 .section-heading h2 { margin: 0; }
 .section-heading > p { max-width: 320px; margin: 0; color: var(--muted); font-size: .9rem; }

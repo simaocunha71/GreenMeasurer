@@ -1,7 +1,7 @@
 # A metric GreenMeasurer does not provide: the user supplies the C function
 # (system_uptime.c / system_uptime.h) and GreenMeasurer builds a .so for it.
 [measurement]
-mode = "overtime"
+mode = "over-time"
 command = 'python3 -c "sum(i*i for i in range(15000000))"'
 language = "Python"
 program = "cpu-workload"

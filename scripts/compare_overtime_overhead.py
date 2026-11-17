@@ -57,8 +57,8 @@ def main():
             config = tomllib.load(source)
         validate_config(config, config_path)
         measurement = config["measurement"]
-        if measurement["mode"] != "overtime":
-            raise ValueError("measurement.mode must be 'overtime' (over-time sampling) for this comparison")
+        if measurement["mode"] != "over-time":
+            raise ValueError("measurement.mode must be 'over-time' for this comparison")
         if "command" not in measurement:
             raise ValueError("measurement.command is required")
         if measurement.get("powercap", -1) != -1:
@@ -86,7 +86,7 @@ def main():
             executable = generate_configured(config, config_path, Path(directory) / "generated",
                                              log=sys.stderr)
             for pair in range(1, args.runs + 1):
-                modes = ["baseline", "overtime"]
+                modes = ["baseline", "over-time"]
                 rng.shuffle(modes)
                 for mode in modes:
                     order += 1
@@ -101,7 +101,7 @@ def main():
                         runs = read_runs(output)
                         if len(runs) != 1:
                             raise ValueError("expected exactly one over-time run in generated CSV")
-                        workload_ms = runs[0][1][-1]
+                        workload_ms = runs[0][1][-1] / 1000
                         measured.append(workload_ms)
                         print(f"{order},{pair},overtime,{workload_ms:.6f},{elapsed:.6f}")
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:

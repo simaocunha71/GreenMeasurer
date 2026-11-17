@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="GreenMeasurer backend callbacks, metric definitions and extension guide.">
   <title>Backend API — GreenMeasurer</title>
-  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css?v=20261112-diagrams">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -31,8 +31,8 @@
           <tr><td><code>sample_stop(int device)</code></td><td>Yes</td><td>Capture the end of the window; return 0 on success.</td></tr>
           <tr><td><code>get_metric(size_t index, int device, pid_t pid)</code></td><td>Yes</td><td>Return the indexed metric reading, or <code>METRIC_NOT_SUPPORTED</code> if unavailable. Process-scoped readings use the supplied PID.</td></tr>
           <tr><td><code>diagnose(void)</code></td><td>No</td><td>Return a short explanation when detection fails.</td></tr>
-          <tr><td><code>set_powercap(int watts)</code></td><td>CPU only; optional</td><td>Apply a supported cap. The calling code treats <code>-1</code> as leaving existing limits unchanged.</td></tr>
-          <tr><td><code>destroy_powercap(void)</code></td><td>CPU only; optional</td><td>Release or restore the active powercap context; the Intel implementation attempts to restore its saved limits.</td></tr>
+          <tr><td><code>set_powercap(int watts)</code></td><td>CPU only; optional</td><td>Apply a supported cap, or apply the saved baseline when <code>watts</code> is <code>-1</code>.</td></tr>
+          <tr><td><code>destroy_powercap(void)</code></td><td>CPU only; optional</td><td>Release the active context and restore the saved baseline after the measurement.</td></tr>
           <tr><td><code>calibrate_powercap(...)</code></td><td>CPU only; optional</td><td>Run the backend's powercap sweep and return success or failure.</td></tr>
         </tbody></table></div>
         <p><code>metrics</code> and <code>metric_count</code> describe the indexed metrics; they are fields, not callbacks. CPU backends must supply a readable metric marked <code>ENERGY_METRIC_FLAG_CPU_TEMPERATURE</code> for measurements to run.</p>

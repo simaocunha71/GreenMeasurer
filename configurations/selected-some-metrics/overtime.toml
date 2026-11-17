@@ -1,5 +1,5 @@
 [measurement]
-mode = "overtime"
+mode = "over-time"
 command = 'python3 -c "sum(i*i for i in range(15000000))"'
 language = "Python"
 program = "cpu-workload"

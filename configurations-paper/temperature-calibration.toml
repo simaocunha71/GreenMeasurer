@@ -1,4 +1,4 @@
 [measurement]
 mode = "temperature-calibration"
 sleep_seconds = 60
-calibration_file = "greenmeasurer-test-temperature.txt"
+calibration_file = "paper-temperature-baseline.txt"

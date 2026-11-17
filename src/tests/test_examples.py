@@ -64,7 +64,7 @@ class ExamplesTest(unittest.TestCase):
                 with output.open(newline="", encoding="utf-8") as file:
                     rows = list(csv.reader(file, skipinitialspace=True))
                 self.assertEqual(rows[0], ["Language", "Program", "Powercap",
-                                           "Timestamp_ms", *columns])
+                                           "Timestamp_us", *columns])
                 self.assertGreaterEqual(len(rows), 3)
                 self.assertTrue(all(len(row) == len(rows[0]) for row in rows))
                 timestamps = [float(row[3]) for row in rows[1:]]
@@ -87,7 +87,7 @@ class ExamplesTest(unittest.TestCase):
                  "-I", str(ROOT / "src" / "include"), str(source), "-o", str(plugin)],
                 check=True, capture_output=True, text=True,
             )
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 output = self.directory / f"{mode}.csv"
                 result = subprocess.run(
@@ -101,7 +101,7 @@ class ExamplesTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("TOY_CPU", result.stdout)
                 self.assertIn("TOY_GPU", result.stdout)
-                header_mode = "--csv-header" if mode == "standard" else "--overtime-csv-header"
+                header_mode = "--csv-header" if mode == "standard" else "--over-time-csv-header"
                 header = subprocess.run(
                     [str(MAIN), header_mode], cwd=self.directory, env=self.environment,
                     text=True, capture_output=True, check=True,
@@ -127,7 +127,7 @@ class ExamplesTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with output.open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
-        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_ms",
+        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_us",
                                    "Cores", "cpu.Energy_J", "gpu.Energy_J", "gpu.Power_W"])
         self.assertGreaterEqual(len(rows), 3)
         for row in rows[1:]:

@@ -47,7 +47,7 @@ class PowercapReportTest(unittest.TestCase):
             "Powercap,Time_ms,cpu.Package_J\n-1,100,1\n15,120,2\n"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("baseline (existing system limits)", result.stdout)
+        self.assertIn("saved baseline", result.stdout)
 
 
 if __name__ == "__main__":

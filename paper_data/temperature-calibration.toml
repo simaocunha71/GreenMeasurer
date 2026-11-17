@@ -1,0 +1,4 @@
+[measurement]
+mode = "temperature-calibration"
+sleep_seconds = 60
+calibration_file = "paper_data/temperature-baseline.txt"

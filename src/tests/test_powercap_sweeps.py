@@ -77,7 +77,7 @@ class PowercapSweepTest(unittest.TestCase):
         self.assertEqual(rows[0][:4], ["Language", "Program", "Powercap", "Time_ms"])
         self.assertEqual([row[2] for row in rows[1:]], ["-1", "-1", "5", "5", "6", "6"])
         self.assertEqual(self.operations(), [
-            "temperature 0", "temperature 0", "temperature 0",
+            "temperature 0", "set -1", "temperature 0", "temperature 0", "restore 0",
             "set 5", "temperature 0", "temperature 0", "restore 0",
             "set 6", "temperature 0", "temperature 0", "restore 0",
         ])
@@ -91,16 +91,17 @@ class PowercapSweepTest(unittest.TestCase):
     def test_overtime_appends_every_powercap_to_one_csv(self):
         self.log_temperature_reads()
         result = self.run_config(
-            self.measurement("overtime", "interval_us=1000\npowercap=[5, 6]\n") +
+            self.measurement("over-time", "interval_us=1000\npowercap=[-1, 5, 6]\n") +
             '[metrics]\nselect=["cpu.Package"]\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         rows = self.rows()
         self.assertEqual(sum(row[0] == "Language" for row in rows), 1)
         caps = [row[2] for row in rows[1:]]
-        self.assertEqual(set(caps), {"5", "6"})
+        self.assertEqual(set(caps), {"-1", "5", "6"})
         self.assertEqual(caps, sorted(caps))
         self.assertEqual(self.operations(), [
-            "temperature 0", "set 5", "temperature 0", "restore 0",
+            "temperature 0", "set -1", "temperature 0", "restore 0",
+            "set 5", "temperature 0", "restore 0",
             "set 6", "temperature 0", "restore 0",
         ])
 
@@ -130,7 +131,11 @@ class PowercapSweepTest(unittest.TestCase):
         rows = self.rows()
         self.assertEqual(rows[0][4:], ["cpu.Package_J"])
         self.assertEqual([row[2] for row in rows[1:]], ["-1", "-1", "5", "5", "6", "6"])
-        self.assertEqual(self.operations(), ["set 5", "restore 0", "set 6", "restore 0"])
+        self.assertEqual(self.operations(), [
+            "set -1", "restore 0",
+            "set 5", "restore 0",
+            "set 6", "restore 0",
+        ])
 
     def test_calibration_accepts_selected_all_and_new_metrics(self):
         result = self.run_config(self.calibration_config('[metrics]\nselect=["system.cores", "cpu.Temperature"]\n'))

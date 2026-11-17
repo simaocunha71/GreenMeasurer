@@ -135,6 +135,16 @@ static double intel_gpu_get_energy(int device_idx) {
     return (double)energy_counter_delta32(pp1_after, pp1_before) * energy_units;
 }
 
+double energy_backend_read_counter(size_t metric_index, int device, pid_t pid) {
+    (void)device;
+    (void)pid;
+    if (metric_index >= sizeof(intel_gpu_metric_definitions) / sizeof(intel_gpu_metric_definitions[0]) ||
+        intel_gpu_metric_definitions[metric_index].function.read != intel_gpu_metric_energy ||
+        !igpu_supported || !energy_units_valid || !pp1_after_valid)
+        return METRIC_NOT_SUPPORTED;
+    return (double)pp1_after * energy_units;
+}
+
 int energy_backend_sample_next(int device_idx) {
     if (next_sample_has_previous) {
         pp1_before = pp1_after;

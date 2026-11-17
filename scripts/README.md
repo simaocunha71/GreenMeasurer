@@ -6,6 +6,8 @@
 - `analyze_overtime.py`: Reports observed over-time sampling intervals.
 - `probe_rapl_frequency.py`: Measures observed Intel package RAPL counter changes.
 - `compare_overtime_overhead.py`: Compares workload wall time with and without over-time sampling.
+- `compare_standard_overhead.py`: Compares a workload baseline with standard
+  measurements using progressively more selected metrics.
 - `validate_config.py`: Validates the TOML configuration. Optional
   `--check-adapters` loads trusted selected adapters and tests their readings.
 - `run_config.py`: Internal configuration-to-engine argument translation.
@@ -14,6 +16,40 @@
   the [main README](../README.md#executing-a-configuration).
 
 Python 3.11+ or `tomli` is required for TOML parsing.
+
+## Standard-mode overhead study
+
+From the repository root, calibrate the CPU temperature first, then select an
+ordered list of metrics supported by the host:
+
+```sh
+python3 scripts/compare_standard_overhead.py \
+  --config paper_data/standard.toml \
+  --metrics system.cores system.workload_processes system.running_processes \
+  --runs 10 --seed 0 > standard-overhead.csv
+```
+
+Each randomized round runs the workload once without GreenMeasurer and once
+per progressively larger metric set. Configurations are generated before
+timing; the script uses one repetition and applies the saved per-machine
+baseline with `powercap = -1` regardless of those settings in the base TOML.
+It also uses temporary measurement output files, leaving the configured output
+untouched. The calibration file must already exist. Other system power limits
+may still apply.
+The example runs the workload 40 times and can take substantial time. Choose
+a new destination for the redirected CSV, since `>` overwrites an existing file.
+
+The CSV on standard output contains every run's order, round, metric names and
+count, workload time, total invocation time and a `thermal_wait` flag.
+Diagnostics and median/range summaries are written to standard error. Runs
+where the temperature gate waits include that wait in total time and are
+flagged; account for them when interpreting results. A missing or unreadable
+selected metric fails the study instead of being counted as collected.
+Logical metrics, such as per-core frequency, may produce multiple CSV columns.
+`workload_ms` for the baseline times the shell invocation, whereas measured
+runs use `Time_ms`; their timing boundaries differ. Total time also includes
+startup and CSV output. This comparison does not measure energy overhead or
+prove that all observed differences are caused by GreenMeasurer.
 
 ## Batch generation and execution
 
@@ -62,7 +98,7 @@ These scripts use Python 3's standard library. Run them from the repository root
 1. Analyze the actual sample timestamps in an existing CSV:
 
    ```sh
-   python3 scripts/analyze_overtime.py measurements_ot.csv --threshold-ms 1
+   python3 scripts/analyze_overtime.py measurements_ot.csv --threshold-us 1000
    ```
 
    For each inferred run this prints sample count, mean, median, minimum, 95th
@@ -74,7 +110,9 @@ These scripts use Python 3's standard library. Run them from the repository root
    a non-increasing timestamp, is interpreted as a new run. Identical runs can
    be indistinguishable, particularly short runs with a single sample. Keep
    separate per-run CSV files for reliable identification. The older `Time_ms`
-   format does not contain timestamps and cannot be analyzed this way.
+   format does not contain timestamps and cannot be analyzed this way. CSVs
+   with the former `Timestamp_ms` column and the `--threshold-ms` option remain
+   supported; analysis results are reported in microseconds.
 
 2. Observe counter changes on an Intel machine:
 
@@ -123,17 +161,17 @@ These scripts use Python 3's standard library. Run them from the repository root
    timings and summary, for example append `> overhead-report.txt`. Save
    standard error separately when retaining warnings or failure diagnostics.
    The comparison requires the TOML's powercap to be absent or `-1`, because
-   the unmeasured baseline cannot apply a GreenMeasurer cap. This does not
-   remove a cap previously applied outside this run; verify the system's
-   actual power limits before comparing.
+   the unmeasured baseline cannot apply a GreenMeasurer cap. On Intel,
+   `-1` applies GreenMeasurer's saved baseline, so verify that it matches the
+   limits used by the unmeasured run. This does not remove a cap previously
+   applied outside this run.
 
-Over-time sampling reads the backends and system metrics sequentially. `Timestamp_ms` is
+Over-time sampling reads the backends and system metrics sequentially. `Timestamp_us` is
 captured before the backend reads and is not their exact simultaneous read time.
 The configured 1 ms pause begins after completing a cycle, so it is not a
-guaranteed 1 ms period. RAPL window values are interval energy, not
-instantaneous power; dividing interval energy by the difference in timestamps
-estimates average power with timing uncertainty. The first interval's baseline
-precedes the recorded start timestamp. The final window can extend slightly
-beyond workload completion. Package energy includes unrelated system activity.
+guaranteed 1 ms period. RAPL energy values are counter readings in joules, not
+instantaneous power. Differences between successive readings estimate interval
+energy; account for counter wrap or reset when interpreting them. The final
+reading can occur slightly after workload completion. Package energy includes unrelated system activity.
 Save raw results, repeat experiments, report variation and document conditions;
 the scripts' summaries alone do not establish statistical significance.

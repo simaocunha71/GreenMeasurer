@@ -51,7 +51,7 @@ Further capabilities are a built-in temperature-based stabilisation step (the ru
 Additional advantages, each with its justification:
 
 - **Testable hardware support.** The plugin interface allows fake backends, and `make -C src test` uses them to check priority selection, undetected, invalid and unbuilt backends, the absence of a GPU or of any backend, an invalid backend directory, and the abort on power-cap failure. *Justification:* correct fallback behaviour is verified by tests without needing every hardware combination (these tests check orchestration, not counter accuracy). Tools that read counters directly from their own code cannot be tested this way.
-- **Self-describing, always-consistent output.** Each backend declares its metrics (name, unit, kind and scope), and the CSV header is generated from the selected backends. `--csv-header` and `--overtime-csv-header` print the columns for a machine without running a workload. *Justification:* the output cannot drift from what the hardware provides, and a new metric needs no change to the core. A missing reading is `NOT_SUPPORTED`, never zero, so downstream analysis cannot mistake absent data for a measured value.
+- **Self-describing, always-consistent output.** Each backend declares its metrics (name, unit, kind and scope), and the CSV header is generated from the selected backends. `--csv-header` and `--over-time-csv-header` print the columns for a machine without running a workload. *Justification:* the output cannot drift from what the hardware provides, and a new metric needs no change to the core. A missing reading is `NOT_SUPPORTED`, never zero, so downstream analysis cannot mistake absent data for a measured value.
 - **Controlled experimental conditions.** The temperature calibration and variance threshold delay a run until the CPU is near an idle baseline, and the scripts disable Wi-Fi during runs and restore it afterwards. *Justification:* temperature and background network activity are known sources of variation in energy measurements, and handling them in the tool makes experiments easier to repeat. Whether this reduces variance must be shown experimentally (see the evaluation plan).
 - **Batch experiments across languages.** Workloads are directories with a Makefile exposing `compile`, `standard` and `overtime`, and `scripts/measure.sh` runs them for several languages and collects the results in one CSV. *Justification:* adding a language or program is a new directory, which supports comparing implementations of the same algorithm under identical conditions.
 - **Independent CPU and GPU selection, with explicit diagnostics.** At startup the tool reports selected backends and plugin errors, and warns when a CPU or GPU backend is missing. Verbose mode shows every backend's state (`selected`, `available`, `not detected`, `not built`, `load failed`, `invalid`) and its diagnostic hint. *Justification:* users can investigate missing metrics without always seeing irrelevant backends.
@@ -186,9 +186,9 @@ Temperature availability depends on the sensors exposed by the kernel and the in
 
 ### C. Makefile Integration
 
-The `src/Makefile` discovers backend directories below `platform/linux/{cpu,gpu}` and builds an available implementation as a shared object named `backend.so`. Backend-specific availability checks, include flags and link dependencies are configured in that Makefile. The main executable is linked with dynamic loading support.
+The `src/Makefile` discovers backend directories below `platform/linux/{cpu,gpu}` and builds implementations for detected hardware as shared objects named `backend.so`, when their dependencies are available. Backend-specific checks, include flags and link dependencies are configured in that Makefile. The main executable is linked with dynamic loading support.
 
-The build separates optional backend dependencies from the core. The Intel CPU plugin is built only when the powercap/raplcap headers and libraries are present; the NVIDIA plugin is built only when its NVML header and library are present. If a dependency is missing, verbose build output reports the reason and the build continues with the core and other eligible plugins. Some dependencies may need to be linked into the host executable rather than into a plugin, which is the purpose of the `BACKEND_HOST_LDLIBS_*` variables.
+The build separates optional backend dependencies from the core. It checks the CPU vendor and PCI display devices before selecting the built-in backends. New backends configure a build-time detection command in the Makefile, reusing existing checks where applicable. The Intel CPU plugin also requires powercap/raplcap and sensor development files; the NVIDIA plugin requires NVML. If a dependency or device is missing, verbose build output reports the reason and the build continues with the core and other eligible plugins. Some dependencies may need to be linked into the host executable rather than into a plugin, which is the purpose of the `BACKEND_HOST_LDLIBS_*` variables.
 
 Workload directories provide the build and execution conventions used by the experiment scripts. A typical run is initiated with `scripts/measure.sh`, which builds the framework and target workload, then invokes `src/main`. For isolated smoke testing, `scripts/merda.sh` runs the main executable directly in its supported modes and places generated outputs in a temporary directory.
 
@@ -225,10 +225,10 @@ The timeout value is expressed in hours by the current command-line implementati
 
 ### E. Over-Time Measurements
 
-The `--overtime` mode (over-time sampling) runs the target command while the parent periodically samples the active backends and system metrics without sampler threads. The default pause is 1 ms. Each row reports energy for the interval since the preceding backend snapshot and the latest sequentially read gauges; the final row covers a partial interval. `Timestamp_ms` is the monotonic elapsed time at the beginning of each sample's backend reads. The pause does not guarantee that each hardware update is captured.
+The `--over-time` mode (over-time sampling) runs the target command while the parent periodically samples the active backends and system metrics without sampler threads. The default pause is 1 ms. Each row reports energy counter snapshots converted to joules and the latest sequentially read gauges; the final row is recorded after the workload exits. `Timestamp_us` is the monotonic elapsed time in microseconds at the beginning of each sample's backend reads. The pause does not guarantee that each hardware update is captured.
 
 ```sh
-sudo ./src/main --overtime \
+sudo ./src/main --over-time \
   -command "./program arg" \
   -interval-us 100000 \
   -language C \
@@ -242,11 +242,12 @@ The schema begins with framework metadata and then includes metrics declared by
 the selected backends. Metric columns use `<category>.<name>_<unit>`:
 
 ```csv
-Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+Language,Program,Powercap,Timestamp_us,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
 
 The example shows one possible selection; exact columns vary by hardware and
-backend. Window energy fields are joules consumed over each interval.
+backend. Window energy fields are counter readings in joules; a backend without
+a counter reader reports `NOT_SUPPORTED`.
 Process-scoped peak metrics are polled on standard
 runs, while process-scoped values in over-time mode are sampled at each tick.
 Unsupported counters or sensors are emitted as `NOT_SUPPORTED`. Short sampling
@@ -326,7 +327,7 @@ This test checks command execution, repeated rows, CSV shape and availability re
 A corresponding time-series smoke test is:
 
 ```sh
-sudo ./src/main --overtime \
+sudo ./src/main --over-time \
   -command "sleep 2" \
   -interval-us 100000 \
   -language Shell \
@@ -337,7 +338,7 @@ sudo ./src/main --overtime \
   -output measurements_ot.csv
 ```
 
-The CSV should contain monotonically increasing timestamps at approximately the requested interval and cumulative energy values when the selected backend exposes valid counters. Scheduler delays may cause jitter. Validate the output by checking the header, row count, timestamps, unsupported fields and monotonicity of cumulative counters before plotting it.
+The CSV should contain monotonically increasing timestamps and energy counter readings when the selected backend exposes valid counters. Scheduler delays may cause jitter, and hardware counters can wrap or reset. Validate the output by checking the header, row count, timestamps and unsupported fields before plotting it.
 
 The repository's `scripts/merda.sh` is a convenience smoke-test script that invokes the executable directly for temperature calibration, standard mode, over-time mode and (when run as root) power-cap calibration. Its simple workload and settings are for functionality checks only. The output should not be presented as a scientific benchmark result. Preserve the generated CSVs and full logs when conducting a formal evaluation.
 
@@ -350,7 +351,7 @@ The repository's `scripts/merda.sh` is a convenience smoke-test script that invo
 **Experiments.**
 
 1. *Standard mode (total energy per run).* Report mean, standard deviation and coefficient of variation of energy (J) and time (ms) per tool, plus the relative difference between tools. Run in a fixed order or randomised order, with idle periods between runs, and with the same system state (Wi-Fi off, no background load). Test the statistical differences (e.g. Shapiro–Wilk, then Mann–Whitney U or t-test, with effect size).
-2. *Over-time mode (energy profile).* Plot interval energy against `Timestamp_ms` for GreenMeasurer, and compare the sum with experiment 1. Interval-average power can be estimated from successive timestamps, with timing uncertainty from sequential backend reads.
+2. *Over-time mode (energy profile).* Plot counter readings against `Timestamp_us` for GreenMeasurer and compare their differences with experiment 1, accounting for counter wrap or reset. Interval-average power can be estimated from successive readings and timestamps, with timing uncertainty from sequential backend reads.
 3. *Tool overhead.* Compare the energy and time of the workload run with each tool against a run without any tool, and the energy of an idle period of the same length.
 4. *Usability and extensibility.* Compare the steps and lines of configuration needed to measure the same workload, and the effort to add a new backend (number of files and lines changed in GreenMeasurer, with no change to `main.c`). Present the result in a feature table (language independence, source change needed, CPU/GPU support, over-time mode, root requirement, behaviour when a counter is missing).
 5. *Portability (optional, depending on available machines).* Repeat experiment 1 on each available system (different CPU, with and without NVIDIA GPU) and report which backends were detected and how unsupported ones were reported.
@@ -387,7 +388,7 @@ All modes accept `-command` (alias `-run_cmd`) with the command to run through `
 | `-variance` | °C | all measurement modes | Maximum temperature above the calibrated baseline at which a run may start; otherwise the tool waits, checking each second (defaults: 0 standard, 5 over-time and calibration). A readable CPU temperature is required |
 | `-time_out_limit` | hours | standard, power-cap calibration | Time limit for the initial check run; on expiry a `TimeOut` row is recorded (default 1) |
 | `-interval-us` | µs | over-time | Pause between sampling cycles (default 1000) |
-| `-powercap` | W, or `-1` | standard, over-time | Package power limit (Intel only); `-1` leaves existing limits unchanged (default); otherwise at least 1 |
+| `-powercap` | W, or `-1` | standard, over-time | Package power limit (Intel only); `-1` applies the saved per-machine baseline (default); otherwise at least 1 |
 | `-sleep_time`, `-sleep-secs` | s | all | Idle time used to settle the machine when a temperature baseline has to be created (default 5; default 10 as `-secs_to_sleep` in power-cap calibration) |
 | `-calib-file` | path | all | Baseline-temperature file (default `/tmp/cores_temperatures.txt`); created by a calibration if missing |
 | `-output`, `-measurements-file` | path | all | Output CSV (defaults `measurements.csv`, `measurements_ot.csv`, `powercap_calibration.csv`) |
@@ -409,7 +410,7 @@ measurement startup. Load only trusted plugins.
 | `Language`, `Program` | text | core | options | Labels |
 | `Powercap` | W | core | option | Cap used, or `-1` |
 | `Time_ms` | ms | core, standard | wall clock | Duration of the run |
-| `Timestamp_ms` | ms | core, over-time | monotonic clock | Elapsed time at the start of each sample's backend reads |
+| `Timestamp_us` | µs | core, over-time | monotonic clock | Elapsed time at the start of each sample's backend reads |
 | `CPU_Memory_KB` | KiB | core, standard | `wait4()` / `ru_maxrss` | Maximum RSS reported for the measured run, not a simultaneous process-tree sum |
 | `cpu.Package_J` | J | window | Intel | Energy of the CPU package |
 | `cpu.Core_J` | J | window | Intel | Energy of the cores (part of the package) |

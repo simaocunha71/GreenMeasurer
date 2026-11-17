@@ -81,6 +81,18 @@ static double fake_metric(size_t metric_index, int id, pid_t process_id) {
 #endif
     return METRIC_NOT_SUPPORTED;
 }
+#ifndef FAKE_NO_COUNTER
+double energy_backend_read_counter(size_t metric_index, int id, pid_t process_id) {
+#ifdef FAKE_COUNTER_SEQUENCE
+    (void)id;
+    (void)process_id;
+    static int reads;
+    return metric_index == 0 ? 100.0 + (reads++ / 2) : METRIC_NOT_SUPPORTED;
+#else
+    return fake_metric(metric_index, id, process_id);
+#endif
+}
+#endif
 static const char *fake_diagnose(void) { return "fake backend is disabled"; }
 #if defined(FAKE_POWER_CAP_FAILURE) || defined(FAKE_POWER_CAP_SUCCESS)
 static int fake_destroy_powercap(void) { return 0; }

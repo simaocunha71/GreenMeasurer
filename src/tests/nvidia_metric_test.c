@@ -64,6 +64,14 @@ int main(void) {
     energy_mj = 3500;
     assert(nvidia_gpu_backend.sample_stop(0) == 0);
     assert(nvidia_gpu_backend.get_metric(0, 0, 0) == 2.5);
+    assert(energy_backend_read_counter(0, 0, 0) == 3.5);
+    assert(energy_backend_read_counter(1, 0, 0) == METRIC_NOT_SUPPORTED);
+    assert(energy_backend_sample_next(0) == 0);
+    assert(energy_backend_read_counter(0, 0, 0) == 3.5);
+    energy_mj = 4000;
+    assert(energy_backend_sample_next(0) == 0);
+    assert(energy_backend_read_counter(0, 0, 0) == 4.0);
+    assert(nvidia_gpu_backend.get_metric(0, 0, 0) == 0.5);
     assert(nvidia_gpu_backend.get_metric(1, 0, 0) == 25);
     assert(nvidia_gpu_backend.get_metric(2, 0, 0) == 55);
     assert(nvidia_gpu_backend.get_metric(3, 0, 0) == 75);

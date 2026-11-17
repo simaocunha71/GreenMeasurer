@@ -29,7 +29,7 @@ run_main() {
 }
 
 run_overtime() {
-    GREENMEASURER_BACKEND_DIR="${BACKEND_DIR:-$ROOT}" "$MAIN" --overtime \
+    GREENMEASURER_BACKEND_DIR="${BACKEND_DIR:-$ROOT}" "$MAIN" --over-time \
         -command "${OVERTIME_COMMAND:-sleep 0.22}" -language C -program t -interval-us "${OVERTIME_INTERVAL:-50000}" \
         -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
         -output "$WORK/overtime.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
@@ -38,8 +38,8 @@ run_overtime() {
 }
 
 run_powercap_failure() { # <mode>
-    if [[ "$1" == "overtime" ]]; then
-        GREENMEASURER_BACKEND_DIR="$ROOT" "$MAIN" --overtime \
+    if [[ "$1" == "over-time" ]]; then
+        GREENMEASURER_BACKEND_DIR="$ROOT" "$MAIN" --over-time \
             -command "sleep 0.1" -language C -program t \
             -variance 100 -sleep-secs 0 -powercap 1 \
             -calib-file "$WORK/calib.txt" -output "$WORK/cap-failure.csv" \
@@ -105,7 +105,7 @@ expect "standard reports powercap failure"     "Failed to set powercap to 1 W; m
 [[ $RC -ne 0 && ! -e "$WORK/cap-failure.csv" ]] && {
     PASS=$((PASS+1)); echo "  ok   - standard exits without creating measurement CSV"
 } || { FAIL=$((FAIL+1)); echo "  FAIL - standard continued after powercap failure"; }
-run_powercap_failure overtime
+run_powercap_failure over-time
 expect "overtime reports powercap failure"    "Failed to set powercap to 1 W; overtime measurement aborted"
 [[ $RC -ne 0 && ! -e "$WORK/cap-failure.csv" ]] && {
     PASS=$((PASS+1)); echo "  ok   - overtime exits without creating measurement CSV"
@@ -159,7 +159,7 @@ expect "overtime completes"                     "Overtime session finished"
 [[ $RC -eq 0 ]] && { PASS=$((PASS+1)); echo "  ok   - overtime exits successfully"; } || {
     FAIL=$((FAIL+1)); echo "  FAIL - overtime exited with $RC";
 }
-if grep -Eq '^Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes(,Core[0-9]+_Freq_MHz)+,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/overtime.csv"; then
+if grep -Eq '^Language,Program,Powercap,Timestamp_us,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes(,Core[0-9]+_Freq_MHz)+,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/overtime.csv"; then
     PASS=$((PASS+1)); echo "  ok   - overtime CSV uses selected backend metrics"
 else
     FAIL=$((FAIL+1)); echo "  FAIL - overtime CSV does not match selected backend metrics"
@@ -175,9 +175,9 @@ else
     FAIL=$((FAIL+1)); echo "  FAIL - overtime GPU process memory was not recorded"
 fi
 if awk -F, 'NR > 1 { if ($(NF-4) + 0 != 1 || $(NF-1) + 0 != 1) exit 1; count++ } END { if (count < 4) exit 1 }' "$WORK/overtime.csv"; then
-    PASS=$((PASS+1)); echo "  ok   - energy is per interval across multiple samples"
+    PASS=$((PASS+1)); echo "  ok   - counter readings are recorded across multiple samples"
 else
-    FAIL=$((FAIL+1)); echo "  FAIL - overtime energy is accumulated or samples are missing"
+    FAIL=$((FAIL+1)); echo "  FAIL - overtime counter readings or samples are missing"
 fi
 OVERTIME_COMMAND="sleep 0.02" OVERTIME_INTERVAL=1000000 run_overtime
 if [[ $RC -eq 0 ]] && [[ $(wc -l < "$WORK/overtime.csv") -eq 2 ]]; then
@@ -185,7 +185,7 @@ if [[ $RC -eq 0 ]] && [[ $(wc -l < "$WORK/overtime.csv") -eq 2 ]]; then
 else
     FAIL=$((FAIL+1)); echo "  FAIL - short workload did not record its final interval"
 fi
-GREENMEASURER_BACKEND_DIR="$ROOT" "$MAIN" --overtime \
+GREENMEASURER_BACKEND_DIR="$ROOT" "$MAIN" --over-time \
     -command "sleep 0.1" -language C -program t -variance 100 -sleep-secs 0 \
     -calib-file "$WORK/calib.txt" -output "$WORK/default-interval.csv" \
     > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
@@ -211,13 +211,13 @@ else
     FAIL=$((FAIL+1)); echo "  FAIL - 32-bit counter rollover"
 fi
 
-echo "[TEST] Contiguous overtime windows"
+echo "[TEST] Overtime counter snapshots"
 mkdir -p "$WORK/toy/cpu/toy" "$WORK/toy/gpu/toy"
 if cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/cpu/toy/backend.so" \
     fixtures/toy_backends/cpu/toy_cpu/toy_cpu.c &&
    cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/gpu/toy/backend.so" \
     fixtures/toy_backends/gpu/toy_gpu/toy_gpu.c; then
-    GREENMEASURER_BACKEND_DIR="$WORK/toy" "$MAIN" --overtime \
+    GREENMEASURER_BACKEND_DIR="$WORK/toy" "$MAIN" --over-time \
         -command "sleep 0.32" -language C -program t -interval-us 50000 \
         -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
         -output "$WORK/toy.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
@@ -227,8 +227,9 @@ if cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/cpu/toy/backend
             if ($i == "gpu.Energy_J") gpu_col = i;
         }}
         NR > 1 {
-            elapsed = $4 / 1000;
-            cpu += $cpu_col; gpu += $gpu_col; count++;
+            if (count == 0) { start = $4; cpu_start = $cpu_col; gpu_start = $gpu_col; }
+            elapsed = ($4 - start) / 1000000;
+            cpu = $cpu_col - cpu_start; gpu = $gpu_col - gpu_start; count++;
             if ($cpu_col < 0 || $gpu_col < 0) bad = 1;
         }
         END {
@@ -236,18 +237,18 @@ if cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/cpu/toy/backend
                    cpu > 9.5 * elapsed && cpu < 10.5 * elapsed &&
                    gpu > 4.75 * elapsed && gpu < 5.25 * elapsed);
         }' "$WORK/toy.csv"; then
-        PASS=$((PASS+1)); echo "  ok   - interval energy sums to the complete toy workload window"
+        PASS=$((PASS+1)); echo "  ok   - counter snapshots reflect the simulated workload"
     else
-        FAIL=$((FAIL+1)); echo "  FAIL - interval energy contains gaps or accumulates across rows"
+        FAIL=$((FAIL+1)); echo "  FAIL - counter snapshots do not reflect the simulated workload"
     fi
 else
     FAIL=$((FAIL+1)); echo "  FAIL - unable to build toy backends"
 fi
 
 echo "[TEST] Overtime capacity and legacy backends"
-build_fake cpu high "Fake CPU High" 10 1 -DFAKE_NO_NEXT
+build_fake cpu high "Fake CPU High" 10 1 -DFAKE_NO_NEXT -DFAKE_NO_COUNTER
 run_overtime
-expect "legacy backend reports gaps" "CPU backend does not support contiguous overtime windows"
+expect "legacy backend reports unavailable counter" "CPU backend does not expose counter readings"
 [[ $RC -eq 0 ]] && { PASS=$((PASS+1)); echo "  ok   - legacy backend remains usable"; } || {
     FAIL=$((FAIL+1)); echo "  FAIL - legacy backend measurement failed";
 }
@@ -255,7 +256,7 @@ build_fake cpu high "Fake CPU High" 10 1 -DFAKE_POWER_CAP_FAILURE
 if cc -O2 -Wall -Wextra -pthread -I../include -DGREENMEASURER_TEST_ENGINE -DOT_MAX_SAMPLES=2 -rdynamic \
     ../main.c ../platform/linux/memory.c ../platform/linux/system_metrics.c ../metric_adapters/metric_adapter_loader.c -o "$WORK/main-small" \
     -pthread -lm -ldl; then
-    GREENMEASURER_BACKEND_DIR="$ROOT" "$WORK/main-small" --overtime \
+    GREENMEASURER_BACKEND_DIR="$ROOT" "$WORK/main-small" --over-time \
         -command "sleep 1; touch '$WORK/finished'" -language C -program t \
         -interval-us 10000 -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
         -output "$WORK/capacity.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"

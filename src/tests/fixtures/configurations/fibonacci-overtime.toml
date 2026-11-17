@@ -1,5 +1,5 @@
 [measurement]
-mode = "overtime"
+mode = "over-time"
 command = "./fibonacci-demo/fibonacci 35"
 language = "C"
 program = "recursive-fibonacci-35"

@@ -408,6 +408,7 @@ static int configured_standard_run(int argc, char **argv) {
         if (!strcmp(argv[i], "--configured-system")) { i++; continue; }
         if (!strcmp(argv[i], "--configured-all")) continue;
         if (!strcmp(argv[i], "--configured-adapter")) { i += 2; continue; }
+        if (!strcmp(argv[i], "--configured-format")) { i += 2; continue; }
         if (!strcmp(argv[i], "--configured-external")) { i += 3; continue; }
         if (!strcmp(argv[i], "--configured-backend")) { i++; continue; }
         if (!strcmp(argv[i], "--powercap-report")) { powercap_report = 1; continue; }
@@ -491,7 +492,7 @@ static int configured_standard_run(int argc, char **argv) {
             goto cleanup;
         }
     }
-    /* Every applied limit is restored as soon as its measurements end. */
+    /* Restore the saved baseline or each applied limit as soon as its measurements end. */
     temporary = malloc(strlen(output) + sizeof(".tmp.XXXXXX"));
     if (!temporary) {
         fprintf(stderr, "[ERROR] Unable to allocate temporary output path.\n");
@@ -511,11 +512,15 @@ static int configured_standard_run(int argc, char **argv) {
     energy_backend_write_csv_header(stream, 0);
     for (int cap_index = 0; cap_index < powercap_count; cap_index++) {
         powercap = powercaps[cap_index];
-        if (powercap > 0) {
+        int apply_powercap = powercap > 0 ||
+            (powercap == -1 && active_cpu_backend && active_cpu_backend->set_powercap &&
+             active_cpu_backend->destroy_powercap);
+        if (apply_powercap) {
             if (active_cpu_backend->set_powercap(powercap) != 0) {
-                fprintf(stderr, "[ERROR] Failed to set powercap to %d W; measurement aborted.\n", powercap);
+                fprintf(stderr, "[ERROR] Failed to apply powercap state for %d W; measurement aborted.\n",
+                        powercap);
                 if (active_cpu_backend->destroy_powercap() != 0)
-                    fprintf(stderr, "[ERROR] Failed to destroy powercap context.\n");
+                    fprintf(stderr, "[ERROR] Failed to restore powercap state after setup failure.\n");
                 goto cleanup;
             }
             cap_applied = 1;
@@ -572,20 +577,20 @@ static int configured_standard_run(int argc, char **argv) {
             }
             for (size_t i = 0; i < configured_external_count; i++) {
                 ConfiguredExternalMetric *metric = &configured_external_metrics[i];
-                double value;
+                GreenMetricValue value;
                 if (read_configured_external(metric, &value) != 0) {
                     fprintf(stderr, "[WARNING] Recording NOT_SUPPORTED for the failed external metric sample.\n");
-                    value = NAN;
+                    value.type = GREEN_METRIC_INVALID;
                 }
                 fprintf(stream, ", ");
-                write_external_metric_value(stream, value);
+                write_external_metric_value(stream, metric, value);
             }
             fputc('\n', stream);
         }
         if (cap_applied) {
             cap_applied = 0;
             if (active_cpu_backend->destroy_powercap() != 0) {
-                fprintf(stderr, "[ERROR] Failed to destroy powercap context.\n");
+                fprintf(stderr, "[ERROR] Failed to restore powercap state.\n");
                 goto cleanup;
             }
         }
@@ -611,7 +616,7 @@ static int configured_standard_run(int argc, char **argv) {
 cleanup:
     if (stream && fclose(stream) != 0) perror("[ERROR] Failed to close standard CSV");
     if (cap_applied && active_cpu_backend->destroy_powercap() != 0)
-        fprintf(stderr, "[ERROR] Failed to destroy powercap context.\n");
+        fprintf(stderr, "[ERROR] Failed to restore powercap state.\n");
     if (temporary_created && status != 0 && unlink(temporary) != 0 && errno != ENOENT)
         perror("[ERROR] Failed to remove temporary measurement CSV");
     free(temporary);

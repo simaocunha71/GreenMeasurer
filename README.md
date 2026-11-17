@@ -15,6 +15,22 @@ The C measurement engine coordinates platform-specific telemetry plugins through
 
 ## Architecture & Directory Layout
 
+### Measurement workflow
+
+The workflow covers temperature and power-cap calibration, standard
+measurements, and over-time sampling.
+
+![GreenMeasurer measurement workflow](docs/architecture.drawio.png)
+
+### Framework structure and extension points
+
+The framework separates measurement orchestration from CPU/GPU backends and
+external metric adapters.
+
+![GreenMeasurer framework structure and extension points](docs/diagram.drawio.png)
+
+The editable diagrams are available in [docs/](docs/).
+
 The project isolates platform access from measurement orchestration. In the current Linux implementation, platform-specific code resides under this hierarchy:
 
 ```text
@@ -86,28 +102,37 @@ sudo apt-get install -y build-essential lm-sensors libsensors-dev libpowercap-de
 
 ## Building the Framework
 
-The `Makefile` checks each optional backend's build dependencies and skips backends whose required headers or libraries are unavailable. The CPU/GPU plugins that do build perform hardware detection at runtime; a plugin that does not match the current hardware is not selected.
+The `Makefile` checks the machine's CPU and PCI display devices before building
+the corresponding backend plugins. It also skips plugins whose required headers
+or libraries are unavailable. The built-in checks recognize Intel CPUs and Intel
+and NVIDIA GPUs; a failed hardware check is reported and the affected backend is
+skipped. Plugins still check hardware at runtime before selection.
 
 ```bash
-# Compile the core and all backends whose dependencies are installed
+# Compile the core and backends for detected hardware with available dependencies
 make -C src
 ```
 
-For example, the Intel CPU backend is skipped when the powercap, raplcap or libsensors development files are absent, while dependency-free backends can still be built. The NVIDIA backend requires both the NVML header and library. Use `make -C src VERBOSE=1` to see skipped optional backend reasons; the build continues with the remaining available plugins.
+For example, the Intel CPU backend is skipped if an Intel CPU is not detected or
+the powercap, raplcap or libsensors development files are absent. The NVIDIA
+backend also requires a detected NVIDIA display device, the NVML header and
+library. Use `make -C src VERBOSE=1` to see skipped backend reasons. Previously
+built plugins are not deleted when hardware changes; runtime detection still
+prevents incompatible plugins from being selected.
 
 ---
 
 ## TOML configuration and execution
 
 GreenMeasurer requires a TOML file. Set `measurement.mode` to `standard`
-for repeated aggregate measurements or `overtime` (over-time sampling) for interval sampling, and
+for repeated aggregate measurements or `over-time` for interval sampling, and
 select the metrics in `[metrics]`. Generate and compile first, then execute
 the generated binary separately:
 
 ```bash
 make -C src
 ./src/main --directory generated
-./generated/greenmeasurer
+sudo ./generated/greenmeasurer
 ```
 
 By default the launcher uses the repository-root `configuration.toml`; edit it
@@ -124,18 +149,23 @@ The TOML files in [`configurations/`](configurations/) are split in three folder
 
 | Folder | Contents |
 |--------|----------|
-| [`selected-some-metrics/`](configurations/selected-some-metrics/) | Temperature calibration, standard and over-time measurements with and without a requested 2 W limit, and a 15–16 W powercap calibration, each selecting a few metrics |
+| [`selected-some-metrics/`](configurations/selected-some-metrics/) | Temperature and powercap calibration, plus standard and over-time measurements, each selecting a few metrics |
 | [`all-metrics/`](configurations/all-metrics/) | Standard and over-time runs with `select = "all"` |
 | [`new-metrics/`](configurations/new-metrics/) | Standard and over-time runs that add system uptime, a metric GreenMeasurer does not provide, from [`system_uptime.c`](configurations/new-metrics/system_uptime.c) and [`system_uptime.h`](configurations/new-metrics/system_uptime.h) |
 
-They use the same short CPU-bound
-Python workload and do not depend on the `Languages` directory. Run commands
+The paper example set is maintained separately in
+[`paper_data/`](paper_data/): it contains standard and
+over-time runs with and without a 5 W cap, both calibration configurations,
+and uses `select = "all"`. See [`paper_data/README.md`](paper_data/README.md)
+for the run parameters and repetition details.
+
+The hardware test configurations use the same short CPU-bound Python workload
+and do not depend on the `Languages` directory. Run commands
 from the repository root so that the shared temperature baseline and CSV files
 are written there. For each configuration, generate into a new directory:
 
 ```bash
-./src/main --config configurations/selected-some-metrics/temperature.toml --directory generated-temperature-test
-./generated-temperature-test/greenmeasurer
+./src/main --config configurations/selected-some-metrics/temperature.toml
 ./src/main --config configurations/selected-some-metrics/standard.toml --directory generated-standard-test
 sudo ./generated-standard-test/greenmeasurer
 ```
@@ -150,11 +180,20 @@ powercap controls may require elevated privileges.
 limits and adjust `powercap`, `powercap_min` and `powercap_max` before running;
 example watt values are not guaranteed to be supported or applied exactly.
 The Intel backend provides powercap callbacks for standard, over-time and
-calibration measurements. It attempts to restore previous limits and zone
-state after each applied cap and reports restoration errors, but restoration
-has not been verified on all hardware and abrupt termination can leave limits
-changed. A `-1` measurement leaves existing limits unchanged. Check package
-settings before and after each run; firmware and other controls may also apply.
+calibration measurements. It saves the machine's package limits and zone state
+in `/var/lib/greenmeasurer/intel-rapl-baseline` on first use, then restores
+those values after each measurement. A `-1` measurement applies that saved
+baseline. The first capture assumes the current hardware settings are the
+desired baseline, so establish them first (for example, reboot after an older
+run left a cap active). To capture a new baseline, stop GreenMeasurer, remove
+the saved baseline file, and run a measurement with `powercap = -1`. Restoration
+has not been verified on all hardware; check package settings before and after
+each run. Firmware and other power-limit interfaces may also apply limits.
+The backend preserves time windows rather than rewriting them: on some Linux
+drivers, writing back a window can change its value through quantization. If a
+current window differs from the saved baseline, the measurement stops and
+reports both values; restore the window externally or establish and capture a
+new baseline before retrying.
 
 ### Over-time sampling
 The parent process samples the backends and system metrics sequentially while the
@@ -165,8 +204,10 @@ actual intervals longer and variable. This is a polling interval, not a
 hardware update notification: repeated counter readings or missed updates are
 possible. A final partial interval is recorded when the workload exits.
 
-The capacity is 262144 rows. If it is exceeded, the workload is stopped and the
-measurement fails without writing a partial CSV. Metric collection itself may
+The capacity is 262144 rows and 30 external metrics. If the row limit is
+exceeded, the workload is stopped and the measurement fails without writing a
+partial CSV. Exceeding the external metric limit fails before the workload
+starts. Metric collection itself may
 perform I/O and, depending on the backend, allocate memory. At exactly 1000
 samples per second, the capacity covers approximately 4 minutes and 22 seconds.
 
@@ -202,34 +243,31 @@ backend is (for example an unsupported CPU with an NVIDIA GPU), the temperature
 check, baseline waiting and temperature calibration are skipped; `variance` and
 `sleep_seconds` then have no effect, and only `gpu.*` and `system.*` metrics are
 available.
-The Intel backend first measures a baseline with `Powercap = -1`, then measures
-each configured limit. Results are summarized if post-processing is available.
-The baseline uses existing system limits; `-1` does not disable or remove them.
-Check the actual system limits before interpreting it as an uncapped baseline.
+The Intel backend first applies the saved per-machine baseline for
+`Powercap = -1`, then measures each configured limit. Results are summarized if
+post-processing is available. The first run captures the current system limits;
+ensure they are the desired baseline before that capture.
 
 On Intel, each requested Watt value in the calibration is applied to every
-detected package and die. The backend attempts to restore saved limits and zone
-state after each step, rather than disabling the zones at the end. Restoration
-errors are reported and abrupt termination can leave modified limits in place.
-Cleanup has not been verified on hardware; inspect the actual state before and
-after a run. Firmware or other power limits can still apply.
-`powercap = -1` does not change existing limits; it does not disable them.
+package and its dies. Before applying a cap, the backend saves each package
+zone's limits and enabled state, then restores them after the measurement.
+Firmware or other power limits can still apply. The saved baseline survives
+process termination, so a later `powercap = -1` measurement reapplies it.
 `powercap` accepts one value or a list (for example `powercap = [-1, 5, 10]`);
 each value is measured in turn and written to the same CSV with a `Powercap`
-column. The backend attempts to restore the previous limits and zone state
-after each applied cap and reports restoration errors. Verify the actual
-hardware state after runs, especially after interruption.
+column. Each applied cap is restored to the limits and enabled state that were
+present immediately before that cap was applied.
 `temperature-calibration` needs no `--directory`: `./src/main --config <file>`
 writes the `.txt` directly. `powercap-calibration` accepts an optional
 `[metrics]` section (selected, `select = "all"` or `[[external_metrics]]`;
 default `cpu.Package`) and sweeps `-1, powercap_min..powercap_max`.
 
-As in the original RAPL implementation, Intel powercapping
-sets the same wattage for the package's long- and short-term limits, leaves
-their time windows unchanged, and enables the zones after setting all limits.
-Unlike the artifact, the current backend checks each package's die count,
-aborts on write errors and attempts to restore the prior limits and zone state
-after a failed measurement.
+Intel powercapping sets the same wattage for both package limits while
+preserving their baseline time windows. It saves and restores state separately
+for every package and die, including when a measurement fails. The baseline
+file is local to the machine and is not overwritten on later runs; if the
+machine's desired baseline changes, remove the file while no measurement is
+running and capture the new baseline with `powercap = -1`.
 
 In standard mode, `cpu.Package_J` is total package energy over the run, not average power. A lower power cap can extend `Time_ms` enough that total energy stays similar or increases; compare both metrics, or derive average package power as `cpu.Package_J / (Time_ms / 1000)`. Do not assume package energy must decrease monotonically with the cap.
 
@@ -283,7 +321,7 @@ Metric behavior is declared by each backend:
   aggregated across the workload process tree. Polling is every 50 ms, so brief
   allocations may be missed.
 
-In over-time mode `Timestamp_ms` is the monotonic elapsed time in milliseconds
+In over-time mode `Timestamp_us` is the monotonic elapsed time in microseconds
 at the start of each sample's backend readings, and
 `CPU_Memory_KB` is the current resident set size of the workload process tree.
 It also reports `Cores` (online logical cores), `Workload_Processes` (live
@@ -294,19 +332,16 @@ not exactly simultaneous. Process-scoped readings may be unavailable in the
 final row because the workload has already exited. For example:
 
 ```csv
-Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+Language,Program,Powercap,Timestamp_us,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
 
-Window metrics such as energy are **joules consumed in the interval since the
-preceding backend reading**, not instantaneous joules or cumulative energy.
-Gauges and process-scoped values are readings taken in that cycle. Built-in
-backends use consecutive counter snapshots without gaps; legacy plugins without
-the optional `energy_backend_sample_next` symbol use separate start/stop windows
-and issue a warning because energy between windows is missed. Intel RAPL deltas
-handle one 32-bit wrap per interval, but cannot detect multiple wraps. Choose an
-interval short enough for the hardware and workload. The timestamp is taken
-immediately before the sequential backend reads, so timing of individual metrics
-and interval-average power are approximate.
+Over-time energy columns contain counter snapshots converted to joules, not
+energy consumed during the interval. Their starting point depends on the
+hardware, and Intel RAPL counters can wrap. A plugin that cannot expose a
+counter snapshot through `energy_backend_read_counter` reports `NOT_SUPPORTED`
+with a warning. Gauges and process-scoped values are readings taken in that
+cycle. The timestamp is taken immediately before the sequential backend reads,
+so the timing of individual metrics is approximate.
 Standard mode continues to accumulate 50 ms segments. The generated CSV header
 reflects the selected metrics that are available at runtime.
 
@@ -356,7 +391,7 @@ file selects CPU metrics whose availability depends on the selected backend
 and hardware.
 
 Measurement configurations require `[measurement]` with `mode = "standard"` or
-`"overtime"`, and `[metrics]` with `select = "all"` or a non-empty list of metric
+`"over-time"`, and `[metrics]` with `select = "all"` or a non-empty list of metric
 references. References use `cpu.<name>`, `gpu.<name>`,
 `external.<adapter>.<name>`, or one of `system.memory`, `system.cores`,
 `system.workload_processes`, `system.running_processes`, and
@@ -374,7 +409,7 @@ contain:
 
 ```toml
 [measurement]
-mode = "overtime"
+mode = "over-time"
 command = "sleep 1"
 sleep_seconds = 0
 
@@ -426,7 +461,7 @@ python3 scripts/generate_config.py src/tests/fixtures/configurations/external-so
 In `[[external_metrics]]`, `name`, `metric` and `unit` define the CSV metric,
 while `header`, `sources`, `function` and `return_type` specify its C
 implementation. Paths are relative to the TOML file. Supported return and
-argument types are `int`, `unsigned int` and `double`; `arguments` is an array
+argument types are `int`, `unsigned int`, `float` and `double`; `arguments` is an array
 of inline tables such as `{type = "int", value = 3}`. `include_dirs` and
 `libraries` are optional arrays, with library names specified without `-l`.
 An optional `error_value` identifies a numeric failure result; non-finite
@@ -435,6 +470,15 @@ and links the sources with undefined symbols disallowed. If compilation fails,
 the metric is skipped with compiler diagnostics and possible name suggestions;
 generation fails if no selected metrics remain. Suggestions are never called
 automatically. These are native libraries: use only trusted source code.
+
+An unrecognized return or argument type defaults to `double` with a warning;
+the resulting signature must still match the function's header. Generated
+metrics retain their declared numeric type for reading and storage. CSV stores
+text, not types: integers are written as integers, while floating-point values
+use decimal or scientific notation (for example, `1.0`). Existing custom
+adapters remain compatible and continue to return `double` through the
+original interface. The generated adapters also provide that interface for
+compatibility with existing adapter tools.
 
 Each `[[external_metrics]]` table produces its own `.so`, even when multiple
 metrics use the same source files. Select an external metric using either its
@@ -614,8 +658,20 @@ To add support for real hardware, copy the corresponding `.c` and `.h` from
 [`src/backend_templates/`](src/backend_templates/) into a new
 `src/platform/linux/cpu/<vendor>/` or `src/platform/linux/gpu/<vendor>/`
 directory, implement the listed callbacks and edit its `backend_metric_definitions` list,
-implement detection
-that returns 1 **only** for supported hardware, and build with `make -C src`.
+implement runtime detection that returns 1 **only** for supported hardware, and
+configure a build-time detection command in `src/Makefile`. The command must
+return 0 when supported hardware is detected, 1 when it is absent, and another
+status on error. Without a configured command the Makefile skips the backend with
+a warning. For example, an AMD CPU backend could use the existing CPU vendor
+check:
+
+```make
+BACKEND_DETECT_platform_linux_cpu_amd = $(call detect_cpu_vendor,AuthenticAMD)
+```
+
+For PCI display devices, use `$(call detect_pci_gpu_vendor,0x1234)` with the
+appropriate PCI vendor ID. Other hardware may require a new detection command
+in the Makefile. Build with `make -C src`.
 The default build discovers a single `.c` source in that directory. Configure
 additional flags or dependencies in `src/Makefile` when required.
 Before using a new backend for real measurements, implement and validate its
@@ -628,11 +684,14 @@ metric marked `ENERGY_METRIC_FLAG_CPU_TEMPERATURE`.
 `sample_start` opens an energy window and `sample_stop` closes it; a window
 metric must return its energy delta in joules. If implemented, the optional
 `energy_backend_sample_next` closes a window and moves its baseline to the
-same ending snapshot, avoiding unmeasured gaps in over-time sampling. The CPU and GPU
+same ending snapshot, avoiding unmeasured gaps when standard mode aggregates
+window segments. For over-time mode, a backend can export
+`energy_backend_read_counter(size_t metric_index, int device, pid_t pid)` to
+return the latest counter reading in the metric's unit. Without it, window
+metrics are recorded as `NOT_SUPPORTED` with a warning. The CPU and GPU
 examples illustrate that lifecycle; their modeled energy does not demonstrate
-hardware counter wraparound. Standard mode collects window segments and
-aggregates them, while over-time sampling writes a value per interval. A gauge is a
-current value; process-scoped metrics receive a process ID. The backend
+hardware counter wraparound. A gauge is a current value; process-scoped metrics
+receive a process ID. The backend
 descriptor's type and priority control discovery and selection. Check
 [`energy-backend.h`](src/include/energy-backend.h) and an existing hardware
 implementation before adapting the examples.

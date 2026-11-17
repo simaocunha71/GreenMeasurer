@@ -6,7 +6,7 @@
   <meta name="description" content="Measure software energy on Linux with GreenMeasurer.">
   <title>GreenMeasurer — software energy measurement</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20261112-diagrams">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -47,9 +47,20 @@
         <article class="step"><span>02</span><h3>Generate</h3><p>Compile an executable with your configuration embedded. Generation does not run the workload.</p></article>
         <article class="step"><span>03</span><h3>Measure</h3><p>Run it and inspect the CSV. Available metrics depend on your hardware and permissions.</p></article>
       </div>
+      <figure class="diagram">
+        <a href="architecture.drawio.png"><img src="architecture.drawio.png" alt="GreenMeasurer workflow from TOML configuration through calibration, standard measurement and over-time measurement to output files." loading="lazy"></a>
+        <figcaption>Measurement workflow. Select the diagram to view it at full size.</figcaption>
+      </figure>
+    </section>
+    <section class="overview-section" aria-labelledby="architecture-title">
+      <div class="section-heading"><div><p class="eyebrow">02 / Architecture</p><h2 id="architecture-title">Built to extend.</h2></div><p>CPU and GPU backends and external metric adapters extend the measurement engine.</p></div>
+      <figure class="diagram">
+        <a href="diagram.drawio.png"><img src="diagram.drawio.png" alt="GreenMeasurer source layout showing the measurement engine, CPU and GPU backends, platform-specific metrics and external metric adapters." loading="lazy"></a>
+        <figcaption>Framework structure and extension points. Select the diagram to view it at full size.</figcaption>
+      </figure>
     </section>
     <section class="overview-section" aria-labelledby="explore-title">
-      <div class="section-heading"><div><p class="eyebrow">02 / Documentation</p><h2 id="explore-title">Go where you need to.</h2></div><p>Start with a run, look up a metric, or add hardware support.</p></div>
+      <div class="section-heading"><div><p class="eyebrow">03 / Documentation</p><h2 id="explore-title">Go where you need to.</h2></div><p>Start with a run, look up a metric, or add hardware support.</p></div>
       <div class="link-grid">
         <a class="link-card" href="guide.html"><span class="card-label">Run</span><h3>Measurement guide</h3><p>Install, configure and choose between standard, over-time and calibration.</p><span class="card-arrow" aria-hidden="true">↗</span></a>
         <a class="link-card" href="fibonacci.html"><span class="card-label">Try it</span><h3>Usage example</h3><p>Follow a complete measurement from a sample program to CSV results.</p><span class="card-arrow" aria-hidden="true">↗</span></a>

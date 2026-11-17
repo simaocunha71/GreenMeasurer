@@ -1,5 +1,6 @@
 #include "intel.h"
 #include "../../../../include/energy-counter.h"
+#include <sys/file.h>
 #include <pthread.h>
 #include <regex.h>
 #include <sensors/sensors.h>
@@ -70,14 +71,19 @@ static double energy_units = 0.0;
 static int energy_units_valid = 0;
 static raplcap global_rc;
 static int raplcap_active = 0;
+
 typedef struct {
-    uint32_t package, die;
-    raplcap_limit long_limit, short_limit;
-    int enabled;
-    int modified;
+    uint32_t package;
+    uint32_t die;
+    raplcap_limit long_limit;
+    raplcap_limit short_limit;
+    int zone_enabled;
 } IntelPowercapSnapshot;
-static IntelPowercapSnapshot *powercap_snapshots = NULL;
-static size_t powercap_snapshot_count = 0;
+
+static IntelPowercapSnapshot *intel_powercap_snapshot;
+static size_t intel_powercap_snapshot_count;
+static const char *intel_powercap_baseline_path = "/var/lib/greenmeasurer/intel-rapl-baseline";
+static int intel_powercap_lock_fd = -1;
 
 extern int runTesting(int ntimes, int core, const char *command, const char *language, 
                        const char *program, const char *measurements_file, int powercap, 
@@ -271,6 +277,22 @@ static double intel_get_dram_energy(int core) {
     return (double)energy_counter_delta32(dram_after, dram_before) * energy_units;
 }
 
+double energy_backend_read_counter(size_t metric_index, int core, pid_t pid) {
+    (void)core;
+    (void)pid;
+    if (!energy_units_valid ||
+        metric_index >= sizeof(intel_metric_definitions) / sizeof(intel_metric_definitions[0]))
+        return METRIC_NOT_SUPPORTED;
+    double (*read)(int, pid_t) = intel_metric_definitions[metric_index].function.read;
+    if (read == intel_metric_package && package_after_valid)
+        return (double)package_after * energy_units;
+    if (read == intel_metric_core && core_after_valid)
+        return (double)core_after * energy_units;
+    if (read == intel_metric_dram && dram_after_valid)
+        return (double)dram_after * energy_units;
+    return METRIC_NOT_SUPPORTED;
+}
+
 int energy_backend_sample_next(int core) {
     if (next_sample_has_previous) {
         package_before = package_after;
@@ -358,117 +380,445 @@ static double intel_metric_temperature(int core, pid_t pid) {
 
 static int intel_destroy_powercap(void);
 
+static void intel_free_powercap_snapshot(void) {
+    free(intel_powercap_snapshot);
+    intel_powercap_snapshot = NULL;
+    intel_powercap_snapshot_count = 0;
+}
+
+static char *intel_powercap_parent_directory(void) {
+    char *directory = strdup(intel_powercap_baseline_path);
+    if (!directory) return NULL;
+    char *separator = strrchr(directory, '/');
+    if (!separator) {
+        free(directory);
+        return strdup(".");
+    } else if (separator == directory) {
+        separator[1] = '\0';
+    } else {
+        *separator = '\0';
+    }
+    return directory;
+}
+
+static int intel_acquire_powercap_lock(void) {
+    if (intel_powercap_lock_fd >= 0) {
+        fprintf(stderr, "[ERROR] RAPL baseline lock is already held.\n");
+        return -1;
+    }
+
+    char *directory = intel_powercap_parent_directory();
+    if (!directory) {
+        fprintf(stderr, "[ERROR] Failed to allocate RAPL baseline directory path.\n");
+        return -1;
+    }
+    if (mkdir(directory, 0755) != 0 && errno != EEXIST) {
+        perror("[ERROR] Failed to create RAPL baseline directory");
+        free(directory);
+        return -1;
+    }
+    struct stat directory_stat;
+    if (lstat(directory, &directory_stat) != 0 || !S_ISDIR(directory_stat.st_mode)) {
+        fprintf(stderr, "[ERROR] RAPL baseline path parent is not a directory.\n");
+        free(directory);
+        return -1;
+    }
+    free(directory);
+
+    size_t path_length = strlen(intel_powercap_baseline_path);
+    char *lock_path = malloc(path_length + sizeof(".lock"));
+    if (!lock_path) {
+        fprintf(stderr, "[ERROR] Failed to allocate RAPL baseline lock path.\n");
+        return -1;
+    }
+    snprintf(lock_path, path_length + sizeof(".lock"), "%s.lock", intel_powercap_baseline_path);
+    int lock_fd = open(lock_path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+    free(lock_path);
+    if (lock_fd < 0) {
+        perror("[ERROR] Failed to open RAPL baseline lock");
+        return -1;
+    }
+    if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+        if (errno == EWOULDBLOCK)
+            fprintf(stderr, "[ERROR] Another GreenMeasurer process is using RAPL power limits.\n");
+        else
+            perror("[ERROR] Failed to lock RAPL baseline");
+        close(lock_fd);
+        return -1;
+    }
+    intel_powercap_lock_fd = lock_fd;
+    return 0;
+}
+
+static void intel_release_powercap_lock(void) {
+    if (intel_powercap_lock_fd < 0) return;
+    if (flock(intel_powercap_lock_fd, LOCK_UN) != 0)
+        perror("[ERROR] Failed to unlock RAPL baseline");
+    if (close(intel_powercap_lock_fd) != 0)
+        perror("[ERROR] Failed to close RAPL baseline lock");
+    intel_powercap_lock_fd = -1;
+}
+
+static int intel_allocate_powercap_snapshot(void) {
+    uint32_t packages = raplcap_get_num_packages(&global_rc);
+    if (packages == 0) {
+        fprintf(stderr, "[ERROR] No RAPL packages were found.\n");
+        return -1;
+    }
+
+    size_t state_count = 0;
+    for (uint32_t package = 0; package < packages; package++) {
+        uint32_t dies = raplcap_get_num_die(&global_rc, package);
+        if (dies == 0 || state_count > SIZE_MAX - dies) {
+            fprintf(stderr, "[ERROR] Invalid RAPL die count for package %u.\n", package);
+            return -1;
+        }
+        state_count += dies;
+    }
+    if (state_count > SIZE_MAX / sizeof(*intel_powercap_snapshot)) {
+        fprintf(stderr, "[ERROR] Too many RAPL package zones to save powercap state.\n");
+        return -1;
+    }
+
+    IntelPowercapSnapshot *snapshot = calloc(state_count, sizeof(*snapshot));
+    if (!snapshot) {
+        fprintf(stderr, "[ERROR] Failed to allocate RAPL powercap state snapshot.\n");
+        return -1;
+    }
+
+    size_t index = 0;
+    for (uint32_t package = 0; package < packages; package++) {
+        uint32_t dies = raplcap_get_num_die(&global_rc, package);
+        if (dies == 0 || dies > state_count - index) {
+            fprintf(stderr, "[ERROR] RAPL topology changed while saving powercap state.\n");
+            free(snapshot);
+            return -1;
+        }
+        for (uint32_t die = 0; die < dies; die++) {
+            snapshot[index].package = package;
+            snapshot[index].die = die;
+            index++;
+        }
+    }
+    if (index != state_count) {
+        fprintf(stderr, "[ERROR] RAPL topology changed while saving powercap state.\n");
+        free(snapshot);
+        return -1;
+    }
+    intel_powercap_snapshot = snapshot;
+    intel_powercap_snapshot_count = state_count;
+    return 0;
+}
+
+static int intel_read_current_powercap_state(void) {
+    for (size_t i = 0; i < intel_powercap_snapshot_count; i++) {
+        IntelPowercapSnapshot *state = &intel_powercap_snapshot[i];
+        if (raplcap_pd_get_limits(&global_rc, state->package, state->die,
+                                  RAPLCAP_ZONE_PACKAGE, &state->long_limit,
+                                  &state->short_limit) != 0) {
+            fprintf(stderr, "[ERROR] Failed to read package power limits for package %u die %u.\n",
+                    state->package, state->die);
+            return -1;
+        }
+        int enabled = raplcap_pd_is_zone_enabled(&global_rc, state->package, state->die,
+                                                 RAPLCAP_ZONE_PACKAGE);
+        if (enabled < 0) {
+            fprintf(stderr, "[ERROR] Failed to read package power-limit state for package %u die %u.\n",
+                    state->package, state->die);
+            return -1;
+        }
+        state->zone_enabled = enabled;
+    }
+    return 0;
+}
+
+static int intel_read_powercap_baseline(void) {
+    int fd = open(intel_powercap_baseline_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+        if (errno == ENOENT) return 1;
+        perror("[ERROR] Failed to open saved RAPL baseline");
+        return -1;
+    }
+    FILE *file = fdopen(fd, "r");
+    if (!file) {
+        perror("[ERROR] Failed to read saved RAPL baseline");
+        close(fd);
+        return -1;
+    }
+
+    char magic[64];
+    unsigned version;
+    size_t count;
+    int result = -1;
+    if (fscanf(file, "%63s %u %zu", magic, &version, &count) != 3 ||
+        strcmp(magic, "GREENMEASURER_INTEL_RAPL_BASELINE") != 0 ||
+        version != 1 || count != intel_powercap_snapshot_count) {
+        fprintf(stderr, "[ERROR] Saved RAPL baseline has an invalid format or topology.\n");
+        goto done;
+    }
+    for (size_t i = 0; i < count; i++) {
+        IntelPowercapSnapshot *state = &intel_powercap_snapshot[i];
+        uint32_t package, die;
+        int enabled;
+        double long_watts, long_seconds, short_watts, short_seconds;
+        if (fscanf(file, "%"SCNu32" %"SCNu32" %lf %lf %lf %lf %d",
+                   &package, &die, &long_watts, &long_seconds,
+                   &short_watts, &short_seconds, &enabled) != 7 ||
+            package != state->package || die != state->die ||
+            !isfinite(long_watts) || long_watts <= 0 ||
+            !isfinite(long_seconds) || long_seconds <= 0 ||
+            !isfinite(short_watts) || short_watts <= 0 ||
+            !isfinite(short_seconds) || short_seconds <= 0 ||
+            (enabled != 0 && enabled != 1)) {
+            fprintf(stderr, "[ERROR] Saved RAPL baseline contains invalid package state.\n");
+            goto done;
+        }
+        state->long_limit = (raplcap_limit){.watts = long_watts, .seconds = long_seconds};
+        state->short_limit = (raplcap_limit){.watts = short_watts, .seconds = short_seconds};
+        state->zone_enabled = enabled;
+    }
+    char extra;
+    if (fscanf(file, " %c", &extra) == 1 || ferror(file)) {
+        fprintf(stderr, "[ERROR] Saved RAPL baseline contains trailing or unreadable data.\n");
+        goto done;
+    }
+    result = 0;
+
+done:
+    if (fclose(file) != 0) {
+        perror("[ERROR] Failed to close saved RAPL baseline");
+        result = -1;
+    }
+    return result;
+}
+
+static int intel_write_powercap_baseline(void) {
+    size_t path_length = strlen(intel_powercap_baseline_path);
+    char *temporary_path = malloc(path_length + sizeof(".tmp.XXXXXX"));
+    if (!temporary_path) {
+        fprintf(stderr, "[ERROR] Failed to allocate temporary RAPL baseline path.\n");
+        return -1;
+    }
+    snprintf(temporary_path, path_length + sizeof(".tmp.XXXXXX"),
+             "%s.tmp.XXXXXX", intel_powercap_baseline_path);
+    int fd = mkstemp(temporary_path);
+    if (fd < 0) {
+        perror("[ERROR] Failed to create temporary RAPL baseline");
+        free(temporary_path);
+        return -1;
+    }
+    FILE *file = fdopen(fd, "w");
+    if (!file) {
+        perror("[ERROR] Failed to write temporary RAPL baseline");
+        close(fd);
+        unlink(temporary_path);
+        free(temporary_path);
+        return -1;
+    }
+
+    int result = 0;
+    if (fprintf(file, "GREENMEASURER_INTEL_RAPL_BASELINE 1 %zu\n",
+                intel_powercap_snapshot_count) < 0) {
+        result = -1;
+    }
+    for (size_t i = 0; result == 0 && i < intel_powercap_snapshot_count; i++) {
+        const IntelPowercapSnapshot *state = &intel_powercap_snapshot[i];
+        if (fprintf(file, "%"PRIu32" %"PRIu32" %.17g %.17g %.17g %.17g %d\n",
+                    state->package, state->die,
+                    state->long_limit.watts, state->long_limit.seconds,
+                    state->short_limit.watts, state->short_limit.seconds,
+                    state->zone_enabled) < 0) {
+            result = -1;
+        }
+    }
+    if (result == 0 && (fflush(file) != 0 || fsync(fileno(file)) != 0)) result = -1;
+    if (fclose(file) != 0) result = -1;
+    if (result == 0 && rename(temporary_path, intel_powercap_baseline_path) != 0) {
+        perror("[ERROR] Failed to save RAPL baseline");
+        result = -1;
+    }
+    if (result == 0) {
+        char *directory = intel_powercap_parent_directory();
+        int directory_fd = directory ? open(directory, O_RDONLY | O_CLOEXEC | O_DIRECTORY) : -1;
+        if (directory_fd < 0 || fsync(directory_fd) != 0) {
+            perror("[ERROR] Failed to sync RAPL baseline directory");
+            result = -1;
+        }
+        if (directory_fd >= 0) close(directory_fd);
+        free(directory);
+    }
+    if (result != 0) unlink(temporary_path);
+    free(temporary_path);
+    return result;
+}
+
+static int intel_load_or_capture_powercap_state(void) {
+    if (intel_allocate_powercap_snapshot() != 0) return -1;
+    int result = intel_read_powercap_baseline();
+    if (result == 1) {
+        if (intel_read_current_powercap_state() != 0 ||
+            intel_write_powercap_baseline() != 0) {
+            intel_free_powercap_snapshot();
+            return -1;
+        }
+        fprintf(stderr, "[INFO] Saved this machine's RAPL baseline to %s.\n",
+                intel_powercap_baseline_path);
+        return 0;
+    }
+    if (result != 0) {
+        intel_free_powercap_snapshot();
+        return -1;
+    }
+    return 0;
+}
+
+static int intel_restore_powercap_state(void) {
+    int result = 0;
+    for (size_t i = 0; i < intel_powercap_snapshot_count; i++) {
+        const IntelPowercapSnapshot *state = &intel_powercap_snapshot[i];
+        raplcap_limit current_long, current_short;
+        if (raplcap_pd_get_limits(&global_rc, state->package, state->die,
+                                  RAPLCAP_ZONE_PACKAGE, &current_long, &current_short) != 0) {
+            fprintf(stderr, "[ERROR] Failed to read package power limits for package %u die %u.\n",
+                    state->package, state->die);
+            result = -1;
+            continue;
+        }
+        /* Time windows are never changed by this backend; rewriting them can quantize them. */
+        raplcap_limit long_limit = {.watts = state->long_limit.watts, .seconds = 0};
+        raplcap_limit short_limit = {.watts = state->short_limit.watts, .seconds = 0};
+        const raplcap_limit *long_update =
+            fabs(current_long.watts - long_limit.watts) > 1e-6 ? &long_limit : NULL;
+        const raplcap_limit *short_update =
+            fabs(current_short.watts - short_limit.watts) > 1e-6 ? &short_limit : NULL;
+        if ((long_update || short_update) &&
+            raplcap_pd_set_limits(&global_rc, state->package, state->die,
+                                  RAPLCAP_ZONE_PACKAGE, long_update, short_update) != 0) {
+            fprintf(stderr, "[ERROR] Failed to restore package power limits for package %u die %u.\n",
+                    state->package, state->die);
+            result = -1;
+        }
+    }
+    for (size_t i = 0; i < intel_powercap_snapshot_count; i++) {
+        const IntelPowercapSnapshot *state = &intel_powercap_snapshot[i];
+        int enabled = raplcap_pd_is_zone_enabled(&global_rc, state->package, state->die,
+                                                 RAPLCAP_ZONE_PACKAGE);
+        if (enabled < 0) {
+            fprintf(stderr, "[ERROR] Failed to read package power-limit state for package %u die %u.\n",
+                    state->package, state->die);
+            result = -1;
+        } else if (enabled != state->zone_enabled &&
+                   raplcap_pd_set_zone_enabled(&global_rc, state->package, state->die,
+                                               RAPLCAP_ZONE_PACKAGE, state->zone_enabled) != 0) {
+            fprintf(stderr, "[ERROR] Failed to restore package power-limit state for package %u die %u.\n",
+                    state->package, state->die);
+            result = -1;
+        }
+    }
+    for (size_t i = 0; i < intel_powercap_snapshot_count; i++) {
+        const IntelPowercapSnapshot *state = &intel_powercap_snapshot[i];
+        raplcap_limit long_limit, short_limit;
+        if (raplcap_pd_get_limits(&global_rc, state->package, state->die,
+                                  RAPLCAP_ZONE_PACKAGE, &long_limit,
+                                  &short_limit) != 0) {
+            fprintf(stderr, "[ERROR] Failed to verify package power limits for package %u die %u.\n",
+                    state->package, state->die);
+            result = -1;
+            continue;
+        }
+        int enabled = raplcap_pd_is_zone_enabled(&global_rc, state->package, state->die,
+                                                 RAPLCAP_ZONE_PACKAGE);
+        if (!isfinite(long_limit.watts) || !isfinite(long_limit.seconds) ||
+            !isfinite(short_limit.watts) || !isfinite(short_limit.seconds) ||
+            fabs(long_limit.watts - state->long_limit.watts) > 1e-6 ||
+            fabs(long_limit.seconds - state->long_limit.seconds) > 1e-6 ||
+            fabs(short_limit.watts - state->short_limit.watts) > 1e-6 ||
+            fabs(short_limit.seconds - state->short_limit.seconds) > 1e-6 ||
+            enabled != state->zone_enabled) {
+            fprintf(stderr, "[ERROR] RAPL baseline mismatch for package %u die %u: "
+                    "long %.12g W / %.12g s (expected %.12g W / %.12g s), "
+                    "short %.12g W / %.12g s (expected %.12g W / %.12g s), "
+                    "enabled %d (expected %d).\n",
+                    state->package, state->die,
+                    long_limit.watts, long_limit.seconds,
+                    state->long_limit.watts, state->long_limit.seconds,
+                    short_limit.watts, short_limit.seconds,
+                    state->short_limit.watts, state->short_limit.seconds,
+                    enabled, state->zone_enabled);
+            result = -1;
+        }
+    }
+    return result;
+}
+
 static int intel_set_powercap(int watts) {
-    if (watts == -1) return 0;
-    if (watts <= 0) {
-        fprintf(stderr, "[ERROR] RAPL powercap must be -1 or a positive number of watts.\n");
+    if (watts == 0) return 0;
+    if (watts < -1) {
+        fprintf(stderr, "[ERROR] RAPL powercap must be -1 or a positive watt value.\n");
         return -1;
     }
     if (raplcap_active) {
         fprintf(stderr, "[ERROR] An earlier RAPL powercap context is still active.\n");
         return -1;
     }
+    if (intel_acquire_powercap_lock() != 0) return -1;
     if (raplcap_init(&global_rc) != 0) {
         fprintf(stderr, "[ERROR] Failed to initialize the RAPL powercap context.\n");
+        intel_release_powercap_lock();
         return -1;
     }
     raplcap_active = 1;
 
-    uint32_t n = raplcap_get_num_packages(&global_rc);
-    if (n == 0) {
-        fprintf(stderr, "[ERROR] No RAPL packages were found.\n");
-        intel_destroy_powercap();
+    if (intel_load_or_capture_powercap_state() != 0) {
+        if (raplcap_destroy(&global_rc) != 0)
+            fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context after baseline failure.\n");
+        raplcap_active = 0;
+        intel_free_powercap_snapshot();
+        intel_release_powercap_lock();
         return -1;
     }
 
-    for (uint32_t q = 0; q < n; q++) {
-        uint32_t d = raplcap_get_num_die(&global_rc, q);
-        if (d == 0) {
-            fprintf(stderr, "[ERROR] No RAPL dies found for package %u.\n", q);
-            intel_destroy_powercap();
-            return -1;
-        }
-        for (uint32_t j = 0; j < d; j++) {
-            IntelPowercapSnapshot *snapshots = realloc(
-                powercap_snapshots, (powercap_snapshot_count + 1) * sizeof(*snapshots));
-            if (!snapshots) {
-                fprintf(stderr, "[ERROR] Failed to allocate RAPL powercap snapshots.\n");
-                intel_destroy_powercap();
-                return -1;
-            }
-            powercap_snapshots = snapshots;
-            IntelPowercapSnapshot *snapshot = &powercap_snapshots[powercap_snapshot_count];
-            memset(snapshot, 0, sizeof(*snapshot));
-            snapshot->package = q;
-            snapshot->die = j;
-            snapshot->enabled = raplcap_pd_is_zone_enabled(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE);
-            if (snapshot->enabled < 0 ||
-                raplcap_pd_get_limits(&global_rc, q, j, RAPLCAP_ZONE_PACKAGE,
-                                      &snapshot->long_limit, &snapshot->short_limit) != 0 ||
-                !isfinite(snapshot->long_limit.watts) || snapshot->long_limit.watts <= 0 ||
-                !isfinite(snapshot->short_limit.watts) || snapshot->short_limit.watts <= 0 ||
-                !isfinite(snapshot->long_limit.seconds) || snapshot->long_limit.seconds < 0 ||
-                !isfinite(snapshot->short_limit.seconds) || snapshot->short_limit.seconds < 0) {
-                fprintf(stderr, "[ERROR] Failed to read existing RAPL limits for package %u die %u.\n", q, j);
-                intel_destroy_powercap();
-                return -1;
-            }
-            powercap_snapshot_count++;
-        }
+    if (intel_restore_powercap_state() != 0) {
+        intel_destroy_powercap();
+        return -1;
     }
+    if (watts == -1) return 0;
 
     raplcap_limit long_limit = { .watts = watts, .seconds = 0 };
     raplcap_limit short_limit = { .watts = watts, .seconds = 0 };
-    for (size_t i = 0; i < powercap_snapshot_count; i++) {
-        IntelPowercapSnapshot *snapshot = &powercap_snapshots[i];
-        snapshot->modified = 1;
-        if (raplcap_pd_set_limits(&global_rc, snapshot->package, snapshot->die, RAPLCAP_ZONE_PACKAGE,
-                                  &long_limit, &short_limit) != 0) {
-            perror("[ERROR] raplcap_pd_set_limits");
-            intel_destroy_powercap();
-            return -1;
+    int result = 0;
+    for (size_t i = 0; i < intel_powercap_snapshot_count; i++) {
+        const IntelPowercapSnapshot *state = &intel_powercap_snapshot[i];
+        if (raplcap_pd_set_limits(&global_rc, state->package, state->die,
+                                  RAPLCAP_ZONE_PACKAGE, &long_limit, &short_limit) != 0) {
+            fprintf(stderr, "[ERROR] Failed to set package power limits for package %u die %u.\n",
+                    state->package, state->die);
+            result = -1;
         }
     }
-    for (size_t i = 0; i < powercap_snapshot_count; i++) {
-        IntelPowercapSnapshot *snapshot = &powercap_snapshots[i];
-        if (raplcap_pd_set_zone_enabled(&global_rc, snapshot->package, snapshot->die,
+    for (size_t i = 0; i < intel_powercap_snapshot_count; i++) {
+        const IntelPowercapSnapshot *state = &intel_powercap_snapshot[i];
+        if (raplcap_pd_set_zone_enabled(&global_rc, state->package, state->die,
                                         RAPLCAP_ZONE_PACKAGE, 1) != 0) {
-            perror("[ERROR] raplcap_pd_set_zone_enabled");
-            intel_destroy_powercap();
-            return -1;
+            fprintf(stderr, "[ERROR] Failed to enable package power limits for package %u die %u.\n",
+                    state->package, state->die);
+            result = -1;
         }
     }
-    return 0;
+    if (result != 0) intel_destroy_powercap();
+    return result;
 }
 
 static int intel_destroy_powercap(void) {
     if (!raplcap_active) return 0;
-    int result = 0;
-    for (size_t i = 0; i < powercap_snapshot_count; i++) {
-        IntelPowercapSnapshot *snapshot = &powercap_snapshots[i];
-        if (!snapshot->modified) continue;
-        if (raplcap_pd_set_limits(&global_rc, snapshot->package, snapshot->die,
-                                  RAPLCAP_ZONE_PACKAGE, &snapshot->long_limit,
-                                  &snapshot->short_limit) != 0) {
-            fprintf(stderr, "[ERROR] Failed to restore RAPL limits for package %u die %u.\n",
-                    snapshot->package, snapshot->die);
-            result = -1;
-        }
-        if (raplcap_pd_set_zone_enabled(&global_rc, snapshot->package, snapshot->die,
-                                       RAPLCAP_ZONE_PACKAGE, snapshot->enabled) != 0) {
-            fprintf(stderr, "[ERROR] Failed to restore RAPL zone state for package %u die %u.\n",
-                    snapshot->package, snapshot->die);
-            result = -1;
-        }
-    }
+    int result = intel_restore_powercap_state();
     if (raplcap_destroy(&global_rc) != 0) {
         fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
         result = -1;
     }
-    free(powercap_snapshots);
-    powercap_snapshots = NULL;
-    powercap_snapshot_count = 0;
     raplcap_active = 0;
+    intel_free_powercap_snapshot();
+    intel_release_powercap_lock();
     return result;
 }
 
@@ -545,12 +895,13 @@ int intel_calibrate_powercap(int ntimes, int core, const char *command, const ch
 
     int result = 0;
 
-    printf("[INFO] Baseline uses the existing system limits; -1 does not remove them.\n");
+    printf("[INFO] Powercap -1 uses the saved per-machine RAPL baseline.\n");
     for (int power_cap = -1; ; power_cap = power_cap == -1 ? min_powercap : power_cap + 1) {
         printf("[INFO] Powercap calibration: Testing with power cap = %d W\n", power_cap);
 
-        if (power_cap != -1 && intel_set_powercap(power_cap) != 0) {
-            fprintf(stderr, "[ERROR] Failed to set powercap %d W; calibration aborted.\n", power_cap);
+        if (intel_set_powercap(power_cap) != 0) {
+            fprintf(stderr, "[ERROR] Failed to apply powercap state for %d W; calibration aborted.\n",
+                    power_cap);
             result = -1;
             break;
         }
@@ -559,14 +910,14 @@ int intel_calibrate_powercap(int ntimes, int core, const char *command, const ch
         int temporary_fd = mkstemp(filename);
         if (temporary_fd < 0) {
             perror("[ERROR] Failed to create temporary calibration CSV");
-            if (power_cap != -1 && intel_destroy_powercap() != 0) result = -1;
+            if (intel_destroy_powercap() != 0) result = -1;
             result = -1;
             break;
         }
         if (close(temporary_fd) != 0) {
             perror("[ERROR] Failed to close temporary calibration CSV");
             remove(filename);
-            if (power_cap != -1 && intel_destroy_powercap() != 0) result = -1;
+            if (intel_destroy_powercap() != 0) result = -1;
             result = -1;
             break;
         }
@@ -574,7 +925,7 @@ int intel_calibrate_powercap(int ntimes, int core, const char *command, const ch
         if (initialize_calibration_csv(filename) != 0) {
             result = -1;
             remove(filename);
-            if (power_cap != -1 && intel_destroy_powercap() != 0) result = -1;
+            if (intel_destroy_powercap() != 0) result = -1;
             break;
         }
 
@@ -584,7 +935,7 @@ int intel_calibrate_powercap(int ntimes, int core, const char *command, const ch
             result = -1;
         }
 
-        if (power_cap != -1 && intel_destroy_powercap() != 0) result = -1;
+        if (intel_destroy_powercap() != 0) result = -1;
         if (result == 0 && append_calibration_rows(outputFile, filename) != 0) result = -1;
         if (remove(filename) != 0) {
             perror("[ERROR] Failed to remove temporary calibration CSV");

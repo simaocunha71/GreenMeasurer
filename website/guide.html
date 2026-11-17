@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Install and run GreenMeasurer with TOML configurations.">
   <title>Measurement guide — GreenMeasurer</title>
-  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css?v=20261112-diagrams">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -41,14 +41,14 @@ powercap = -1
 select = ["system.cores", "cpu.Package"]</code></pre>
         <p>Generate into a directory that does not already exist, then run the executable separately from the repository root:</p>
         <pre><code>./src/main --directory my-build
-./my-build/greenmeasurer</code></pre>
+sudo ./my-build/greenmeasurer</code></pre>
         <p>Use <code>./src/main --config path/to/file.toml --directory my-build</code> for a different file. Generation compiles but does not execute the workload. The executable embeds the configuration: after editing the TOML, generate again in a new directory. A successful measurement replaces its configured CSV.</p>
         <p>For a complete example of using GreenMeasurer, follow the <a href="fibonacci.html">usage walkthrough</a> from a sample program through standard and over-time CSVs. Ready-made test configurations are in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/configurations">configurations/</a>; run their executables from the repository root so shared relative paths resolve as intended.</p>
       </section>
       <section id="modes"><h2>Choose a mode</h2>
         <div class="table-wrap"><table><thead><tr><th>Mode</th><th>What it does</th><th>Result</th></tr></thead><tbody>
           <tr><td><code>standard</code></td><td>Runs the command once per repetition; waits for the temperature threshold before each run.</td><td>A CSV row per repetition and powercap value.</td></tr>
-          <tr><td><code>overtime</code> (over-time)</td><td>Runs the command once and samples while it executes; gates the start on temperature.</td><td>A CSV row per sampling cycle.</td></tr>
+          <tr><td><code>over-time</code></td><td>Runs the command once and samples while it executes; gates the start on temperature.</td><td>A CSV row per sampling cycle.</td></tr>
           <tr><td><code>temperature-calibration</code></td><td>Waits for the settling period and records a CPU temperature baseline.</td><td>A text file with an lm-sensors snapshot and average temperature.</td></tr>
           <tr><td><code>powercap-calibration</code></td><td>Runs a baseline and repeats the workload across an inclusive Watt range.</td><td>A calibration CSV and, when supported by its columns, an energy/time summary.</td></tr>
         </tbody></table></div>
@@ -63,8 +63,8 @@ calibration_file = "temperature.txt"</code></pre>
         <p>In measurements, <code>variance</code> controls how far above the baseline the CPU can be before a run starts. Standard checks before every repetition and records that pre-run temperature. Over-time mode checks before each run (after applying its powercap) and continues sampling temperature during execution. Relative output and baseline paths resolve from the working directory where the executable runs.</p>
       </section>
       <section id="powercap"><h2>Powercap &amp; calibration</h2>
-        <aside class="notice warning"><strong>Hardware state</strong><p>Powercap controls can change real package limits. The Intel backend attempts to restore previous limits and zone state after each applied cap and reports restoration errors. Restoration has not been verified on all hardware; inspect RAPL state after every run, especially after an abrupt termination.</p></aside>
-        <p><code>powercap = -1</code> leaves existing limits unchanged. A calibration baseline labelled <code>-1</code> therefore uses the limits already in force; it is not necessarily uncapped. The backend attempts restoration after each applied value. Firmware or other controls may impose additional limits.</p>
+        <aside class="notice warning"><strong>Hardware state</strong><p>Powercap controls can change real package limits. On first use, the Intel backend saves the current package limits and zone state to <code>/var/lib/greenmeasurer/intel-rapl-baseline</code>. Later <code>-1</code> measurements apply that per-machine baseline, and applied caps restore it after measurement. Restoration has not been verified on all hardware; inspect RAPL state after every run.</p></aside>
+        <p>Ensure the hardware is at the desired baseline before GreenMeasurer first captures it. To recapture after changing firmware or power settings, stop GreenMeasurer, remove the saved baseline file, then run with <code>powercap = -1</code>. Saving or applying the baseline may require elevated privileges. Firmware or other interfaces may impose additional limits.</p>
         <pre><code>for file in /sys/class/powercap/intel-rapl:0/{enabled,constraint_0_power_limit_uw,constraint_1_power_limit_uw}; do
     echo "$file: $(cat "$file")"
 done</code></pre>
@@ -73,18 +73,18 @@ done</code></pre>
       <section id="configuration"><h2>TOML fields</h2>
         <p>A configuration has a <code>[measurement]</code> table. Measurement modes also use <code>[metrics]</code> to choose CSV columns. Unknown keys and mode-incompatible settings are rejected, so keep each example's fields with its mode.</p>
         <div class="table-wrap"><table><thead><tr><th>Key</th><th>Modes</th><th>Meaning, units and defaults</th></tr></thead><tbody>
-          <tr><td><code>mode</code></td><td>All</td><td>Required. <code>"standard"</code>, <code>"overtime"</code>, <code>"temperature-calibration"</code> or <code>"powercap-calibration"</code>.</td></tr>
+          <tr><td><code>mode</code></td><td>All</td><td>Required. <code>"standard"</code>, <code>"over-time"</code>, <code>"temperature-calibration"</code> or <code>"powercap-calibration"</code>.</td></tr>
           <tr><td><code>command</code></td><td>Standard, over-time, powercap calibration</td><td>Required foreground shell command to execute. Powercap calibration runs it for each repetition and cap.</td></tr>
           <tr><td><code>language</code>, <code>program</code></td><td>Measurements and powercap calibration</td><td>Optional CSV labels, not selectors; defaults to <code>"C"</code> and <code>"Target"</code> in standard mode. Use simple labels without commas or quotes.</td></tr>
-          <tr><td><code>output</code></td><td>Measurements and powercap calibration</td><td>CSV path; defaults to <code>measurements.csv</code> (standard), <code>measurements_ot.csv</code> (overtime), or <code>powercap_calibration.csv</code>. Relative to the directory where the executable runs.</td></tr>
+          <tr><td><code>output</code></td><td>Measurements and powercap calibration</td><td>CSV path; defaults to <code>measurements.csv</code> (standard), <code>measurements_ot.csv</code> (over-time), or <code>powercap_calibration.csv</code>. Relative to the directory where the executable runs.</td></tr>
           <tr><td><code>repetitions</code></td><td>Standard, powercap calibration</td><td>Number of workload runs per cap; positive integer. Defaults to 1 (standard) and 3 (powercap calibration).</td></tr>
           <tr><td><code>timeout_hours</code></td><td>Standard, powercap calibration</td><td>Maximum duration of each workload run in hours; positive integer, default 1.</td></tr>
           <tr><td><code>interval_us</code></td><td>Over-time only</td><td>Target pause between sample cycles in microseconds; integer from 1 to 4,294,967,295. Default 1,000 <abbr title="microseconds">µs</abbr> (1 ms). Actual intervals are longer because reads and scheduling take time.</td></tr>
           <tr><td><code>variance</code></td><td>Measurements and powercap calibration</td><td>Non-negative temperature allowance in °C above the baseline before starting a workload. Defaults: 0°C in standard, 5°C in over-time mode and powercap calibration.</td></tr>
           <tr><td><code>sleep_seconds</code></td><td>All modes</td><td>Non-negative settling delay before creating a missing temperature baseline; also the delay for temperature calibration. Defaults: 5 seconds for measurements, 10 for powercap calibration and 20 for temperature calibration.</td></tr>
           <tr><td><code>calibration_file</code></td><td>All modes</td><td>Path to the CPU-temperature baseline text file; defaults to <code>/tmp/cores_temperatures.txt</code>. If missing, a baseline is created after <code>sleep_seconds</code>.</td></tr>
-          <tr><td><code>powercap</code></td><td>Standard, over-time</td><td>One Watt limit or a list, e.g. <code>[-1, 15, 20]</code>; defaults to <code>-1</code>. Values must be <code>-1</code> or positive integers; at most 128 unique values. <code>-1</code> leaves existing limits unchanged. The backend attempts to restore applied limits after each cap's measurement.</td></tr>
-          <tr><td><code>powercap_min</code>, <code>powercap_max</code></td><td>Powercap calibration only</td><td>Required positive integer Watt limits. The range is inclusive and must contain fewer than 128 values. Calibration automatically includes an existing-limits baseline labelled <code>-1</code>.</td></tr>
+          <tr><td><code>powercap</code></td><td>Standard, over-time</td><td>One Watt limit or a list, e.g. <code>[-1, 15, 20]</code>; defaults to <code>-1</code>. Values must be <code>-1</code> or positive integers; at most 128 unique values. <code>-1</code> applies the saved per-machine baseline; the first use captures current hardware limits.</td></tr>
+          <tr><td><code>powercap_min</code>, <code>powercap_max</code></td><td>Powercap calibration only</td><td>Required positive integer Watt limits. The range is inclusive and must contain fewer than 128 values. Calibration first applies the saved per-machine baseline labelled <code>-1</code>.</td></tr>
           <tr><td><code>compile_command</code></td><td>Powercap calibration only</td><td>Optional shell command run once before measurements, useful for compiling the workload.</td></tr>
           <tr><td><code>[metrics] select</code></td><td>Standard, over-time, powercap calibration</td><td>Required non-empty list of metric names, or <code>"all"</code>. Calibration defaults to <code>["cpu.Package"]</code> if the table is omitted.</td></tr>
         </tbody></table></div>
@@ -104,11 +104,11 @@ powercap = [-1, 15, 20]
 
 [metrics]
 select = ["system.cores", "system.memory", "cpu.Package", "cpu.Temperature"]</code></pre>
-        <p>This creates one CSV row for every repetition at every cap (15 rows in this example). It waits until CPU temperature is no higher than the calibrated baseline plus <code>variance</code> before each run. Each row includes the run duration and selected, available metrics; see the <a href="metrics.html">metric catalogue</a> for names and units. The baseline value <code>-1</code> does not remove any system power limits.</p>
+        <p>This creates one CSV row for every repetition at every cap (15 rows in this example). It waits until CPU temperature is no higher than the calibrated baseline plus <code>variance</code> before each run. Each row includes the run duration and selected, available metrics; see the <a href="metrics.html">metric catalogue</a> for names and units. The value <code>-1</code> applies GreenMeasurer's saved per-machine RAPL baseline.</p>
 
         <h3>Over-time: samples during one run</h3>
         <pre><code>[measurement]
-mode = "overtime"
+mode = "over-time"
 command = "python3 workload.py --size 100000"
 language = "Python"
 program = "long-workload"
@@ -122,7 +122,7 @@ powercap = 15
 [metrics]
 select = ["system.workload_processes", "system.memory",
           "cpu.Package", "cpu.Temperature"]</code></pre>
-        <p>This creates one CSV row per sampling cycle while the command runs. Here, <code>interval_us = 1000000</code> requests roughly one-second cycles. Temperature is checked after the cap is applied and before the workload starts; subsequent temperature values are sampled during execution. The CSV's <code>Timestamp_ms</code> is elapsed time, and window-energy values cover the interval between samples.</p>
+        <p>This creates one CSV row per sampling cycle while the command runs. Here, <code>interval_us = 1000000</code> requests a one-second pause after each cycle. Temperature is checked after the cap is applied and before the workload starts; subsequent temperature values are sampled during execution. The CSV's <code>Timestamp_us</code> is elapsed time in microseconds, and energy values are counter readings that can wrap or reset.</p>
 
         <h3>Temperature baseline calibration</h3>
         <pre><code>[measurement]
@@ -149,7 +149,7 @@ calibration_file = "temperature.txt"
 
 [metrics]
 select = ["cpu.Package"]</code></pre>
-        <p>This produces a calibration CSV with 3 existing-limits baseline runs (<code>Powercap = -1</code>) and 3 runs for each integer cap from 10 through 20 W. When the CSV includes <code>cpu.Package</code> and <code>Time_ms</code>, GreenMeasurer also invokes the bundled post-processor for an energy/time comparison. Powercap changes affect real hardware and may require elevated permissions; inspect the current limits before and after a run.</p>
+        <p>This produces a calibration CSV with 3 saved-baseline runs (<code>Powercap = -1</code>) and 3 runs for each integer cap from 10 through 20 W. When the CSV includes <code>cpu.Package</code> and <code>Time_ms</code>, GreenMeasurer also invokes the bundled post-processor for an energy/time comparison. Powercap changes affect real hardware and may require elevated permissions; inspect the current limits before and after a run.</p>
 
         <h3>Selecting metrics and adapters</h3>
         <p>Use names listed by <code>./src/main --list-metrics</code>. System metrics use <code>system.*</code>; backend metrics use <code>cpu.*</code> or <code>gpu.*</code>. <code>select = "all"</code> includes all available metrics, so CSV columns can vary by hardware. Metric names and units are documented in the <a href="metrics.html">catalogue</a>.</p>
@@ -162,7 +162,7 @@ name = "demo"
 path = "build/libdemo-metrics.so"</code></pre>
         <p>For a simple C function, <code>[[external_metrics]]</code> asks the generator to compile an adapter. Required fields are <code>name</code>, <code>metric</code>, <code>unit</code>, <code>function</code>, <code>header</code>, <code>sources</code> and <code>return_type</code>. Paths are relative to the TOML file. The function's declared return type and argument types must match its C header:</p>
         <pre><code>[measurement]
-mode = "overtime"
+mode = "over-time"
 command = "sleep 1"
 output = "external-metric.csv"
 interval_us = 10000
@@ -181,7 +181,7 @@ return_type = "int"
 arguments = []
 error_value = -1</code></pre>
         <p><code>return_type</code> and argument <code>type</code> may be <code>"int"</code>, <code>"unsigned int"</code> or <code>"double"</code>. <code>arguments</code> is optional (empty by default); each entry has a type and numeric value, for example <code>arguments = [{ type = "int", value = 5 }, { type = "double", value = 1.5 }]</code>. Optional <code>error_value</code> marks a return value as a failed reading. Optional <code>include_dirs</code> and <code>libraries</code> add C include directories and library names (without <code>-l</code>) to the build. The generator creates the configured executable and adapter files in the output directory; the selected external value is added as a CSV column. See the <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/src/tests/fixtures/custom_metric">custom metric fixture</a> for a complete example.</p>
-        <p>Use <code>python3 scripts/validate_config.py path/to/config.toml</code> to check a file before generation. Generate an executable with <code>./src/main --config path/to/file.toml --directory build-dir</code>, then run <code>./build-dir/greenmeasurer</code>. Generation compiles the configuration but does not execute the workload. Output and baseline paths resolve from the run's working directory; adapter, header and source paths resolve from the TOML's directory. Create any parent directories needed by your output paths before running.</p>
+        <p>Use <code>python3 scripts/validate_config.py path/to/config.toml</code> to check a file before generation. Generate an executable with <code>./src/main --config path/to/file.toml --directory build-dir</code>, then run <code>./build-dir/greenmeasurer</code>. On Intel, use the privileges needed to apply and save the RAPL baseline. Generation compiles the configuration but does not execute the workload. Output and baseline paths resolve from the run's working directory; adapter, header and source paths resolve from the TOML's directory. Create any parent directories needed by your output paths before running.</p>
       </section>
       <section id="troubleshooting"><h2>When a metric is missing</h2>
         <p>Run <code>./src/main --list-metrics</code> to inspect compiled plugins. To see runtime detection details, run a generated executable with <code>GREENMEASURER_VERBOSE_BACKENDS=1</code>. Check backend build dependencies, hardware support and permissions.</p>

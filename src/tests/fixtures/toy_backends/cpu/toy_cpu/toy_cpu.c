@@ -91,6 +91,15 @@ int energy_backend_sample_next(int core) {
     return result;
 }
 
+double energy_backend_read_counter(size_t metric_index, int core, pid_t pid) {
+    (void)core;
+    (void)pid;
+    if (!window_valid || metric_index >= energy_metric_function_map.count ||
+        toy_cpu_metric_functions[metric_index].read != toy_cpu_metric_energy)
+        return METRIC_NOT_SUPPORTED;
+    return TOY_CPU_WATTS * ((double)window_end.tv_sec + (double)window_end.tv_nsec / 1e9);
+}
+
 static double toy_cpu_metric_energy(int core, pid_t pid) {
     (void)core;
     (void)pid;

@@ -62,12 +62,12 @@ typedef struct {
     const char *name;
     const char *path;
     GreenMetricAdapterHandle handle;
+    int output_format;
 } ConfiguredAdapter;
 
 typedef struct {
     size_t adapter_index;
     size_t metric_index;
-    double *values;
 } ConfiguredExternalMetric;
 
 static ConfiguredAdapter *configured_adapters;
@@ -76,8 +76,6 @@ static ConfiguredExternalMetric *configured_external_metrics;
 static size_t configured_external_count;
 
 static void cleanup_configured_metrics(void) {
-    for (size_t i = 0; i < configured_external_count; i++)
-        free(configured_external_metrics[i].values);
     for (size_t i = 0; i < configured_adapter_count; i++)
         green_metric_adapter_close(&configured_adapters[i].handle);
     free(configured_external_metrics);
@@ -195,6 +193,20 @@ static int configure_overtime_metrics(int argc, char **argv) {
                 unavailable_external = 1;
             }
             i += 3;
+        } else if (!strcmp(argv[i], "--configured-format")) {
+            if (i + 2 >= argc) return fprintf(stderr, "[ERROR] Missing metric format arguments.\n"), -1;
+            int format;
+            if (!strcmp(argv[i + 2], "int") || !strcmp(argv[i + 2], "unsigned int")) format = 1;
+            else if (!strcmp(argv[i + 2], "float")) format = 2;
+            else if (!strcmp(argv[i + 2], "double")) format = 3;
+            else return fprintf(stderr, "[ERROR] Unknown metric format '%s'.\n", argv[i + 2]), -1;
+            for (size_t j = 0; j < configured_adapter_count; j++) {
+                if (!strcmp(configured_adapters[j].name, argv[i + 1])) {
+                    configured_adapters[j].output_format = format;
+                    break;
+                }
+            }
+            i += 2;
         } else if (!strcmp(argv[i], "--configured-backend")) {
             if (++i >= argc) return fprintf(stderr, "[ERROR] Missing backend metric.\n"), -1;
             const char **names = realloc(configured_backend_names,
@@ -269,9 +281,9 @@ static int select_configured_backend_metrics(void) {
     return 0;
 }
 
-static int read_configured_external(const ConfiguredExternalMetric *metric, double *value) {
+static int read_configured_external(const ConfiguredExternalMetric *metric, GreenMetricValue *value) {
     ConfiguredAdapter *adapter = &configured_adapters[metric->adapter_index];
-    if (green_metric_adapter_read(&adapter->handle, metric->metric_index, value) == 0) return 0;
+    if (green_metric_adapter_read_value(&adapter->handle, metric->metric_index, value) == 0) return 0;
     fprintf(stderr, "[ERROR] Reading configured metric 'external.%s.%s' failed; "
             "check the adapter, library and runtime permissions.\n",
             adapter->name, adapter->handle.adapter->metrics[metric->metric_index].name);
@@ -332,7 +344,7 @@ static void skip_configured_backend_type(EnergyBackendType type) {
 static int probe_configured_external(void) {
     size_t i = 0;
     while (i < configured_external_count) {
-        double value;
+        GreenMetricValue value;
         if (read_configured_external(&configured_external_metrics[i], &value) == 0) {
             i++;
             continue;
@@ -349,9 +361,34 @@ static int probe_configured_external(void) {
     return 0;
 }
 
-static void write_external_metric_value(FILE *fp, double value) {
-    if (isfinite(value)) fprintf(fp, "%.18g", value);
-    else fputs("NOT_SUPPORTED", fp);
+static void write_external_metric_value(FILE *fp, const ConfiguredExternalMetric *metric,
+                                        GreenMetricValue value) {
+    if (value.type == GREEN_METRIC_INVALID) {
+        fputs("NOT_SUPPORTED", fp);
+        return;
+    }
+    if (value.type == GREEN_METRIC_INT) {
+        fprintf(fp, "%d", value.value.integer);
+        return;
+    }
+    if (value.type == GREEN_METRIC_UNSIGNED_INT) {
+        fprintf(fp, "%u", value.value.unsigned_integer);
+        return;
+    }
+    int format = configured_adapters[metric->adapter_index].output_format;
+    if (!format && configured_adapters[metric->adapter_index].handle.read_typed)
+        format = value.type == GREEN_METRIC_FLOAT ? 2 : 3;
+    double number = value.type == GREEN_METRIC_FLOAT ? value.value.real : value.value.double_real;
+    if (format == 1) {
+        fprintf(fp, "%.0f", number);
+    } else if (format == 2 || format == 3) {
+        char text[64];
+        snprintf(text, sizeof(text), format == 2 ? "%.9g" : "%.18g", number);
+        fputs(text, fp);
+        if (!strpbrk(text, ".eE")) fputs(".0", fp);
+    } else {
+        fprintf(fp, "%.18g", number);
+    }
 }
 
 static void configured_backend_failure_guidance(EnergyBackendType type) {
@@ -476,7 +513,7 @@ static double get_temperature_metric(EnergyBackendType type, unsigned int flag) 
 }
 
 void energy_backend_write_csv_header(FILE *fp, int overtime) {
-    fprintf(fp, "Language,Program,Powercap,%s", overtime ? "Timestamp_ms" : "Time_ms");
+    fprintf(fp, "Language,Program,Powercap,%s", overtime ? "Timestamp_us" : "Time_ms");
     if (configured_overtime) {
         const char *names[] = {"CPU_Memory_KB", "Cores",
             overtime ? "Workload_Processes" : "Workload_Processes_Peak",
@@ -1559,9 +1596,9 @@ static void show_help(const char *bin_name) {
     printf("  %s --standard -command \"<cmd>\" -language <lang> -program <prog> -n_times <N> -variance <V> -time_out_limit <hours> -sleep_time <sec> -powercap <W> [-calib-file <path>] [-output <path>]\n", bin_name);
     printf("      Runs standard aggregate energy measurements.\n\n");
 
-    printf("  %s --overtime -command \"<cmd>\" -language <lang> -program <prog> [-interval-us <microseconds>] [-powercap <W>] [-variance <V>] [-sleep-secs <sec>] [-calib-file <path>] [-output <path>]\n", bin_name);
+    printf("  %s --over-time -command \"<cmd>\" -language <lang> -program <prog> [-interval-us <microseconds>] [-powercap <W>] [-variance <V>] [-sleep-secs <sec>] [-calib-file <path>] [-output <path>]\n", bin_name);
     printf("      Samples metrics sequentially and dumps interval values to a CSV when the command ends.\n\n");
-    printf("  %s --csv-header | --overtime-csv-header\n", bin_name);
+    printf("  %s --csv-header | --over-time-csv-header\n", bin_name);
     printf("      Prints the selected backends' CSV header for the requested measurement mode.\n\n");
     printf("  %s --config <file.toml> [measurement options]\n", bin_name);
     printf("      Runs the supported subset of TOML configurations; see README for limitations.\n\n");
@@ -1665,18 +1702,18 @@ int main(int argc, char **argv) {
 
     configured_standard = argc >= 2 && !strcmp(argv[1], "--configured-standard");
     configured_overtime = configured_standard ||
-        (argc >= 2 && !strcmp(argv[1], "--configured-overtime"));
+        (argc >= 2 && !strcmp(argv[1], "--configured-over-time"));
     if (configured_overtime && configure_overtime_metrics(argc, argv) != 0) return 1;
     header_only_mode = argc >= 2 &&
         (!strcmp(argv[1], "--csv-header") ||
-         !strcmp(argv[1], "--overtime-csv-header"));
+         !strcmp(argv[1], "--over-time-csv-header"));
     init_backends();
     if (!header_only_mode && require_cpu_temperature(NULL) != 0) return 1;
     if (configured_standard) return configured_standard_run(argc, argv);
     if (argc >= 2 && (!strcmp(argv[1], "--csv-header") ||
-                      !strcmp(argv[1], "--overtime-csv-header"))) {
+                      !strcmp(argv[1], "--over-time-csv-header"))) {
         energy_backend_write_csv_header(stdout,
-            strcmp(argv[1], "--overtime-csv-header") == 0);
+            strcmp(argv[1], "--over-time-csv-header") == 0);
         return 0;
     }
 
@@ -1784,7 +1821,7 @@ int main(int argc, char **argv) {
     /* ========================================================
        3. MODE: OVER-TIME
        ======================================================== */
-    if (argc >= 2 && (!strcmp(argv[1], "--overtime") || !strcmp(argv[1], "--over-time") || configured_overtime)) {
+    if (argc >= 2 && (!strcmp(argv[1], "--over-time") || configured_overtime)) {
         char command[500] = "", language[128] = "", program[128] = "";
         char ot_csv[512] = "measurements_ot.csv";
         int powercaps[MAX_POWERCAPS] = {-1}, powercap_count = 1, variance = 5, sleep_time = 5;
@@ -1798,6 +1835,9 @@ int main(int argc, char **argv) {
                 continue;
             }
             else if (!strcmp(argv[i], "--configured-adapter")) {
+                i += 2;
+            }
+            else if (!strcmp(argv[i], "--configured-format")) {
                 i += 2;
             }
             else if (!strcmp(argv[i], "--configured-external")) {
@@ -1845,11 +1885,11 @@ int main(int argc, char **argv) {
         }
 
         if (command[0] == '\0') {
-            fprintf(stderr, "[ERROR] --overtime requires a workload command.\n");
+            fprintf(stderr, "[ERROR] --over-time requires a workload command.\n");
             return 1;
         }
         if (variance < 0) {
-            fprintf(stderr, "[ERROR] --overtime variance must be non-negative.\n");
+            fprintf(stderr, "[ERROR] --over-time variance must be non-negative.\n");
             return 1;
         }
         if (access(calib_file, F_OK) != 0) {
@@ -1867,18 +1907,23 @@ int main(int argc, char **argv) {
                 return 1;
             }
         }
-        /* Every applied limit is restored as soon as its measurement ends. */
+        /* Restore the saved baseline or each applied limit as soon as its measurement ends. */
         int command_status = 0;
         for (int c = 0; c < powercap_count && command_status == 0; c++) {
             int powercap = powercaps[c];
-            if (powercap > 0) {
+            int apply_powercap = powercap > 0 ||
+                (powercap == -1 && active_cpu_backend && active_cpu_backend->set_powercap &&
+                 active_cpu_backend->destroy_powercap);
+            int powercap_active = 0;
+            if (apply_powercap) {
                 if (active_cpu_backend->set_powercap(powercap) != 0) {
-                    fprintf(stderr, "[ERROR] Failed to set powercap to %d W; over-time measurement aborted.\n",
+                    fprintf(stderr, "[ERROR] Failed to apply powercap state for %d W; over-time measurement aborted.\n",
                             powercap);
                     if (active_cpu_backend->destroy_powercap() != 0)
                         fprintf(stderr, "[ERROR] Failed to restore powercap after setup failure.\n");
                     return 1;
                 }
+                powercap_active = 1;
             }
 
             if (wait_for_cpu_temperature(ref_temp, variance, "Over-time", NULL) != 0)
@@ -1895,9 +1940,9 @@ int main(int argc, char **argv) {
             if (command_status == 0)
                 command_status = ot_run(command, &ctx, interval_us);
 
-            if (powercap > 0) {
+            if (powercap_active) {
                 if (active_cpu_backend->destroy_powercap() != 0) {
-                    fprintf(stderr, "[ERROR] Failed to destroy the RAPL powercap context.\n");
+                    fprintf(stderr, "[ERROR] Failed to restore the RAPL powercap state.\n");
                     command_status = -1;
                 }
             }

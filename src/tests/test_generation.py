@@ -1,4 +1,5 @@
 import csv
+import ctypes
 import os
 import subprocess
 import sys
@@ -66,7 +67,7 @@ class GenerationTest(unittest.TestCase):
         (self.directory / "count.c").write_text(
             '#include "count.h"\nint get_count(void) { return 12; }\n', encoding="utf-8",
         )
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 self.build = self.directory / f"all-{mode}"
                 self.config.write_text(
@@ -118,16 +119,19 @@ class GenerationTest(unittest.TestCase):
                 self.assertTrue(all(len(row) == len(columns) for row in rows))
                 self.assertTrue(all(float(row[columns.index("external.source.Count_count")]) == 12
                                     for row in rows[1:]))
+                self.assertTrue(all(row[columns.index("external.source.Count_count")] == "12"
+                                    for row in rows[1:]))
                 self.assertTrue(all(float(row[columns.index("gpu.Power_W")]) == 5
                                     for row in rows[1:]))
                 self.csv.unlink()
 
     def test_new_metric_examples_emit_changing_system_uptime(self):
         config_directory = ROOT / "configurations" / "new-metrics"
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 self.build = self.directory / f"new-metric-{mode}"
-                config = config_directory / f"{mode}.toml"
+                config_name = "overtime" if mode == "over-time" else mode
+                config = config_directory / f"{config_name}.toml"
                 result = subprocess.run(
                     [sys.executable, str(GENERATOR), str(config), "--directory", str(self.build)],
                     text=True, capture_output=True, env=self.environment, timeout=60,
@@ -138,7 +142,8 @@ class GenerationTest(unittest.TestCase):
                     env=self.environment, cwd=self.directory, timeout=15,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
-                output = self.directory / f"greenmeasurer-new-metric-{mode}.csv"
+                output_mode = "overtime" if mode == "over-time" else mode
+                output = self.directory / f"greenmeasurer-new-metric-{output_mode}.csv"
                 with output.open(newline="", encoding="utf-8") as file:
                     rows = list(csv.reader(file, skipinitialspace=True))
                 column = rows[0].index("external.system.UptimeSeconds_s")
@@ -154,7 +159,7 @@ class GenerationTest(unittest.TestCase):
                  str(ROOT / "src" / "tests" / "configured_metric_adapter.c"),
                  "-o", str(path)], check=True, capture_output=True, text=True,
             )
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 if not missing.exists():
                     missing.touch()
@@ -193,7 +198,7 @@ class GenerationTest(unittest.TestCase):
              str(ROOT / "src" / "tests" / "fake_backend.c"), "-o", str(plugin)],
             check=True, capture_output=True, text=True,
         )
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 self.build = self.directory / f"all-backend-failure-{mode}"
                 self.config.write_text(
@@ -223,7 +228,7 @@ class GenerationTest(unittest.TestCase):
         )
         (self.directory / "broken.h").write_text("int actual(void);\n", encoding="utf-8")
         (self.directory / "broken.c").write_text("int actual(void) { return 1; }\n", encoding="utf-8")
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 self.build = self.directory / f"all-failures-{mode}"
                 self.config.write_text(
@@ -258,9 +263,9 @@ class GenerationTest(unittest.TestCase):
         subprocess.run(["make", "-C", str(ROOT / "src"), "main"], check=True,
                        capture_output=True, text=True)
         marker = self.directory / "workload-ran"
-        for mode in ("--standard", "--overtime", "--configured-standard",
-                     "--configured-overtime", "--temperature-calibration",
-                     "--powercap-calibration", "--csv-header", "--overtime-csv-header"):
+        for mode in ("--standard", "--over-time", "--configured-standard",
+                     "--configured-over-time", "--temperature-calibration",
+                     "--powercap-calibration", "--csv-header", "--over-time-csv-header"):
             with self.subTest(mode=mode):
                 result = subprocess.run(
                     [str(ROOT / "src" / "main"), mode, "-command", f"touch '{marker}'",
@@ -347,7 +352,7 @@ class GenerationTest(unittest.TestCase):
     def test_batch_generation_then_execution(self):
         batch = self.directory / "batch"
         configs = []
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             config = self.directory / f"{mode}.toml"
             output = self.directory / f"{mode}.csv"
             config.write_text(
@@ -363,12 +368,12 @@ class GenerationTest(unittest.TestCase):
                                 capture_output=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.directory / "standard.csv").exists())
-        self.assertFalse((self.directory / "overtime.csv").exists())
+        self.assertFalse((self.directory / "over-time.csv").exists())
         result = subprocess.run(["bash", str(script), "run", str(batch)],
                                 env=self.environment, text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.directory / "standard.csv").exists())
-        self.assertTrue((self.directory / "overtime.csv").exists())
+        self.assertTrue((self.directory / "over-time.csv").exists())
 
         invalid_batch = self.directory / "incomplete"
         invalid = self.directory / "invalid.toml"
@@ -389,7 +394,7 @@ class GenerationTest(unittest.TestCase):
         self.assertIn("No compiled executable", result.stderr)
 
     def external_config(self, function="get_count", arguments="[]", return_type="int",
-                        selection='"system.cores", "external.count.Processes"', mode="overtime"):
+                        selection='"system.cores", "external.count.Processes"', mode="over-time"):
         self.config.write_text(
             f'[measurement]\nmode="{mode}"\ncommand="sleep 0.06"\n'
             f'output="{self.csv}"\ncalibration_file="{self.calibration}"\n'
@@ -408,7 +413,7 @@ class GenerationTest(unittest.TestCase):
             '#include "count.h"\nint get_count(int offset) { return 12 + offset; }\n',
             encoding="utf-8",
         )
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 self.build = self.directory / f"generated-{mode}"
                 self.external_config(arguments='[{type="int", value=3}]', mode=mode)
@@ -427,6 +432,179 @@ class GenerationTest(unittest.TestCase):
                 self.assertTrue(all(float(row[-1]) == 15 for row in rows[1:]))
                 self.csv.unlink()
 
+    def test_external_numeric_types_and_csv_format_in_both_modes(self):
+        class NumericValue(ctypes.Union):
+            _fields_ = [("integer", ctypes.c_int), ("unsigned_integer", ctypes.c_uint),
+                        ("real", ctypes.c_float), ("double_real", ctypes.c_double)]
+
+        class MetricValue(ctypes.Structure):
+            _fields_ = [("type", ctypes.c_int), ("value", NumericValue)]
+
+        for return_type, result_value, expected in (
+            ("int", "-7", "-7"),
+            ("unsigned int", "7u", "7"),
+            ("float", "1.5f", "1.5"),
+            ("double", "1.0", "1.0"),
+        ):
+            (self.directory / "count.h").write_text(
+                f"{return_type} get_count(void);\n", encoding="utf-8",
+            )
+            (self.directory / "count.c").write_text(
+                f'#include "count.h"\n{return_type} get_count(void) '
+                f'{{ return {result_value}; }}\n', encoding="utf-8",
+            )
+            for mode in ("standard", "over-time"):
+                with self.subTest(return_type=return_type, mode=mode):
+                    self.build = self.directory / f"format-{return_type.replace(' ', '-')}-{mode}"
+                    self.external_config(return_type=return_type, mode=mode)
+                    result = self.generate()
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    adapter = ctypes.CDLL(str(self.build / "count_adapter.so"))
+                    read = adapter.greenmeasurer_metric_read_typed
+                    read.argtypes = [ctypes.c_size_t, ctypes.POINTER(MetricValue)]
+                    read.restype = ctypes.c_int
+                    value = MetricValue()
+                    self.assertEqual(read(0, ctypes.byref(value)), 0)
+                    type_id, field = {
+                        "int": (1, "integer"), "unsigned int": (2, "unsigned_integer"),
+                        "float": (3, "real"), "double": (4, "double_real"),
+                    }[return_type]
+                    self.assertEqual(value.type, type_id)
+                    self.assertEqual(getattr(value.value, field), float(expected))
+                    result = subprocess.run(
+                        [str(self.build / "greenmeasurer")], cwd=self.directory,
+                        env=self.environment, text=True, capture_output=True, timeout=15,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    with self.csv.open(newline="", encoding="utf-8") as file:
+                        rows = list(csv.reader(file, skipinitialspace=True))
+                    self.assertTrue(rows[1:])
+                    self.assertTrue(all(row[-1] == expected for row in rows[1:]))
+                    self.csv.unlink()
+
+    def test_engine_uses_typed_reader_in_both_modes(self):
+        source = self.directory / "typed.c"
+        source.write_text(
+            '#include "metric-adapter.h"\n'
+            'static const GreenMetricDescriptor metrics[] = {{"Value", "count"}};\n'
+            'static int old_read(size_t i, double *value) { (void)i; (void)value; return -1; }\n'
+            'const GreenMetricAdapter greenmeasurer_metric_adapter = {\n'
+            '  .abi_version = GREENMEASURER_METRIC_ADAPTER_ABI, .metrics = metrics,\n'
+            '  .metric_count = 1, .read = old_read\n};\n'
+            'int greenmeasurer_metric_read_typed(size_t i, GreenMetricValue *value) {\n'
+            '  if (i != 0 || !value) return -1;\n'
+            '  value->type = GREEN_METRIC_UNSIGNED_INT;\n'
+            '  value->value.unsigned_integer = 4294967295u;\n'
+            '  return 0;\n}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["cc", "-shared", "-fPIC", "-I", str(ROOT / "src" / "include"),
+                        str(source), "-o", str(self.directory / "typed.so")],
+                       check=True, capture_output=True)
+        for mode in ("standard", "over-time"):
+            with self.subTest(mode=mode):
+                self.build = self.directory / f"typed-{mode}"
+                self.config.write_text(
+                    f'[measurement]\nmode="{mode}"\ncommand="sleep 0.06"\n'
+                    f'output="{self.csv}"\ncalibration_file="{self.calibration}"\n'
+                    'sleep_seconds=0\nvariance=100\n[metrics]\n'
+                    'select=["external.demo.Value"]\n'
+                    '[[adapters]]\nname="demo"\npath="typed.so"\n',
+                    encoding="utf-8",
+                )
+                result = self.generate()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                result = subprocess.run(
+                    [str(self.build / "greenmeasurer")], cwd=self.directory,
+                    env=self.environment, text=True, capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                with self.csv.open(newline="", encoding="utf-8") as file:
+                    rows = list(csv.reader(file, skipinitialspace=True))
+                self.assertTrue(rows[1:])
+                self.assertTrue(all(row[-1] == "4294967295" for row in rows[1:]))
+                self.csv.unlink()
+
+    def test_unknown_types_warn_and_default_to_double_with_signature_check(self):
+        (self.directory / "count.h").write_text(
+            "double get_count(double value);\n", encoding="utf-8",
+        )
+        (self.directory / "count.c").write_text(
+            '#include "count.h"\ndouble get_count(double value) { return value; }\n',
+            encoding="utf-8",
+        )
+        self.external_config(return_type="douuble",
+                             arguments='[{type="triple", value=2.0}]', mode="standard")
+        result = self.generate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("return_type 'douuble'; using double", result.stderr)
+        self.assertIn("argument type 'triple'; using double", result.stderr)
+        result = subprocess.run(
+            [str(self.build / "greenmeasurer")], cwd=self.directory,
+            env=self.environment, text=True, capture_output=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with self.csv.open(newline="", encoding="utf-8") as file:
+            rows = list(csv.reader(file, skipinitialspace=True))
+        self.assertEqual(rows[1][-1], "2.0")
+
+        (self.directory / "count.h").write_text("float get_count(void);\n", encoding="utf-8")
+        (self.directory / "count.c").write_text(
+            '#include "count.h"\nfloat get_count(void) { return 1.0f; }\n', encoding="utf-8",
+        )
+        self.build = self.directory / "mismatch"
+        self.external_config(return_type="douuble", selection='"external.count.Processes"')
+        result = self.generate()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("signature does not match", result.stderr)
+
+    def test_float_arguments_and_error_value(self):
+        (self.directory / "count.h").write_text(
+            "float get_count(float value);\n", encoding="utf-8",
+        )
+        (self.directory / "count.c").write_text(
+            '#include "count.h"\nfloat get_count(float value) '
+            '{ static int reads; return reads++ ? 0.1f : value; }\n', encoding="utf-8",
+        )
+        self.external_config(return_type="float",
+                             arguments='[{type="float", value=2.0}]')
+        self.config.write_text(self.config.read_text(encoding="utf-8")
+                               .replace("error_value=-1", "error_value=0.1"),
+                               encoding="utf-8")
+        result = self.generate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run(
+            [str(self.build / "greenmeasurer")], cwd=self.directory,
+            env=self.environment, text=True, capture_output=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with self.csv.open(newline="", encoding="utf-8") as file:
+            rows = list(csv.reader(file, skipinitialspace=True))
+        self.assertTrue(rows[1:])
+        self.assertTrue(all(row[-1] == "NOT_SUPPORTED" for row in rows[1:]))
+
+    def test_float_argument_and_error_value_reject_out_of_range(self):
+        (self.directory / "count.h").write_text(
+            "float get_count(float value);\n", encoding="utf-8",
+        )
+        (self.directory / "count.c").write_text(
+            '#include "count.h"\nfloat get_count(float value) { return value; }\n',
+            encoding="utf-8",
+        )
+        for field in ("argument", "error_value"):
+            with self.subTest(field=field):
+                self.external_config(return_type="float",
+                                     arguments='[{type="float", value=1e100}]'
+                                     if field == "argument"
+                                     else '[{type="float", value=1.0}]')
+                if field == "error_value":
+                    self.config.write_text(self.config.read_text(encoding="utf-8")
+                                           .replace("error_value=-1", "error_value=1e100"),
+                                           encoding="utf-8")
+                result = self.generate()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("range", result.stderr)
+
     def test_external_functions_have_separate_libraries_and_name_aliases(self):
         (self.directory / "count.h").write_text(
             "int first_count(void);\nint second_count(void);\n", encoding="utf-8",
@@ -436,7 +614,7 @@ class GenerationTest(unittest.TestCase):
             'int first_count(void) { return 12; }\n'
             'int second_count(void) { return 34; }\n', encoding="utf-8",
         )
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 self.build = self.directory / f"separate-{mode}"
                 self.config.write_text(
@@ -525,7 +703,7 @@ class GenerationTest(unittest.TestCase):
         (self.directory / "count.c").write_text(
             '#include "count.h"\nint get_count(void) { return 12; }\n', encoding="utf-8",
         )
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 self.build = self.directory / f"missing-library-{mode}"
                 self.external_config(mode=mode)
@@ -627,7 +805,7 @@ class GenerationTest(unittest.TestCase):
             check=True, capture_output=True, text=True,
         )
         self.config.write_text(
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.06"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.06"\n'
             f'language="test"\nprogram="fixture"\noutput="{self.csv}"\n'
             f'calibration_file="{self.calibration}"\ninterval_us=10000\n'
             '[metrics]\nselect=["system.cores", "external.demo.RunningProcesses"]\n'
@@ -649,7 +827,7 @@ class GenerationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with self.csv.open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
-        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_ms",
+        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_us",
                                   "Cores", "external.demo.RunningProcesses_count"])
         self.assertGreaterEqual(len(rows), 3)
         self.assertTrue(all(len(row) == len(rows[0]) for row in rows))
@@ -740,7 +918,7 @@ class GenerationTest(unittest.TestCase):
                 check=True, capture_output=True, text=True,
             )
         self.config.write_text(
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.15"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.15"\n'
             f'language="test"\nprogram="fixture"\noutput="{self.csv}"\n'
             f'calibration_file="{self.calibration}"\ninterval_us=10000\nvariance=100\n'
             '[metrics]\nselect=["cpu.toy_cpu_metric_energy", '
@@ -754,13 +932,14 @@ class GenerationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with self.csv.open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
-        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_ms",
+        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_us",
                                   "cpu.Energy_J", "gpu.Energy_J", "gpu.Power_W"])
         self.assertGreaterEqual(len(rows), 3)
         self.assertTrue(all(len(row) == len(rows[0]) for row in rows))
-        elapsed = float(rows[-1][3]) / 1000
-        cpu = sum(float(row[4]) for row in rows[1:])
-        gpu = sum(float(row[5]) for row in rows[1:])
+        self.assertGreater(float(rows[-1][3]), 100000)
+        elapsed = (float(rows[-1][3]) - float(rows[1][3])) / 1000000
+        cpu = float(rows[-1][4]) - float(rows[1][4])
+        gpu = float(rows[-1][5]) - float(rows[1][5])
         self.assertAlmostEqual(cpu, 10 * elapsed, delta=0.1)
         self.assertAlmostEqual(gpu, 5 * elapsed, delta=0.05)
         self.assertTrue(all(float(row[6]) == 5 for row in rows[1:]))
@@ -802,7 +981,7 @@ class GenerationTest(unittest.TestCase):
 
     def test_existing_directory_is_not_overwritten(self):
         self.config.write_text(
-            '[measurement]\nmode="overtime"\ncommand="true"\n'
+            '[measurement]\nmode="over-time"\ncommand="true"\n'
             '[metrics]\nselect=["system.cores"]\n', encoding="utf-8",
         )
         self.build.mkdir()

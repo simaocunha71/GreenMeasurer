@@ -3,13 +3,13 @@ mode = "standard"
 command = "python3 Languages/Python/Fibonacci/fibonacci.py 42"
 language = "Python"
 program = "fibonacci-42"
-output = "greenmeasurer-test-standard.csv"
-repetitions = 3
+output = "paper_data/standard.csv"
+repetitions = 10
 timeout_hours = 4
 sleep_seconds = 60
 variance = 5
-powercap = -1
-calibration_file = "greenmeasurer-test-temperature.txt"
+powercap = [-1, 5]
+calibration_file = "paper_data/temperature-baseline.txt"
 
 [metrics]
-select = ["system.cores", "cpu.Package", "cpu.Temperature"]
+select = "all"

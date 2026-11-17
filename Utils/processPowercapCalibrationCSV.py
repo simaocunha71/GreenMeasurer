@@ -154,7 +154,7 @@ def process_csv(filename):
     if results:
         lowest_powercap = min(results, key=lambda k: results[k]['Package'])
         lowest_value    = results[lowest_powercap]['Package']
-        label = "baseline (existing system limits)" if lowest_powercap == -1 else f"{lowest_powercap} W"
+        label = "saved baseline" if lowest_powercap == -1 else f"{lowest_powercap} W"
         print(f"{'Optimal Energy Powercap (Lowest Package):':<45} {label} (Average: {lowest_value:.2f} J)")
     print(f"{'=' * sum(col_widths)}\n")
 

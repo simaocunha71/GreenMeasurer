@@ -23,6 +23,7 @@ int green_metric_adapter_open(GreenMetricAdapterHandle *handle, const char *path
     }
     handle->handle = NULL;
     handle->adapter = NULL;
+    handle->read_typed = NULL;
     void *library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!library) {
         fprintf(stderr, "[ERROR] Failed to load metric adapter '%s': %s\n", path, dlerror());
@@ -61,6 +62,30 @@ int green_metric_adapter_open(GreenMetricAdapterHandle *handle, const char *path
     }
     handle->handle = library;
     handle->adapter = adapter;
+    handle->read_typed = dlsym(library, GREENMEASURER_METRIC_TYPED_READ_SYMBOL);
+    return 0;
+}
+
+int green_metric_adapter_read_value(const GreenMetricAdapterHandle *handle, size_t index,
+                                    GreenMetricValue *value) {
+    if (!handle || !handle->adapter || !value || index >= handle->adapter->metric_count) {
+        fprintf(stderr, "[ERROR] Invalid metric adapter read request.\n");
+        return -1;
+    }
+    value->type = GREEN_METRIC_INVALID;
+    if (handle->read_typed) {
+        if (handle->read_typed(index, value) == 0 &&
+            (value->type == GREEN_METRIC_INT || value->type == GREEN_METRIC_UNSIGNED_INT ||
+             (value->type == GREEN_METRIC_FLOAT && isfinite(value->value.real)) ||
+             (value->type == GREEN_METRIC_DOUBLE && isfinite(value->value.double_real))))
+            return 0;
+        value->type = GREEN_METRIC_INVALID;
+        fprintf(stderr, "[ERROR] Failed to read external metric '%s'.\n",
+                handle->adapter->metrics[index].name);
+        return -1;
+    }
+    if (green_metric_adapter_read(handle, index, &value->value.double_real) != 0) return -1;
+    value->type = GREEN_METRIC_DOUBLE;
     return 0;
 }
 
@@ -86,4 +111,5 @@ void green_metric_adapter_close(GreenMetricAdapterHandle *handle) {
     }
     handle->handle = NULL;
     handle->adapter = NULL;
+    handle->read_typed = NULL;
 }

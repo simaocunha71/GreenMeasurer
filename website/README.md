@@ -8,6 +8,8 @@ The website is a dependency-free static site:
 - `metrics.html`: metric names, reading functions and sources.
 - `reference.html`: backend callbacks, metric definitions and developer tools.
 - `styles.css`, `favicon.svg` and `logo.svg`: shared presentation and assets.
+- `architecture.drawio.png` and `diagram.drawio.png`: workflow and framework
+  diagrams, copied from the corresponding files in `docs/`.
 
 The documentation describes the current Linux implementation. macOS and
 Windows are not currently supported; adding the shared interfaces alone does
@@ -23,7 +25,9 @@ python3 -m http.server 8000 --directory website
 ```
 
 Visit `http://localhost:8000`. No JavaScript, build step or package manager is
-required. Copy the complete directory to a static host or GitHub Pages.
+required. Copy the complete directory to a static host or GitHub Pages. The stylesheet
+URL includes a version query string because static hosts may cache CSS for a
+long time; change its version in every HTML page whenever `styles.css` changes.
 
 ## Maintenance
 
@@ -31,6 +35,8 @@ Update the guide and catalogue when the TOML schema, modes, metrics or
 hardware behavior change. Update the backend API reference when callback
 contracts, extension mechanisms or build behavior change. Check the actual
 source and hardware validation status before documenting powercap behavior;
-`-1` leaves existing limits unchanged.
+`-1` applies the saved per-machine RAPL baseline.
+When updating diagrams, refresh the PNG files in both `docs/` and `website/`
+before packaging the site.
 Keep the authors on the overview and the submission and acknowledgements in
 each page footer consistent when the paper details change.

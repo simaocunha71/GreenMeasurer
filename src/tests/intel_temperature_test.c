@@ -74,6 +74,18 @@ int __wrap_sensors_get_value(
 }
 
 int main(void) {
+    energy_units = 0.5;
+    energy_units_valid = 1;
+    package_after = 200;
+    core_after = 100;
+    dram_after = 50;
+    package_after_valid = core_after_valid = dram_after_valid = 1;
+    assert(energy_backend_read_counter(0, 0, 0) == 100.0);
+    assert(energy_backend_read_counter(1, 0, 0) == 50.0);
+    assert(energy_backend_read_counter(2, 0, 0) == 25.0);
+    assert(energy_backend_read_counter(3, 0, 0) == METRIC_NOT_SUPPORTED);
+    core_after_valid = 0;
+    assert(energy_backend_read_counter(1, 0, 0) == METRIC_NOT_SUPPORTED);
     assert(intel_get_temperature(0) == 55.0f);
     assert(intel_get_temperature(0) == 55.0f);
     assert(init_calls == 1);

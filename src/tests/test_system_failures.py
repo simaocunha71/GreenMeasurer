@@ -55,7 +55,7 @@ class SystemFailureTest(unittest.TestCase):
         args = [str(self.binary), f"--configured-{mode}", "-command", "sleep 0.18",
                 "-output", str(output), "-calib-file", str(self.calibration),
                 "-variance", "100", "-sleep-secs", "0"]
-        if mode == "overtime":
+        if mode == "over-time":
             args.extend(["-interval-us", "10000"])
         elif repetitions > 1:
             args.extend(["-n_times", str(repetitions)])
@@ -70,7 +70,7 @@ class SystemFailureTest(unittest.TestCase):
         return result, rows
 
     def test_preflight_skips_unavailable_system_metric(self):
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             for failure, metric in (("frequency-preflight", "system.core_frequency"),
                                     ("running-preflight", "system.running_processes")):
                 with self.subTest(mode=mode, failure=failure):
@@ -85,7 +85,7 @@ class SystemFailureTest(unittest.TestCase):
                     self.assertFalse(rows)
 
     def test_failed_runtime_samples_preserve_schema_and_invalidate_aggregates(self):
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             for failure, metric in (("frequency-runtime", "system.core_frequency"),
                                     ("running-runtime", "system.running_processes")):
                 with self.subTest(mode=mode, failure=failure):
@@ -96,15 +96,15 @@ class SystemFailureTest(unittest.TestCase):
                     if failure == "frequency-runtime":
                         self.assertEqual(rows[-1][-2], "NOT_SUPPORTED")
                         self.assertEqual(float(rows[-1][-1]), 1001)
-                        if mode == "overtime":
+                        if mode == "over-time":
                             self.assertEqual(float(rows[1][-2]), 1000)
                     else:
                         self.assertEqual(rows[-1][-1], "NOT_SUPPORTED")
-                        if mode == "overtime":
+                        if mode == "over-time":
                             self.assertEqual(float(rows[1][-1]), 7)
 
     def test_core_count_unavailable_at_preflight(self):
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             result, rows = self.measure(mode, "cores-preflight",
                                         ["system.cores", "system.running_processes"])
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -117,10 +117,10 @@ class SystemFailureTest(unittest.TestCase):
 
     def test_process_and_core_failures_are_marked(self):
         cases = (("standard", "cores-runtime", "system.cores"),
-                 ("overtime", "cores-runtime", "system.cores"),
+                 ("over-time", "cores-runtime", "system.cores"),
                  ("standard", "workload-runtime", "system.workload_processes"),
-                 ("overtime", "workload-runtime", "system.workload_processes"),
-                 ("overtime", "memory-runtime", "system.memory"))
+                 ("over-time", "workload-runtime", "system.workload_processes"),
+                 ("over-time", "memory-runtime", "system.memory"))
         for mode, failure, metric in cases:
             with self.subTest(mode=mode, failure=failure):
                 result, rows = self.measure(mode, failure, [metric])
@@ -141,7 +141,7 @@ class SystemFailureTest(unittest.TestCase):
                 self.assertGreater(float(rows[2][column]), 0)
 
     def test_integer_system_metrics_are_written_as_integers_in_both_modes(self):
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 result, rows = self.measure(
                     mode, "none", [

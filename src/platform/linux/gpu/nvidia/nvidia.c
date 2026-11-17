@@ -99,6 +99,16 @@ static int nvidia_sample_stop(int device_idx) {
     return 0;
 }
 
+double energy_backend_read_counter(size_t metric_index, int device, pid_t pid) {
+    (void)device;
+    (void)pid;
+    if (metric_index >= sizeof(nvidia_metric_definitions) / sizeof(nvidia_metric_definitions[0]) ||
+        nvidia_metric_definitions[metric_index].function.read != nvidia_metric_energy ||
+        !nvml_initialized || !energy_after_valid)
+        return METRIC_NOT_SUPPORTED;
+    return (double)energy_after_mj / 1000.0;
+}
+
 int energy_backend_sample_next(int device_idx) {
     if (next_sample_has_previous) {
         energy_before_mj = energy_after_mj;

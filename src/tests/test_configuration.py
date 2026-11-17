@@ -69,7 +69,7 @@ class ConfigurationTest(unittest.TestCase):
         calibration = self.directory / "calibration.txt"
         calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
         return (
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.06"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.06"\n'
             f'language="test"\nprogram="fixture"\noutput="{self.directory / "out.csv"}"\n'
             f'calibration_file="{calibration}"\ninterval_us=10000\nsleep_seconds=0\n'
             f'[metrics]\nselect={selected}\n'
@@ -85,7 +85,7 @@ class ConfigurationTest(unittest.TestCase):
         self.assertIn("No GPU energy backend active", result.stderr)
         with (self.directory / "out.csv").open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
-        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_ms",
+        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_us",
                                   "System_Running_Processes", "external.demo.Negative_units",
                                   "external.demo.Sequence_count"])
         self.assertGreaterEqual(len(rows), 3)
@@ -93,6 +93,85 @@ class ConfigurationTest(unittest.TestCase):
         self.assertTrue(all(float(row[5]) == -5 for row in rows[1:]))
         self.assertTrue(all(float(a[3]) < float(b[3]) for a, b in zip(rows[1:], rows[2:])))
         self.assertTrue(all(float(a[6]) < float(b[6]) for a, b in zip(rows[1:], rows[2:])))
+
+    def test_overtime_records_counter_snapshots(self):
+        plugin = self.directory / "backends" / "cpu" / "fake" / "backend.so"
+        plugin.parent.mkdir(parents=True)
+        source = ROOT / "src" / "tests" / "fake_backend.c"
+        calibration = self.directory / "calibration.txt"
+        calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
+        output = self.directory / "counter.csv"
+        config = (
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.06"\n'
+            f'output="{output}"\ncalibration_file="{calibration}"\n'
+            'sleep_seconds=0\nvariance=100\ninterval_us=5000\n'
+            '[metrics]\nselect=["cpu.Package"]\n'
+        )
+        for flag in ("FAKE_COUNTER_SEQUENCE", "FAKE_NO_COUNTER"):
+            with self.subTest(flag=flag):
+                subprocess.run(
+                    ["cc", "-fPIC", "-shared", '-DFAKE_NAME="Counter"',
+                     "-DFAKE_PRIORITY=100", "-DFAKE_DETECT=1", f"-D{flag}",
+                     str(source), "-o", str(plugin)],
+                    check=True, capture_output=True, text=True,
+                )
+                result = self.run_configured(config)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                with output.open(newline="", encoding="utf-8") as file:
+                    rows = list(csv.reader(file, skipinitialspace=True))
+                values = [row[-1] for row in rows[1:]]
+                self.assertGreaterEqual(len(values), 3)
+                if flag == "FAKE_COUNTER_SEQUENCE":
+                    self.assertEqual([float(value) for value in values[:3]], [100, 100, 101])
+                else:
+                    self.assertTrue(all(value == "NOT_SUPPORTED" for value in values))
+                    self.assertIn("does not expose counter readings", result.stderr)
+                output.unlink()
+
+    def test_overtime_external_metric_limit(self):
+        source = self.directory / "many_metrics.c"
+        adapter = self.directory / "many_metrics.so"
+        definitions = ",\n".join(f'    {{"Value{i}", "count"}}' for i in range(31))
+        source.write_text(
+            '#include "metric-adapter.h"\n'
+            f'static const GreenMetricDescriptor metrics[] = {{\n{definitions}\n}};\n'
+            'static int read_metric(size_t index, double *value) '
+            '{ *value = (double)index; return 0; }\n'
+            'const GreenMetricAdapter greenmeasurer_metric_adapter = {\n'
+            '    .abi_version = GREENMEASURER_METRIC_ADAPTER_ABI,\n'
+            '    .metrics = metrics, .metric_count = 31, .read = read_metric\n'
+            '};\n',
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["cc", "-fPIC", "-shared", "-I", str(ROOT / "src" / "include"),
+             str(source), "-o", str(adapter)],
+            check=True, capture_output=True, text=True,
+        )
+
+        def selection(count):
+            return "[" + ", ".join(f'"external.demo.Value{i}"' for i in range(count)) + "]"
+
+        result = self.run_configured(self.overtime_config(adapter, selection(30)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.directory / "out.csv"
+        with output.open(newline="", encoding="utf-8") as file:
+            rows = list(csv.reader(file, skipinitialspace=True))
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(rows[0][-1], "external.demo.Value29_count")
+        self.assertTrue(all([float(value) for value in row[-30:]] == list(range(30))
+                            for row in rows[1:]))
+        output.unlink()
+
+        marker = self.directory / "workload-started"
+        config = self.overtime_config(adapter, selection(31)).replace(
+            'command="sleep 0.06"', f'command="touch {marker}"'
+        )
+        result = self.run_configured(config)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Too many external metrics for over-time sampling (max 30)", result.stderr)
+        self.assertFalse(marker.exists())
+        self.assertFalse(output.exists())
 
     def test_overtime_cli_overrides_config(self):
         path = self.build_adapter("configured_metric_adapter.c")
@@ -125,7 +204,7 @@ class ConfigurationTest(unittest.TestCase):
     def test_missing_backend_metric_is_skipped_when_another_is_available(self):
         calibration = self.directory / "calibration.txt"
         calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 output = self.directory / f"missing-{mode}.csv"
                 result = self.run_configured(
@@ -153,7 +232,7 @@ class ConfigurationTest(unittest.TestCase):
         calibration = self.directory / "calibration.txt"
         calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
         result = self.run_configured(
-            '[measurement]\nmode="overtime"\ncommand="true"\n'
+            '[measurement]\nmode="over-time"\ncommand="true"\n'
             f'output="{self.directory / "invalid.csv"}"\ncalibration_file="{calibration}"\n'
             'sleep_seconds=0\n[metrics]\nselect=["cpu.Package"]\n'
         )
@@ -170,7 +249,7 @@ class ConfigurationTest(unittest.TestCase):
              "-o", str(plugin)], check=True, capture_output=True, text=True,
         )
         result = self.run_configured(
-            '[measurement]\nmode="overtime"\ncommand="true"\n[metrics]\n'
+            '[measurement]\nmode="over-time"\ncommand="true"\n[metrics]\n'
             'select=["cpu.Energy", "cpu.toy_cpu_metric_energy"]\n'
         )
         self.assertNotEqual(result.returncode, 0)
@@ -180,7 +259,7 @@ class ConfigurationTest(unittest.TestCase):
         path = self.build_adapter("configured_metric_adapter.c")
         calibration = self.directory / "calibration.txt"
         calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             for other_metric in (True, False):
                 with self.subTest(mode=mode, other_metric=other_metric):
                     output = self.directory / f"{mode}-{other_metric}.csv"
@@ -217,7 +296,7 @@ class ConfigurationTest(unittest.TestCase):
         calibration = self.directory / "calibration.txt"
         calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
         result = self.run_configured(
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.05"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.05"\n'
             f'calibration_file="{calibration}"\noutput="{self.directory / "out.csv"}"\n'
             'interval_us=10000\n[metrics]\n'
             'select=["system.memory", "system.cores", "system.workload_processes"]\n'
@@ -273,7 +352,7 @@ class ConfigurationTest(unittest.TestCase):
         for source, metric in (("configured_metric_adapter.c", "Missing"),
                                ("invalid_metric_adapter.c", "Negative")):
             path = self.build_adapter(source, output=f"{source}.so")
-            for mode in ("standard", "overtime"):
+            for mode in ("standard", "over-time"):
                 with self.subTest(source=source, mode=mode):
                     output = self.directory / f"{source}-{mode}.csv"
                     result = self.run_configured(
@@ -295,7 +374,7 @@ class ConfigurationTest(unittest.TestCase):
         backend_dir = self.directory / "backends" / "cpu" / "fake"
         backend_dir.mkdir(parents=True)
         config = (
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.1"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.1"\n'
             f'output="{self.directory / "out.csv"}"\nsleep_seconds=0\n'
             '[metrics]\nselect=["cpu.Package"]\n'
         )
@@ -363,7 +442,7 @@ class ConfigurationTest(unittest.TestCase):
                  "-DFAKE_DETECT=1", f"-D{flag}", str(ROOT / "src" / "tests" / "fake_backend.c"),
                  "-o", str(plugin)], check=True, capture_output=True, text=True,
             )
-            for mode in ("standard", "overtime"):
+            for mode in ("standard", "over-time"):
                 with self.subTest(failure=flag, mode=mode):
                     output = self.directory / f"{flag}-{mode}.csv"
                     result = self.run_configured(
@@ -519,7 +598,7 @@ class ConfigurationTest(unittest.TestCase):
         config_output = self.directory / "configured.csv"
         plain_output = self.directory / "plain.csv"
         result = self.run_configured(
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.15"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.15"\n'
             f'output="{config_output}"\ncalibration_file="{calibration}"\n'
             'variance=100\ninterval_us=20000\n'
             '[metrics]\nselect=["system.cores", "cpu.Package", '
@@ -529,7 +608,7 @@ class ConfigurationTest(unittest.TestCase):
         environment = os.environ.copy()
         environment["GREENMEASURER_BACKEND_DIR"] = str(self.directory / "backends")
         result = subprocess.run(
-            [str(ROOT / "src" / "tests" / "legacy-engine"), "--overtime", "-command", "sleep 0.15",
+            [str(ROOT / "src" / "tests" / "legacy-engine"), "--over-time", "-command", "sleep 0.15",
              "-output", str(plain_output), "-calib-file", str(calibration),
              "-variance", "100", "-interval-us", "20000"],
             env=environment, text=True, capture_output=True, timeout=15,
@@ -583,7 +662,7 @@ class ConfigurationTest(unittest.TestCase):
         calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
         environment = os.environ.copy()
         environment["GREENMEASURER_BACKEND_DIR"] = str(self.directory / "backends")
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             for configured in (False, True):
                 with self.subTest(mode=mode, configured=configured):
                     output = self.directory / f"{mode}-{configured}.csv"
@@ -623,7 +702,7 @@ class ConfigurationTest(unittest.TestCase):
         )
         calibration = self.directory / "calibration.txt"
         calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 output = self.directory / f"partial-{mode}.csv"
                 result = self.run_configured(
@@ -654,7 +733,7 @@ class ConfigurationTest(unittest.TestCase):
         )
         calibration = self.directory / "calibration.txt"
         calibration.write_text("Average temperature: 40.0\n", encoding="utf-8")
-        for mode in ("standard", "overtime"):
+        for mode in ("standard", "over-time"):
             with self.subTest(mode=mode):
                 output = self.directory / f"one-failure-{mode}.csv"
                 result = self.run_configured(
@@ -735,7 +814,7 @@ class ConfigurationTest(unittest.TestCase):
         calibration.write_text("Average temperature: 42.0\n", encoding="utf-8")
         output = self.directory / "overtime-temperature.csv"
         result = self.run_configured(
-            '[measurement]\nmode="overtime"\ncommand="sleep 0.08"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 0.08"\n'
             f'output="{output}"\ncalibration_file="{calibration}"\n'
             'variance=0\nsleep_seconds=0\ninterval_us=10000\n'
             '[metrics]\nselect=["cpu.Package", "cpu.Temperature"]\n'
@@ -830,7 +909,7 @@ class ConfigurationTest(unittest.TestCase):
 
     def test_selected_metrics_and_configurable_execution(self):
         result = self.validate(
-            '[measurement]\nmode="overtime"\ncommand="sleep 1"\n'
+            '[measurement]\nmode="over-time"\ncommand="sleep 1"\n'
             'interval_us=1000\npowercap=-1\n'
             '[metrics]\nselect=["cpu.Package", "cpu.DRAM", "system.running_processes"]\n'
         )
@@ -940,9 +1019,10 @@ class ConfigurationTest(unittest.TestCase):
     def test_rejects_bad_configurations(self):
         examples = [
             ('[measurement]\nmode="invalid"\n[metrics]\nselect="all"\n', "mode"),
-            ('[measurement]\nmode="overtime"\ninterval_us=true\n[metrics]\nselect="all"\n', "integer"),
+            ('[measurement]\nmode="overtime"\n[metrics]\nselect="all"\n', "over-time"),
+            ('[measurement]\nmode="over-time"\ninterval_us=true\n[metrics]\nselect="all"\n', "integer"),
             ('[measurement]\nmode="standard"\ninterval_us=1\n[metrics]\nselect="all"\n', "only valid"),
-            ('[measurement]\nmode="overtime"\npowercap=0\n[metrics]\nselect="all"\n', "powercap"),
+            ('[measurement]\nmode="over-time"\npowercap=0\n[metrics]\nselect="all"\n', "powercap"),
             ('[measurement]\nmode="standard"\n[metrics]\nselect=["cpu.Foo", "cpu.Foo"]\n', "duplicate"),
             ('[measurement]\nmode="standard"\n[metrics]\nselect=["external.x.Foo"]\n', "unknown"),
             ('[measurement]\nmode="standard"\nunknown=1\n[metrics]\nselect="all"\n', "unknown keys"),
