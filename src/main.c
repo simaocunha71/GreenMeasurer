@@ -218,7 +218,7 @@ static int configure_overtime_metrics(int argc, char **argv) {
             continue;
         } else if (!strcmp(argv[i], "-compile_cmd") || !strcmp(argv[i], "-command") || !strcmp(argv[i], "-language") ||
                    !strcmp(argv[i], "-program") || !strcmp(argv[i], "-variance") ||
-                   !strcmp(argv[i], "-powercap") || !strcmp(argv[i], "-interval-us") ||
+                   !strcmp(argv[i], "-powercap") || !strcmp(argv[i], "-interval-ms") ||
                    !strcmp(argv[i], "-sleep-secs") || !strcmp(argv[i], "-calib-file") ||
                    !strcmp(argv[i], "-output") || !strcmp(argv[i], "-n_times") ||
                    !strcmp(argv[i], "-timeout-seconds")) {
@@ -513,7 +513,7 @@ static double get_temperature_metric(EnergyBackendType type, unsigned int flag) 
 }
 
 void energy_backend_write_csv_header(FILE *fp, int overtime) {
-    fprintf(fp, "Language,Program,Powercap,%s", overtime ? "Timestamp_us" : "Time_ms");
+    fprintf(fp, "Language,Program,Powercap,%s", overtime ? "Timestamp_ms" : "Time_ms");
     if (configured_overtime) {
         const char *names[] = {"CPU_Memory_KB", "Cores",
             overtime ? "Workload_Processes" : "Workload_Processes_Peak",
@@ -1596,7 +1596,7 @@ static void show_help(const char *bin_name) {
     printf("  %s --standard -command \"<cmd>\" -language <lang> -program <prog> -n_times <N> -variance <V> -time_out_limit <hours> -sleep_time <sec> -powercap <W> [-calib-file <path>] [-output <path>]\n", bin_name);
     printf("      Runs standard aggregate energy measurements.\n\n");
 
-    printf("  %s --over-time -command \"<cmd>\" -language <lang> -program <prog> [-interval-us <microseconds>] [-powercap <W>] [-variance <V>] [-sleep-secs <sec>] [-calib-file <path>] [-output <path>]\n", bin_name);
+    printf("  %s --over-time -command \"<cmd>\" -language <lang> -program <prog> [-interval-ms <milliseconds>] [-powercap <W>] [-variance <V>] [-sleep-secs <sec>] [-calib-file <path>] [-output <path>]\n", bin_name);
     printf("      Samples metrics sequentially and dumps interval values to a CSV when the command ends.\n\n");
     printf("  %s --csv-header | --over-time-csv-header\n", bin_name);
     printf("      Prints the selected backends' CSV header for the requested measurement mode.\n\n");
@@ -1825,7 +1825,7 @@ int main(int argc, char **argv) {
         char command[500] = "", language[128] = "", program[128] = "";
         char ot_csv[512] = "measurements_ot.csv";
         int powercaps[MAX_POWERCAPS] = {-1}, powercap_count = 1, variance = 5, sleep_time = 5;
-        unsigned long interval_us = 1000UL;
+        unsigned long interval_ms = 1UL;
 
         for (int i = 2; i < argc; ++i) {
             if (!strcmp(argv[i], "--configured-system")) {
@@ -1860,16 +1860,17 @@ int main(int argc, char **argv) {
                     return 1;
                 }
             }
-            else if (!strcmp(argv[i], "-interval-us")) {
+            else if (!strcmp(argv[i], "-interval-ms")) {
                 if (i + 1 >= argc || argv[i + 1][0] == '-') {
-                    fprintf(stderr, "[ERROR] -interval-us requires a positive integer in microseconds.\n");
+                    fprintf(stderr, "[ERROR] -interval-ms requires a positive integer in milliseconds.\n");
                     return 1;
                 }
                 char *end;
                 errno = 0;
-                interval_us = strtoul(argv[++i], &end, 10);
-                if (errno || *end != '\0' || end == argv[i] || interval_us == 0 || interval_us > UINT_MAX) {
-                    fprintf(stderr, "[ERROR] -interval-us requires a positive integer up to %u.\n", UINT_MAX);
+                interval_ms = strtoul(argv[++i], &end, 10);
+                if (errno || *end != '\0' || end == argv[i] || interval_ms == 0 || interval_ms > UINT_MAX / 1000UL) {
+                    fprintf(stderr, "[ERROR] -interval-ms requires a positive integer up to %lu.\n",
+                            (unsigned long)(UINT_MAX / 1000UL));
                     return 1;
                 }
             }
@@ -1938,7 +1939,7 @@ int main(int argc, char **argv) {
             };
 
             if (command_status == 0)
-                command_status = ot_run(command, &ctx, interval_us);
+                command_status = ot_run(command, &ctx, interval_ms * 1000UL);
 
             if (powercap_active) {
                 if (active_cpu_backend->destroy_powercap() != 0) {

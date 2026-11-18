@@ -71,7 +71,7 @@ class ConfigurationTest(unittest.TestCase):
         return (
             '[measurement]\nmode="over-time"\ncommand="sleep 0.06"\n'
             f'language="test"\nprogram="fixture"\noutput="{self.directory / "out.csv"}"\n'
-            f'calibration_file="{calibration}"\ninterval_us=10000\nsleep_seconds=0\n'
+            f'calibration_file="{calibration}"\ninterval_ms=10\nsleep_seconds=0\n'
             f'[metrics]\nselect={selected}\n'
             f'[[adapters]]\nname="demo"\npath="{path.name}"\n'
         )
@@ -85,7 +85,7 @@ class ConfigurationTest(unittest.TestCase):
         self.assertIn("No GPU energy backend active", result.stderr)
         with (self.directory / "out.csv").open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
-        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_us",
+        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_ms",
                                   "System_Running_Processes", "external.demo.Negative_units",
                                   "external.demo.Sequence_count"])
         self.assertGreaterEqual(len(rows), 3)
@@ -104,7 +104,7 @@ class ConfigurationTest(unittest.TestCase):
         config = (
             '[measurement]\nmode="over-time"\ncommand="sleep 0.06"\n'
             f'output="{output}"\ncalibration_file="{calibration}"\n'
-            'sleep_seconds=0\nvariance=100\ninterval_us=5000\n'
+            'sleep_seconds=0\nvariance=100\ninterval_ms=5\n'
             '[metrics]\nselect=["cpu.Package"]\n'
         )
         for flag in ("FAKE_COUNTER_SEQUENCE", "FAKE_NO_COUNTER"):
@@ -298,7 +298,7 @@ class ConfigurationTest(unittest.TestCase):
         result = self.run_configured(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.05"\n'
             f'calibration_file="{calibration}"\noutput="{self.directory / "out.csv"}"\n'
-            'interval_us=10000\n[metrics]\n'
+            'interval_ms=10\n[metrics]\n'
             'select=["system.memory", "system.cores", "system.workload_processes"]\n'
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -324,10 +324,10 @@ class ConfigurationTest(unittest.TestCase):
         path = self.build_adapter("configured_metric_adapter.c")
         result = self.run_configured(
             self.overtime_config(path, '["external.demo.Negative"]'),
-            "-interval-us", "0",
+            "-interval-ms", "0",
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("interval_us", result.stderr)
+        self.assertIn("interval_ms", result.stderr)
         self.assertFalse((self.directory / "out.csv").exists())
 
     def test_overtime_rejects_missing_metrics(self):
@@ -600,7 +600,7 @@ class ConfigurationTest(unittest.TestCase):
         result = self.run_configured(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.15"\n'
             f'output="{config_output}"\ncalibration_file="{calibration}"\n'
-            'variance=100\ninterval_us=20000\n'
+            'variance=100\ninterval_ms=20\n'
             '[metrics]\nselect=["system.cores", "cpu.Package", '
             '"cpu.BoardPower", "gpu.GPU", "gpu.VRAM"]\n'
         )
@@ -610,7 +610,7 @@ class ConfigurationTest(unittest.TestCase):
         result = subprocess.run(
             [str(ROOT / "src" / "tests" / "legacy-engine"), "--over-time", "-command", "sleep 0.15",
              "-output", str(plain_output), "-calib-file", str(calibration),
-             "-variance", "100", "-interval-us", "20000"],
+             "-variance", "100", "-interval-ms", "20"],
             env=environment, text=True, capture_output=True, timeout=15,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -816,7 +816,7 @@ class ConfigurationTest(unittest.TestCase):
         result = self.run_configured(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.08"\n'
             f'output="{output}"\ncalibration_file="{calibration}"\n'
-            'variance=0\nsleep_seconds=0\ninterval_us=10000\n'
+            'variance=0\nsleep_seconds=0\ninterval_ms=10\n'
             '[metrics]\nselect=["cpu.Package", "cpu.Temperature"]\n'
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -910,7 +910,7 @@ class ConfigurationTest(unittest.TestCase):
     def test_selected_metrics_and_configurable_execution(self):
         result = self.validate(
             '[measurement]\nmode="over-time"\ncommand="sleep 1"\n'
-            'interval_us=1000\npowercap=-1\n'
+            'interval_ms=1\npowercap=-1\n'
             '[metrics]\nselect=["cpu.Package", "cpu.DRAM", "system.running_processes"]\n'
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1020,8 +1020,8 @@ class ConfigurationTest(unittest.TestCase):
         examples = [
             ('[measurement]\nmode="invalid"\n[metrics]\nselect="all"\n', "mode"),
             ('[measurement]\nmode="overtime"\n[metrics]\nselect="all"\n', "over-time"),
-            ('[measurement]\nmode="over-time"\ninterval_us=true\n[metrics]\nselect="all"\n', "integer"),
-            ('[measurement]\nmode="standard"\ninterval_us=1\n[metrics]\nselect="all"\n', "only valid"),
+            ('[measurement]\nmode="over-time"\ninterval_ms=true\n[metrics]\nselect="all"\n', "integer"),
+            ('[measurement]\nmode="standard"\ninterval_ms=1\n[metrics]\nselect="all"\n', "only valid"),
             ('[measurement]\nmode="over-time"\npowercap=0\n[metrics]\nselect="all"\n', "powercap"),
             ('[measurement]\nmode="standard"\n[metrics]\nselect=["cpu.Foo", "cpu.Foo"]\n', "duplicate"),
             ('[measurement]\nmode="standard"\n[metrics]\nselect=["external.x.Foo"]\n', "unknown"),

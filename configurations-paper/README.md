@@ -44,7 +44,7 @@ no GreenMeasurer power cap (`-1`) and a 5 W cap. Both settings are written to
 ## Over-time measurements
 
 The over-time configuration also measures both the uncapped and 5 W settings.
-It requests a 1-microsecond pause between sampling cycles; actual sample
+It requests a 1-millisecond pause between sampling cycles; actual sample
 periods are longer because metric reads and scheduling take time. One
 invocation runs once for each powercap setting.
 

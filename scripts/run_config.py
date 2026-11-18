@@ -13,7 +13,7 @@ OPTIONS = {
     "program": "-program",
     "output": "-output",
     "calibration_file": "-calib-file",
-    "interval_us": "-interval-us",
+    "interval_ms": "-interval-ms",
     "powercap": "-powercap",
     "variance": "-variance",
     "sleep_seconds": "-sleep-secs",

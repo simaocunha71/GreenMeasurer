@@ -30,7 +30,7 @@ run_main() {
 
 run_overtime() {
     GREENMEASURER_BACKEND_DIR="${BACKEND_DIR:-$ROOT}" "$MAIN" --over-time \
-        -command "${OVERTIME_COMMAND:-sleep 0.22}" -language C -program t -interval-us "${OVERTIME_INTERVAL:-50000}" \
+        -command "${OVERTIME_COMMAND:-sleep 0.22}" -language C -program t -interval-ms "${OVERTIME_INTERVAL:-50}" \
         -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
         -output "$WORK/overtime.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
     RC=$?
@@ -159,7 +159,7 @@ expect "overtime completes"                     "Overtime session finished"
 [[ $RC -eq 0 ]] && { PASS=$((PASS+1)); echo "  ok   - overtime exits successfully"; } || {
     FAIL=$((FAIL+1)); echo "  FAIL - overtime exited with $RC";
 }
-if grep -Eq '^Language,Program,Powercap,Timestamp_us,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes(,Core[0-9]+_Freq_MHz)+,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/overtime.csv"; then
+if grep -Eq '^Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes(,Core[0-9]+_Freq_MHz)+,cpu.Package_J,cpu.Temperature_C,cpu.BoardPower_W,gpu.GPU_J,gpu.VRAM_MiB$' "$WORK/overtime.csv"; then
     PASS=$((PASS+1)); echo "  ok   - overtime CSV uses selected backend metrics"
 else
     FAIL=$((FAIL+1)); echo "  FAIL - overtime CSV does not match selected backend metrics"
@@ -179,7 +179,7 @@ if awk -F, 'NR > 1 { if ($(NF-4) + 0 != 1 || $(NF-1) + 0 != 1) exit 1; count++ }
 else
     FAIL=$((FAIL+1)); echo "  FAIL - overtime counter readings or samples are missing"
 fi
-OVERTIME_COMMAND="sleep 0.02" OVERTIME_INTERVAL=1000000 run_overtime
+OVERTIME_COMMAND="sleep 0.02" OVERTIME_INTERVAL=1000 run_overtime
 if [[ $RC -eq 0 ]] && [[ $(wc -l < "$WORK/overtime.csv") -eq 2 ]]; then
     PASS=$((PASS+1)); echo "  ok   - short workload records a final partial interval"
 else
@@ -218,7 +218,7 @@ if cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/cpu/toy/backend
    cc -O2 -Wall -Wextra -I../include -fPIC -shared -o "$WORK/toy/gpu/toy/backend.so" \
     fixtures/toy_backends/gpu/toy_gpu/toy_gpu.c; then
     GREENMEASURER_BACKEND_DIR="$WORK/toy" "$MAIN" --over-time \
-        -command "sleep 0.32" -language C -program t -interval-us 50000 \
+        -command "sleep 0.32" -language C -program t -interval-ms 50 \
         -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
         -output "$WORK/toy.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
     if [[ $? -eq 0 ]] && awk -F, '
@@ -252,13 +252,13 @@ expect "legacy backend reports unavailable counter" "CPU backend does not expose
 [[ $RC -eq 0 ]] && { PASS=$((PASS+1)); echo "  ok   - legacy backend remains usable"; } || {
     FAIL=$((FAIL+1)); echo "  FAIL - legacy backend measurement failed";
 }
-build_fake cpu high "Fake CPU High" 10 1 -DFAKE_POWER_CAP_FAILURE
+build_fake cpu high "Fake CPU High" 10 1
 if cc -O2 -Wall -Wextra -pthread -I../include -DGREENMEASURER_TEST_ENGINE -DOT_MAX_SAMPLES=2 -rdynamic \
     ../main.c ../platform/linux/memory.c ../platform/linux/system_metrics.c ../metric_adapters/metric_adapter_loader.c -o "$WORK/main-small" \
     -pthread -lm -ldl; then
     GREENMEASURER_BACKEND_DIR="$ROOT" "$WORK/main-small" --over-time \
-        -command "sleep 1; touch '$WORK/finished'" -language C -program t \
-        -interval-us 10000 -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
+        -command "sleep 0.08; touch '$WORK/finished'" -language C -program t \
+        -interval-ms 10 -variance 100 -sleep-secs 0 -calib-file "$WORK/calib.txt" \
         -output "$WORK/capacity.csv" > "$WORK/stdout.txt" 2> "$WORK/stderr.txt"
     RC=$?
     cat "$WORK/stdout.txt" "$WORK/stderr.txt" > "$WORK/all.txt"

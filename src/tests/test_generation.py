@@ -807,7 +807,7 @@ class GenerationTest(unittest.TestCase):
         self.config.write_text(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.06"\n'
             f'language="test"\nprogram="fixture"\noutput="{self.csv}"\n'
-            f'calibration_file="{self.calibration}"\ninterval_us=10000\n'
+            f'calibration_file="{self.calibration}"\ninterval_ms=10\n'
             '[metrics]\nselect=["system.cores", "external.demo.RunningProcesses"]\n'
             '[[adapters]]\nname="demo"\npath="adapter.so"\n',
             encoding="utf-8",
@@ -827,7 +827,7 @@ class GenerationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with self.csv.open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
-        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_us",
+        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_ms",
                                   "Cores", "external.demo.RunningProcesses_count"])
         self.assertGreaterEqual(len(rows), 3)
         self.assertTrue(all(len(row) == len(rows[0]) for row in rows))
@@ -920,7 +920,7 @@ class GenerationTest(unittest.TestCase):
         self.config.write_text(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.15"\n'
             f'language="test"\nprogram="fixture"\noutput="{self.csv}"\n'
-            f'calibration_file="{self.calibration}"\ninterval_us=10000\nvariance=100\n'
+            f'calibration_file="{self.calibration}"\ninterval_ms=10\nvariance=100\n'
             '[metrics]\nselect=["cpu.toy_cpu_metric_energy", '
             '"gpu.toy_gpu_metric_energy", "gpu.toy_gpu_metric_power"]\n',
             encoding="utf-8",
@@ -932,12 +932,12 @@ class GenerationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with self.csv.open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
-        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_us",
+        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_ms",
                                   "cpu.Energy_J", "gpu.Energy_J", "gpu.Power_W"])
         self.assertGreaterEqual(len(rows), 3)
         self.assertTrue(all(len(row) == len(rows[0]) for row in rows))
-        self.assertGreater(float(rows[-1][3]), 100000)
-        elapsed = (float(rows[-1][3]) - float(rows[1][3])) / 1000000
+        self.assertGreater(float(rows[-1][3]), 100)
+        elapsed = (float(rows[-1][3]) - float(rows[1][3])) / 1000
         cpu = float(rows[-1][4]) - float(rows[1][4])
         gpu = float(rows[-1][5]) - float(rows[1][5])
         self.assertAlmostEqual(cpu, 10 * elapsed, delta=0.1)

@@ -23,7 +23,7 @@ def read_runs(path):
         reader = csv.DictReader(source, skipinitialspace=True)
         required = {"Language", "Program", "Powercap"}
         if not reader.fieldnames or not required.issubset(reader.fieldnames):
-            raise ValueError("CSV must contain Language, Program, Powercap and Timestamp_us or Timestamp_ms")
+            raise ValueError("CSV must contain Language, Program, Powercap and Timestamp_ms or Timestamp_us")
         timestamp_columns = {"Timestamp_us", "Timestamp_ms"}.intersection(reader.fieldnames)
         if len(timestamp_columns) != 1:
             raise ValueError("CSV must contain exactly one of Timestamp_us or Timestamp_ms")
@@ -48,7 +48,7 @@ def read_runs(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv", help="Over-time CSV containing Timestamp_us or legacy Timestamp_ms")
+    parser.add_argument("csv", help="Over-time CSV containing Timestamp_ms or legacy Timestamp_us")
     thresholds = parser.add_mutually_exclusive_group()
     thresholds.add_argument("--threshold-us", type=float,
                             help="Report intervals greater than this threshold (default: 1000 us)")

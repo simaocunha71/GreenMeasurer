@@ -1,6 +1,6 @@
 /* Over-time mode runs the sampler in the parent process, without sampling threads. */
 #ifndef OT_MAX_SAMPLES
-#define OT_MAX_SAMPLES 262144
+#define OT_MAX_SAMPLES 1000000
 #endif
 #define OT_MAX_METRICS 64
 #define OT_MAX_EXTERNAL_METRICS 30
@@ -17,10 +17,10 @@ struct OvertimeContext {
 static long ot_memory_kb[OT_MAX_SAMPLES];
 static int ot_cores[OT_MAX_SAMPLES];
 static int ot_process_values[2][OT_MAX_SAMPLES];
-static float ot_freq_mhz[OT_MAX_SAMPLES][SYS_MAX_CORES];
+static float ot_freq_mhz[SYS_MAX_CORES][OT_MAX_SAMPLES];
 static double ot_backend_values[OT_MAX_METRICS][OT_MAX_SAMPLES];
 static GreenMetricValue ot_external_values[OT_MAX_EXTERNAL_METRICS][OT_MAX_SAMPLES];
-static double ot_timestamp_us[OT_MAX_SAMPLES];
+static double ot_timestamp_ms[OT_MAX_SAMPLES];
 static size_t ot_count;
 static int ot_core_count;
 static unsigned char ot_scalar_warned[OT_SCALAR_COUNT];
@@ -187,7 +187,8 @@ static double ot_counter_value(const ActiveMetric *metric, pid_t workload_pid) {
 
 static int ot_sample(pid_t workload_pid, int finished) {
     if (ot_count >= OT_MAX_SAMPLES) {
-        fprintf(stderr, "[ERROR] Over-time sample capacity (%d) exceeded; measurement aborted.\n", OT_MAX_SAMPLES);
+        fprintf(stderr, "[ERROR] Over-time sample capacity (%zu) exceeded; measurement aborted.\n",
+                (size_t)OT_MAX_SAMPLES);
         return -1;
     }
     struct timespec now;
@@ -196,8 +197,8 @@ static int ot_sample(pid_t workload_pid, int finished) {
         return -1;
     }
     size_t slot = ot_count++;
-    ot_timestamp_us[slot] = (double)(now.tv_sec - ot_start_time.tv_sec) * 1000000.0 +
-                            (double)(now.tv_nsec - ot_start_time.tv_nsec) / 1000.0;
+    ot_timestamp_ms[slot] = (double)(now.tv_sec - ot_start_time.tv_sec) * 1000.0 +
+                            (double)(now.tv_nsec - ot_start_time.tv_nsec) / 1000000.0;
     int stopped[2] = {0, 0};
     for (int type = 0; type < 2; type++) {
         if (!ot_backend_ready[type]) continue;
@@ -215,15 +216,15 @@ static int ot_sample(pid_t workload_pid, int finished) {
         ot_process_values[1][slot] = sys_running_processes();
     if (!configured_overtime || configured_system[4]) {
         for (int core = 0; core < ot_core_count; core++) {
-            ot_freq_mhz[slot][core] = (float)sys_core_frequency_mhz(core);
+            ot_freq_mhz[core][slot] = (float)sys_core_frequency_mhz(core);
             if (configured_overtime &&
-                (!isfinite(ot_freq_mhz[slot][core]) || ot_freq_mhz[slot][core] < 0.0)) {
+                (!isfinite(ot_freq_mhz[core][slot]) || ot_freq_mhz[core][slot] < 0.0)) {
                 if (!ot_frequency_warned[core]) {
                     fprintf(stderr, "[WARNING] Failed to read system.core_frequency for core %d; "
                             "recording NOT_SUPPORTED for failed samples.\n", core);
                     ot_frequency_warned[core] = 1;
                 }
-                ot_freq_mhz[slot][core] = SYS_METRIC_NOT_SUPPORTED;
+                ot_freq_mhz[core][slot] = SYS_METRIC_NOT_SUPPORTED;
             }
         }
     }
@@ -346,7 +347,7 @@ static int ot_dump(const struct OvertimeContext *ctx) {
     if (!ctx->append) energy_backend_write_csv_header(fp, 1);
     for (size_t row = 0; row < ot_count; row++) {
         fprintf(fp, "%s, %s, %d, %.6f", ctx->language, ctx->program, ctx->powercap,
-                ot_timestamp_us[row]);
+                ot_timestamp_ms[row]);
         for (int i = 0; i < OT_SCALAR_COUNT; i++) {
             if (configured_overtime && !configured_system[i]) continue;
             fprintf(fp, ", ");
@@ -356,7 +357,7 @@ static int ot_dump(const struct OvertimeContext *ctx) {
         }
         for (int core = 0; (!configured_overtime || configured_system[4]) && core < ot_core_count; core++) {
             fprintf(fp, ", ");
-            write_active_metric_value(fp, (double)ot_freq_mhz[row][core]);
+            write_active_metric_value(fp, (double)ot_freq_mhz[core][row]);
         }
         for (size_t i = 0; i < active_metric_count; i++) {
             if (configured_overtime && (!configured_backend_selected || !configured_backend_selected[i])) continue;

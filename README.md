@@ -204,12 +204,16 @@ actual intervals longer and variable. This is a polling interval, not a
 hardware update notification: repeated counter readings or missed updates are
 possible. A final partial interval is recorded when the workload exits.
 
-The capacity is 262144 rows and 30 external metrics. If the row limit is
-exceeded, the workload is stopped and the measurement fails without writing a
-partial CSV. Exceeding the external metric limit fails before the workload
-starts. Metric collection itself may
-perform I/O and, depending on the backend, allocate memory. At exactly 1000
-samples per second, the capacity covers approximately 4 minutes and 22 seconds.
+Over-time sampling stores up to 1000000 rows in static arrays by default. The
+array size is a compile-time flag: build with `make -C src OT_MAX_SAMPLES=<rows>`
+(or `-DOT_MAX_SAMPLES=<rows>`) to choose a different capacity. The default
+reserves about 1.9 GiB of virtual address space on a 64-bit system; resident
+memory depends on which metrics are collected. At exactly 1000 samples per
+second, the default covers approximately 16 minutes and 40 seconds. If the
+capacity is exceeded, the workload is stopped and the measurement fails without
+writing a partial CSV. Over-time sampling supports up to 30
+external metrics; exceeding that limit fails before the workload starts. Metric
+collection itself may perform I/O and, depending on the backend, allocate memory.
 
 For scripts to analyze observed sample intervals, probe RAPL update behavior,
 and compare workload timing overhead, see [scripts/README.md](scripts/README.md#evaluating-over-time-sampling).
@@ -321,7 +325,8 @@ Metric behavior is declared by each backend:
   aggregated across the workload process tree. Polling is every 50 ms, so brief
   allocations may be missed.
 
-In over-time mode `Timestamp_us` is the monotonic elapsed time in microseconds
+In over-time mode `Timestamp_ms` is the monotonic elapsed time in milliseconds
+(with sub-millisecond decimals)
 at the start of each sample's backend readings, and
 `CPU_Memory_KB` is the current resident set size of the workload process tree.
 It also reports `Cores` (online logical cores), `Workload_Processes` (live
@@ -332,7 +337,7 @@ not exactly simultaneous. Process-scoped readings may be unavailable in the
 final row because the workload has already exited. For example:
 
 ```csv
-Language,Program,Powercap,Timestamp_us,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
 
 Over-time energy columns contain counter snapshots converted to joules, not
@@ -400,7 +405,7 @@ against the actual libraries by the validator.
 
 Generation requires `command`. Optional measurement fields are `language`, `program`, `output`,
 `calibration_file`, `powercap`, `variance`, and `sleep_seconds`. Additionally,
-`interval_us` is specific to over-time sampling, while `repetitions` and `timeout_hours`
+`interval_ms` is specific to over-time sampling, while `repetitions` and `timeout_hours`
 are specific to standard mode. A power cap must be `-1` or positive.
 
 External metrics refer to named adapter tables. For example, after building the
@@ -620,7 +625,7 @@ samples, not a guaranteed sampling period.
 
 Set execution fields in TOML before generating; runtime overrides are not
 accepted. `repetitions` and `timeout_hours` apply to standard mode, and
-`interval_us` applies to over-time sampling.
+`interval_ms` applies to over-time sampling.
 Relative output and calibration paths are relative to the current working
 directory; adapter paths are relative to the configuration file.
 

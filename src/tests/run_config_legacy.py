@@ -30,7 +30,7 @@ def main():
         for key in OPTIONS:
             value = getattr(args, key)
             if value is not None:
-                if key in ("interval_us", "powercap", "variance", "sleep_seconds",
+                if key in ("interval_ms", "powercap", "variance", "sleep_seconds",
                            "repetitions", "timeout_hours"):
                     try:
                         value = int(value, 10)

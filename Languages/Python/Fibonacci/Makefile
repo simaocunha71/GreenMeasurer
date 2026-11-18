@@ -4,7 +4,7 @@ variance ?= 5
 sleep_secs ?= 10
 input ?= 35
 powercap ?= -1
-interval_us ?= 1000
+interval_ms ?= 1
 language ?= Python
 program ?= fibonacci
 export n_times

@@ -5,7 +5,7 @@ language = "Shell"
 program = "example"
 output = "all-metrics.csv"
 sleep_seconds = 0
-interval_us = 10000
+interval_ms = 10
 
 [metrics]
 select = "all"

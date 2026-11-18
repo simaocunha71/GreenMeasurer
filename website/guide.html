@@ -52,7 +52,7 @@ sudo ./my-build/greenmeasurer</code></pre>
           <tr><td><code>temperature-calibration</code></td><td>Waits for the settling period and records a CPU temperature baseline.</td><td>A text file with an lm-sensors snapshot and average temperature.</td></tr>
           <tr><td><code>powercap-calibration</code></td><td>Runs a baseline and repeats the workload across an inclusive Watt range.</td><td>A calibration CSV and, when supported by its columns, an energy/time summary.</td></tr>
         </tbody></table></div>
-        <p>For over-time sampling, <code>interval_us</code> is in microseconds: <code>10000</code> is 10 ms and <code>1000000</code> is 1 second. It sets the target pause between sampling cycles, not a guaranteed period; backend reads and scheduling add time. Window energy is reported per interval, not as instantaneous power. Sampling has a finite capacity of 262,144 rows.</p>
+        <p>For over-time sampling, <code>interval_ms</code> is in milliseconds: <code>10</code> is 10 ms and <code>1000</code> is 1 second. It sets the target pause between sampling cycles, not a guaranteed period; backend reads and scheduling add time. Window energy is reported per interval, not as instantaneous power. Sampling has a compile-time capacity of 1,000,000 rows (<code>make -C src OT_MAX_SAMPLES=&lt;rows&gt;</code>).</p>
       </section>
       <section id="temperature"><h2>Temperature baseline</h2>
         <p>When a CPU backend is active, all measurement and calibration modes require a readable CPU temperature from it; an unavailable or invalid reading stops execution before the workload. If only a GPU backend is active, temperature checks and calibration are skipped. If the baseline file is missing, a measurement creates it after the configured settling time.</p>
@@ -79,7 +79,7 @@ done</code></pre>
           <tr><td><code>output</code></td><td>Measurements and powercap calibration</td><td>CSV path; defaults to <code>measurements.csv</code> (standard), <code>measurements_ot.csv</code> (over-time), or <code>powercap_calibration.csv</code>. Relative to the directory where the executable runs.</td></tr>
           <tr><td><code>repetitions</code></td><td>Standard, powercap calibration</td><td>Number of workload runs per cap; positive integer. Defaults to 1 (standard) and 3 (powercap calibration).</td></tr>
           <tr><td><code>timeout_hours</code></td><td>Standard, powercap calibration</td><td>Maximum duration of each workload run in hours; positive integer, default 1.</td></tr>
-          <tr><td><code>interval_us</code></td><td>Over-time only</td><td>Target pause between sample cycles in microseconds; integer from 1 to 4,294,967,295. Default 1,000 <abbr title="microseconds">µs</abbr> (1 ms). Actual intervals are longer because reads and scheduling take time.</td></tr>
+          <tr><td><code>interval_ms</code></td><td>Over-time only</td><td>Target pause between sample cycles in milliseconds; integer from 1 to 4,294,967. Default 1 ms. Actual intervals are longer because reads and scheduling take time.</td></tr>
           <tr><td><code>variance</code></td><td>Measurements and powercap calibration</td><td>Non-negative temperature allowance in °C above the baseline before starting a workload. Defaults: 0°C in standard, 5°C in over-time mode and powercap calibration.</td></tr>
           <tr><td><code>sleep_seconds</code></td><td>All modes</td><td>Non-negative settling delay before creating a missing temperature baseline; also the delay for temperature calibration. Defaults: 5 seconds for measurements, 10 for powercap calibration and 20 for temperature calibration.</td></tr>
           <tr><td><code>calibration_file</code></td><td>All modes</td><td>Path to the CPU-temperature baseline text file; defaults to <code>/tmp/cores_temperatures.txt</code>. If missing, a baseline is created after <code>sleep_seconds</code>.</td></tr>
@@ -113,7 +113,7 @@ command = "python3 workload.py --size 100000"
 language = "Python"
 program = "long-workload"
 output = "overtime.csv"
-interval_us = 1000000
+interval_ms = 1000
 variance = 5
 sleep_seconds = 10
 calibration_file = "temperature.txt"
@@ -122,7 +122,7 @@ powercap = 15
 [metrics]
 select = ["system.workload_processes", "system.memory",
           "cpu.Package", "cpu.Temperature"]</code></pre>
-        <p>This creates one CSV row per sampling cycle while the command runs. Here, <code>interval_us = 1000000</code> requests a one-second pause after each cycle. Temperature is checked after the cap is applied and before the workload starts; subsequent temperature values are sampled during execution. The CSV's <code>Timestamp_us</code> is elapsed time in microseconds, and energy values are counter readings that can wrap or reset.</p>
+        <p>This creates one CSV row per sampling cycle while the command runs. Here, <code>interval_ms = 1000</code> requests a one-second pause after each cycle. Temperature is checked after the cap is applied and before the workload starts; subsequent temperature values are sampled during execution. The CSV's <code>Timestamp_ms</code> is elapsed time in milliseconds, and energy values are counter readings that can wrap or reset.</p>
 
         <h3>Temperature baseline calibration</h3>
         <pre><code>[measurement]
@@ -165,7 +165,7 @@ path = "build/libdemo-metrics.so"</code></pre>
 mode = "over-time"
 command = "sleep 1"
 output = "external-metric.csv"
-interval_us = 10000
+interval_ms = 10
 
 [metrics]
 select = ["external.processes.RunningProcesses"]

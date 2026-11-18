@@ -3,7 +3,7 @@ mode = "over-time"
 command = "sleep 1"
 language = "Shell"
 program = "system-cores"
-interval_us = 10000
+interval_ms = 10
 sleep_seconds = 0
 output = "system-cores.csv"
 

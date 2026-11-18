@@ -100,7 +100,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         config.write_text(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
             f'calibration_file="{calibration}"\noutput="{output}"\n'
-            'variance=100\nsleep_seconds=0\ninterval_us=5000\n'
+            'variance=100\nsleep_seconds=0\ninterval_ms=5\n'
             '[metrics]\nselect=["cpu.Energy"]\n', encoding="utf-8",
         )
         env = os.environ.copy()
@@ -175,7 +175,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         config.write_text(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
             f'calibration_file="{calibration}"\n'
-            'variance=100\nsleep_seconds=0\ninterval_us=5000\n'
+            'variance=100\nsleep_seconds=0\ninterval_ms=5\n'
             '[metrics]\nselect=["external.demo.Value"]\n'
             '[[external_metrics]]\nname="demo"\nmetric="Value"\nunit="count"\n'
             'function="metric"\nheader="metric.h"\nsources=["metric.c"]\n'

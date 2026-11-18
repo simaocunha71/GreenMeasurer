@@ -3,7 +3,7 @@ mode = "over-time"
 command = "sleep 1"
 language = "Shell"
 program = "example"
-interval_us = 10000
+interval_ms = 10
 sleep_seconds = 0
 output = "custom_metric_overtime.csv"
 

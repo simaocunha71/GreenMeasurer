@@ -291,7 +291,7 @@ static double added_metric(int device, pid_t pid) {
                     with output.open(newline="", encoding="utf-8") as file:
                         rows = list(csv.reader(file, skipinitialspace=True))
                     columns = ["Language", "Program", "Powercap",
-                               "Time_ms" if mode == "standard" else "Timestamp_us", "Cores"]
+                               "Time_ms" if mode == "standard" else "Timestamp_ms", "Cores"]
                     if package_available:
                         columns.append("cpu.Package_J")
                     self.assertEqual(rows[0], columns)

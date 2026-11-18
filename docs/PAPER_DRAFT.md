@@ -225,12 +225,12 @@ The timeout value is expressed in hours by the current command-line implementati
 
 ### E. Over-Time Measurements
 
-The `--over-time` mode (over-time sampling) runs the target command while the parent periodically samples the active backends and system metrics without sampler threads. The default pause is 1 ms. Each row reports energy counter snapshots converted to joules and the latest sequentially read gauges; the final row is recorded after the workload exits. `Timestamp_us` is the monotonic elapsed time in microseconds at the beginning of each sample's backend reads. The pause does not guarantee that each hardware update is captured.
+The `--over-time` mode (over-time sampling) runs the target command while the parent periodically samples the active backends and system metrics without sampler threads. The default pause is 1 ms. Each row reports energy counter snapshots converted to joules and the latest sequentially read gauges; the final row is recorded after the workload exits. `Timestamp_ms` is the monotonic elapsed time in milliseconds at the beginning of each sample's backend reads. The pause does not guarantee that each hardware update is captured.
 
 ```sh
 sudo ./src/main --over-time \
   -command "./program arg" \
-  -interval-us 100000 \
+  -interval-ms 100 \
   -language C \
   -program example \
   -variance 5 \
@@ -242,7 +242,7 @@ The schema begins with framework metadata and then includes metrics declared by
 the selected backends. Metric columns use `<category>.<name>_<unit>`:
 
 ```csv
-Language,Program,Powercap,Timestamp_us,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
+Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,System_Running_Processes,Core0_Freq_MHz,...,cpu.Package_J,cpu.Core_J,cpu.DRAM_J,cpu.Temperature_C,gpu.GPU_J,gpu.Power_W,gpu.Temperature_C,gpu.Utilization_%,gpu.VRAM_MiB
 ```
 
 The example shows one possible selection; exact columns vary by hardware and
@@ -329,7 +329,7 @@ A corresponding time-series smoke test is:
 ```sh
 sudo ./src/main --over-time \
   -command "sleep 2" \
-  -interval-us 100000 \
+  -interval-ms 100 \
   -language Shell \
   -program smoke-test \
   -variance 100 \
@@ -351,7 +351,7 @@ The repository's `scripts/merda.sh` is a convenience smoke-test script that invo
 **Experiments.**
 
 1. *Standard mode (total energy per run).* Report mean, standard deviation and coefficient of variation of energy (J) and time (ms) per tool, plus the relative difference between tools. Run in a fixed order or randomised order, with idle periods between runs, and with the same system state (Wi-Fi off, no background load). Test the statistical differences (e.g. Shapiro–Wilk, then Mann–Whitney U or t-test, with effect size).
-2. *Over-time mode (energy profile).* Plot counter readings against `Timestamp_us` for GreenMeasurer and compare their differences with experiment 1, accounting for counter wrap or reset. Interval-average power can be estimated from successive readings and timestamps, with timing uncertainty from sequential backend reads.
+2. *Over-time mode (energy profile).* Plot counter readings against `Timestamp_ms` for GreenMeasurer and compare their differences with experiment 1, accounting for counter wrap or reset. Interval-average power can be estimated from successive readings and timestamps, with timing uncertainty from sequential backend reads.
 3. *Tool overhead.* Compare the energy and time of the workload run with each tool against a run without any tool, and the energy of an idle period of the same length.
 4. *Usability and extensibility.* Compare the steps and lines of configuration needed to measure the same workload, and the effort to add a new backend (number of files and lines changed in GreenMeasurer, with no change to `main.c`). Present the result in a feature table (language independence, source change needed, CPU/GPU support, over-time mode, root requirement, behaviour when a counter is missing).
 5. *Portability (optional, depending on available machines).* Repeat experiment 1 on each available system (different CPU, with and without NVIDIA GPU) and report which backends were detected and how unsupported ones were reported.
@@ -387,7 +387,7 @@ All modes accept `-command` (alias `-run_cmd`) with the command to run through `
 | `-n_times` | count | standard (default 1), power-cap calibration (default 3) | Number of measured runs (per power limit in calibration) |
 | `-variance` | °C | all measurement modes | Maximum temperature above the calibrated baseline at which a run may start; otherwise the tool waits, checking each second (defaults: 0 standard, 5 over-time and calibration). A readable CPU temperature is required |
 | `-time_out_limit` | hours | standard, power-cap calibration | Time limit for the initial check run; on expiry a `TimeOut` row is recorded (default 1) |
-| `-interval-us` | µs | over-time | Pause between sampling cycles (default 1000) |
+| `-interval-ms` | ms | over-time | Pause between sampling cycles (default 1) |
 | `-powercap` | W, or `-1` | standard, over-time | Package power limit (Intel only); `-1` applies the saved per-machine baseline (default); otherwise at least 1 |
 | `-sleep_time`, `-sleep-secs` | s | all | Idle time used to settle the machine when a temperature baseline has to be created (default 5; default 10 as `-secs_to_sleep` in power-cap calibration) |
 | `-calib-file` | path | all | Baseline-temperature file (default `/tmp/cores_temperatures.txt`); created by a calibration if missing |
@@ -410,7 +410,7 @@ measurement startup. Load only trusted plugins.
 | `Language`, `Program` | text | core | options | Labels |
 | `Powercap` | W | core | option | Cap used, or `-1` |
 | `Time_ms` | ms | core, standard | wall clock | Duration of the run |
-| `Timestamp_us` | µs | core, over-time | monotonic clock | Elapsed time at the start of each sample's backend reads |
+| `Timestamp_ms` | ms | core, over-time | monotonic clock | Elapsed time at the start of each sample's backend reads |
 | `CPU_Memory_KB` | KiB | core, standard | `wait4()` / `ru_maxrss` | Maximum RSS reported for the measured run, not a simultaneous process-tree sum |
 | `cpu.Package_J` | J | window | Intel | Energy of the CPU package |
 | `cpu.Core_J` | J | window | Intel | Energy of the cores (part of the package) |

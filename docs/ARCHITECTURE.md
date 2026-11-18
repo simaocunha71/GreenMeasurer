@@ -267,7 +267,7 @@ separate VRAM through the current backend.
 ### 6.6 Dynamic CSV schema
 
 The standard CSV starts with `Language,Program,Powercap,Time_ms,CPU_Memory_KB`;
-over-time uses `Timestamp_us` instead, the monotonic elapsed time in microseconds at the start
+over-time uses `Timestamp_ms` instead, the monotonic elapsed time in milliseconds at the start
 of each sample's backend readings. These common
 metadata fields are followed by columns declared by the selected plugins, in
 CPU-then-GPU order. A metric column is named
@@ -281,8 +281,8 @@ aggregating output from multiple workloads.
 `--over-time` records counter snapshots in their declared units for window
 metrics; older plugins without the optional counter reader report
 `NOT_SUPPORTED` with a warning. Counter values can wrap or reset. The parent samples all metrics
-sequentially without sampler threads, using a configurable pause (`-interval-us`,
-default 1000 microseconds); a final partial window is sampled on workload
+sequentially without sampler threads, using a configurable pause (`-interval-ms`,
+default 1 millisecond); a final partial window is sampled on workload
 completion. Samples are buffered and dumped after completion. Times vary with
 metric overhead and scheduling; the interval does not synchronize polling with
 hardware updates.

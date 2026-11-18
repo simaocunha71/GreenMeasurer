@@ -91,7 +91,7 @@ class PowercapSweepTest(unittest.TestCase):
     def test_overtime_appends_every_powercap_to_one_csv(self):
         self.log_temperature_reads()
         result = self.run_config(
-            self.measurement("over-time", "interval_us=1000\npowercap=[-1, 5, 6]\n") +
+            self.measurement("over-time", "interval_ms=1\npowercap=[-1, 5, 6]\n") +
             '[metrics]\nselect=["cpu.Package"]\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         rows = self.rows()

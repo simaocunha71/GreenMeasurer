@@ -166,7 +166,7 @@ These scripts use Python 3's standard library. Run them from the repository root
    limits used by the unmeasured run. This does not remove a cap previously
    applied outside this run.
 
-Over-time sampling reads the backends and system metrics sequentially. `Timestamp_us` is
+Over-time sampling reads the backends and system metrics sequentially. `Timestamp_ms` is
 captured before the backend reads and is not their exact simultaneous read time.
 The configured 1 ms pause begins after completing a cycle, so it is not a
 guaranteed 1 ms period. RAPL energy values are counter readings in joules, not

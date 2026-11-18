@@ -59,7 +59,7 @@
           <tr><td><code>system.memory</code></td><td><code>sys_workload_memory_kb</code> (over-time)</td><td>Workload memory in KiB; standard uses <code>wait4</code> maximum RSS, not a simultaneous tree sum.</td></tr>
         </tbody></table></div>
       </section>
-      <section id="output"><h2>Understand the CSV</h2><p>Standard uses <code>Time_ms</code> per run; over-time uses <code>Timestamp_us</code> relative to the run start. The <code>Language</code>, <code>Program</code> and <code>Powercap</code> columns record configured labels and the requested cap. On Intel, <code>-1</code> applies GreenMeasurer's saved per-machine baseline.</p>
+      <section id="output"><h2>Understand the CSV</h2><p>Standard uses <code>Time_ms</code> per run; over-time uses <code>Timestamp_ms</code> relative to the run start. The <code>Language</code>, <code>Program</code> and <code>Powercap</code> columns record configured labels and the requested cap. On Intel, <code>-1</code> applies GreenMeasurer's saved per-machine baseline.</p>
         <p>Unavailable metrics may be skipped at preflight. If a later read fails, its value is recorded as <code>NOT_SUPPORTED</code>. With <code>select = "all"</code>, the resulting schema can differ between machines and runs.</p>
         <div class="page-links"><a href="guide.html">Measurement guide →</a><a href="reference.html">Backend API →</a></div>
       </section>

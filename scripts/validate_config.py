@@ -37,7 +37,7 @@ SYSTEM_METRICS = {
 MAX_POWERCAPS = 128
 MEASUREMENT_FIELDS = {
     "mode", "command", "language", "program", "output", "calibration_file",
-    "interval_us", "repetitions", "timeout_hours", "powercap", "variance", "sleep_seconds",
+    "interval_ms", "repetitions", "timeout_hours", "powercap", "variance", "sleep_seconds",
     "powercap_min", "powercap_max", "compile_command",
 }
 ADAPTER_CHECKER = Path(__file__).resolve().parents[1] / "src" / "metric-adapter-check"
@@ -93,7 +93,7 @@ def validate_config(data, config_path):
         if key in measurement:
             string(measurement[key], f"measurement.{key}")
     limits = {
-        "interval_us": (1, 4294967295),
+        "interval_ms": (1, 4294967),
         "repetitions": (1, 2147483647),
         "timeout_hours": (1, 596523),
         "variance": (0, 2147483647),
@@ -147,8 +147,8 @@ def validate_config(data, config_path):
         for key in ("powercap_min", "powercap_max", "compile_command"):
             if key in measurement:
                 fail(f"measurement.{key} is only valid in powercap calibration mode")
-    if mode == "standard" and "interval_us" in measurement:
-        fail("measurement.interval_us is only valid in over-time mode")
+    if mode == "standard" and "interval_ms" in measurement:
+        fail("measurement.interval_ms is only valid in over-time mode")
     if mode == "over-time" and ("repetitions" in measurement or "timeout_hours" in measurement):
         fail("measurement.repetitions and timeout_hours are only valid in standard mode")
 

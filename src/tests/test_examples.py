@@ -64,7 +64,7 @@ class ExamplesTest(unittest.TestCase):
                 with output.open(newline="", encoding="utf-8") as file:
                     rows = list(csv.reader(file, skipinitialspace=True))
                 self.assertEqual(rows[0], ["Language", "Program", "Powercap",
-                                           "Timestamp_us", *columns])
+                                           "Timestamp_ms", *columns])
                 self.assertGreaterEqual(len(rows), 3)
                 self.assertTrue(all(len(row) == len(rows[0]) for row in rows))
                 timestamps = [float(row[3]) for row in rows[1:]]
@@ -127,7 +127,7 @@ class ExamplesTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with output.open(newline="", encoding="utf-8") as file:
             rows = list(csv.reader(file, skipinitialspace=True))
-        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_us",
+        self.assertEqual(rows[0], ["Language", "Program", "Powercap", "Timestamp_ms",
                                    "Cores", "cpu.Energy_J", "gpu.Energy_J", "gpu.Power_W"])
         self.assertGreaterEqual(len(rows), 3)
         for row in rows[1:]:

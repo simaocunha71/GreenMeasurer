@@ -56,7 +56,7 @@ class SystemFailureTest(unittest.TestCase):
                 "-output", str(output), "-calib-file", str(self.calibration),
                 "-variance", "100", "-sleep-secs", "0"]
         if mode == "over-time":
-            args.extend(["-interval-us", "10000"])
+            args.extend(["-interval-ms", "10"])
         elif repetitions > 1:
             args.extend(["-n_times", str(repetitions)])
         for metric in metrics:

@@ -2,6 +2,12 @@ CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -pthread -Iinclude
 LDFLAGS ?= -pthread -lm
 
+# Static over-time sample capacity (rows). Lower it to shrink the BSS reservation.
+OT_MAX_SAMPLES ?=
+ifneq ($(OT_MAX_SAMPLES),)
+CFLAGS += -DOT_MAX_SAMPLES=$(OT_MAX_SAMPLES)
+endif
+
 .DEFAULT_GOAL := all
 
 UNAME_S := $(shell uname -s)

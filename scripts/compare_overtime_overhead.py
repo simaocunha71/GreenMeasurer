@@ -76,7 +76,7 @@ def main():
     rng = random.Random(args.seed)
     command = measurement["command"]
     print(f"Command: {command}\nPairs: {args.runs}; seed: {args.seed}; "
-          f"interval: {measurement.get('interval_us', 1000)} us")
+          f"interval: {measurement.get('interval_ms', 1)} ms")
     print("order,pair,mode,workload_ms,wrapper_ms")
     order = 0
     try:
