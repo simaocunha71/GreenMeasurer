@@ -1,14 +1,9 @@
 # GreenMeasurer: Design, Implementation and Validation of a Vendor-Agnostic Energy Measurement Framework
 
-> **Historical interface notice:** CLI examples in this document predate the
-> TOML-only interface and must not be used. For current generation, execution,
-> batch and calibration instructions, see the [README](../README.md) and
-> [scripts guide](../scripts/README.md).
-
-Current selection semantics: `metrics.select = "all"` selects all system
-metrics, all metrics of the CPU and GPU backends selected at runtime, all
-metrics in declared adapters, and all declared source-based external metrics.
-Availability checks and failure handling are the same as for explicit selection.
+> **Historical document:** This describes the previous engine and its removed
+> plugin interface. Its architecture, configuration examples and commands do
+> not describe the current implementation. See [WEAVER.md](WEAVER.md) and the
+> [README](../README.md) for current usage.
 
 This document describes the architecture and engineering decisions of GreenMeasurer in enough detail to serve as the technical basis of a scientific paper. It covers the design goals, the plugin-based backend API, measurement semantics, build system, diagnostics, testing, limitations and threats to validity.
 

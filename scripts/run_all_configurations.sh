@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs every TOML under configurations/ (or a given directory) on this machine
+# Runs every TOML under configurations-generated/ (or a given directory) on this machine
 # and prints a PASS/FAIL/SKIP summary, to validate GreenMeasurer on new hardware.
 #
 # Usage: scripts/run_all_configurations.sh [-o results-dir] [-s] [config-dir-or-file ...]
@@ -18,7 +18,7 @@ while getopts "o:s" opt; do
     esac
 done
 shift $((OPTIND - 1))
-[[ $# -eq 0 ]] && set -- "$root/configurations-paper"
+[[ $# -eq 0 ]] && set -- "$root/configurations-generated"
 # Each run changes directory, so every input path must be absolute.
 inputs=()
 for path in "$@"; do
@@ -55,10 +55,7 @@ make -C "$root/src" all >"$results/build.log" 2>&1 || {
     echo "[ERROR] Build failed; see $results/build.log"; exit 1; }
 
 mapfile -t configs < <(find "$@" -name '*.toml' -type f | sort)
-# Temperature calibration first so the baseline file exists for the other runs.
-ordered=()
-for c in "${configs[@]}"; do grep -q 'temperature-calibration' "$c" && ordered+=("$c"); done
-for c in "${configs[@]}"; do grep -q 'temperature-calibration' "$c" || ordered+=("$c"); done
+ordered=("${configs[@]}")
 
 pass=0; fail=0
 summary=()
@@ -75,16 +72,12 @@ for config in "${ordered[@]}"; do
     status=PASS
     # Generation, compilation and execution all use the result directory as cwd
     # so the relative output/calibration paths in the TOML land there.
-    if grep -q 'temperature-calibration' "$config"; then
-        (cd "$work" && python3 "$root/scripts/generate_config.py" "$config") >"$work/run.log" 2>&1 || status=FAIL
+    if (cd "$work" && python3 "$root/scripts/weave.py" "$config" -o "$work/build") \
+        >"$work/generate.log" 2>&1; then
+        (cd "$work" && "$work/build/greenmeasurer") >"$work/run.log" 2>&1 || status=FAIL
     else
-        if (cd "$work" && python3 "$root/scripts/generate_config.py" "$config" --directory "$work/build") \
-            >"$work/generate.log" 2>&1; then
-            (cd "$work" && "$work/build/greenmeasurer") >"$work/run.log" 2>&1 || status=FAIL
-        else
-            status=FAIL
-            cp "$work/generate.log" "$work/run.log"
-        fi
+        status=FAIL
+        cp "$work/generate.log" "$work/run.log"
     fi
     if [[ $status == PASS ]]; then
         # An execution that exits 0 but produced no output file is still a failure.

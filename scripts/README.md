@@ -1,55 +1,17 @@
-### Scripts
+# Scripts
 
-- `install.sh`: Installs build and telemetry dependencies. Linux is the currently supported platform; installing tools on another OS does not provide a GreenMeasurer port.
-- `measure.sh`: Generates a batch from TOML files, then runs it in a separate step.
-- `run_powercap_calibration.sh`: Generates a powercap calibration executable from TOML.
-- `analyze_overtime.py`: Reports observed over-time sampling intervals.
-- `probe_rapl_frequency.py`: Measures observed Intel package RAPL counter changes.
-- `compare_overtime_overhead.py`: Compares workload wall time with and without over-time sampling.
-- `compare_standard_overhead.py`: Compares a workload baseline with standard
-  measurements using progressively more selected metrics.
-- `validate_config.py`: Validates the TOML configuration. Optional
-  `--check-adapters` loads trusted selected adapters and tests their readings.
-- `run_config.py`: Internal configuration-to-engine argument translation.
-- `generate_config.py`: C generation and compilation, including
-  source-based external metrics. It does not execute the workload; see
-  the [main README](../README.md#executing-a-configuration).
+Python 3.11 or `tomli` is required for TOML parsing.
 
-Python 3.11+ or `tomli` is required for TOML parsing.
-
-## Standard-mode overhead study
-
-From the repository root, calibrate the CPU temperature first, then select an
-ordered list of metrics supported by the host:
-
-```sh
-python3 scripts/compare_standard_overhead.py \
-  --config paper_data/standard.toml \
-  --metrics system.cores system.workload_processes system.running_processes \
-  --runs 10 --seed 0 > standard-overhead.csv
-```
-
-Each randomized round runs the workload once without GreenMeasurer and once
-per progressively larger metric set. Configurations are generated before
-timing; the script uses one repetition and applies the saved per-machine
-baseline with `powercap = -1` regardless of those settings in the base TOML.
-It also uses temporary measurement output files, leaving the configured output
-untouched. The calibration file must already exist. Other system power limits
-may still apply.
-The example runs the workload 40 times and can take substantial time. Choose
-a new destination for the redirected CSV, since `>` overwrites an existing file.
-
-The CSV on standard output contains every run's order, round, metric names and
-count, workload time, total invocation time and a `thermal_wait` flag.
-Diagnostics and median/range summaries are written to standard error. Runs
-where the temperature gate waits include that wait in total time and are
-flagged; account for them when interpreting results. A missing or unreadable
-selected metric fails the study instead of being counted as collected.
-Logical metrics, such as per-core frequency, may produce multiple CSV columns.
-`workload_ms` for the baseline times the shell invocation, whereas measured
-runs use `Time_ms`; their timing boundaries differ. Total time also includes
-startup and CSV output. This comparison does not measure energy overhead or
-prove that all observed differences are caused by GreenMeasurer.
+- `weave.py`: generates and compiles an executable from a device-based TOML.
+- `measure.sh`: generates a batch and runs it separately.
+- `run_powercap_calibration.sh`: generates a powercap calibration executable.
+- `run_all_configurations.sh`: builds and runs a set of configurations.
+- `run_fibonacci_sequence.sh`: generates and runs the four Fibonacci configurations in order.
+- `compare_overtime_overhead.py`: compares workload wall time with and without sampling.
+- `compare_standard_overhead.py`: compares wall time with progressively more metrics.
+- `analyze_overtime.py`: reports observed over-time sampling intervals.
+- `probe_rapl_frequency.py`: observes Intel RAPL counter changes.
+- `install.sh`: installs build and optional device dependencies.
 
 ## Batch generation and execution
 
@@ -58,120 +20,62 @@ bash scripts/measure.sh generate generated-batch first.toml second.toml
 bash scripts/measure.sh run generated-batch
 ```
 
-The batch directory must not already exist. Configurations execute in the
-order supplied. Each TOML specifies its own command, metrics and output;
-use different output paths to avoid overwriting results. Generation does not
-run workloads. On a generation failure, fix the configuration and select a
-new directory; an incomplete batch must not be run. Unlike the old script,
-this does not alter Wi-Fi, clean builds, or delete CSV files.
+The batch directory must not already exist. Configurations execute in the order
+supplied; use different output paths to avoid overwriting results. Generation
+does not run workloads. An incomplete batch cannot be run.
 
 For powercap calibration, generate with
-`bash scripts/run_powercap_calibration.sh config.toml generated-powercap`
-and then run `generated-powercap/greenmeasurer` separately with the necessary
-hardware permissions.
+`bash scripts/run_powercap_calibration.sh config.toml generated-powercap`, then
+run `generated-powercap/greenmeasurer` with the necessary hardware permissions.
+The TOML must set `measurement.mode = "powercap-calibration"` and declare the
+calibration hook and range.
 
-## Configuration and backend diagnostics
-
-Both modes support explicitly selected CPU, GPU, system and external metrics.
-`select = "all"` includes all system metrics, runtime-selected CPU/GPU backend
-metrics, all metrics in declared adapters, and all declared source metrics.
-Unavailable metrics are skipped with diagnostics.
-Runnable examples and details are in the [main README](../README.md#executing-a-configuration).
-
-Default backend output shows selected plugins and load/descriptor errors; it
-warns when CPU or GPU has no active backend. Undetected, unbuilt and
-lower-priority backends are hidden. For full diagnostics, including permission
-hints, set `GREENMEASURER_VERBOSE_BACKENDS=1`, for example:
+## Fibonacci sequence
 
 ```sh
-./src/main --config src/tests/fixtures/configurations/system-cores.toml --directory generated-diagnostics
-GREENMEASURER_VERBOSE_BACKENDS=1 ./generated-diagnostics/greenmeasurer
+bash scripts/run_fibonacci_sequence.sh [new-build-directory]
 ```
 
-The command runs a measurement and overwrites the example's output CSV in the
-current directory. It does not merely list backends.
+The script builds the optional device libraries, generates all four configured
+executables, then runs temperature calibration, standard, over-time and powercap
+calibration in that order. It stops on the first failure. The default build
+directory is `generated-fibonacci-sequence`; the chosen directory must not
+already exist. Commands and output paths run from the repository root.
 
-## Evaluating over-time sampling
+The temperature configuration waits 60 seconds before taking one reading and
+overwrites `/tmp/cores_temperatures.txt`, which the other three configurations use
+by default. Measurements use the existing TOML settings and can take a long time.
+Standard and over-time measurements append to their CSVs; powercap calibration
+may replace its output. Save existing results first, and use fresh CSVs after
+changing the metric schema. The three measurement configurations declare CPU
+Package, Core and DRAM energy, NVIDIA GPU energy and temperature, and Intel GPU
+energy. Both GPUs can be recorded in the same run. GPU setup failures produce a
+warning and `NOT_SUPPORTED` in the affected columns; individual failed readings
+also produce `NOT_SUPPORTED`. The Intel CPU must support the configured thermal
+and powercap operations. All declared libraries must be present for generation,
+including the NVIDIA library and NVML development/runtime files, even when a GPU
+is unavailable. Hardware access needs appropriate permissions; powercap runs
+change CPU power limits. The powercap post-processor requires valid CPU Package
+readings; if these are unavailable, it reports an error after the CSV is written.
 
-These scripts use Python 3's standard library. Run them from the repository root.
+## Overhead and timing analysis
 
-1. Analyze the actual sample timestamps in an existing CSV:
+```sh
+python3 scripts/compare_standard_overhead.py --config standard.toml \
+  --metrics System.Cores IntelCPU.Package --runs 10
+python3 scripts/compare_overtime_overhead.py --config overtime.toml --runs 5
+python3 scripts/analyze_overtime.py measurements.csv --threshold-us 1000
+```
 
-   ```sh
-   python3 scripts/analyze_overtime.py measurements_ot.csv --threshold-us 1000
-   ```
+Metric names must be declared in the standard configuration. Comparisons run
+the workload multiple times in randomized order and measure wall time, not
+energy overhead. The scripts use temporary output files, preserving the
+configured CSV. If a thermal hook is configured, its calibration file must
+already exist. Standard comparisons apply powercap `-1`, while over-time
+comparisons require that setting in the TOML. System power limits may still
+apply; thermal waiting and other activity affect timing.
 
-   For each inferred run this prints sample count, mean, median, minimum, 95th
-   percentile (linear interpolation), maximum, and count and percentage of
-   intervals **strictly greater** than the threshold. Only differences between
-   consecutive timestamps are included; the first window has no preceding
-   timestamp, while the last interval can include a shorter final window.
-   The CSV has no run identifier: a change in language, program or powercap, or
-   a non-increasing timestamp, is interpreted as a new run. Identical runs can
-   be indistinguishable, particularly short runs with a single sample. Keep
-   separate per-run CSV files for reliable identification. The older `Time_ms`
-   format does not contain timestamps and cannot be analyzed this way. CSVs
-   with the former `Timestamp_ms` column and the `--threshold-ms` option remain
-   supported; analysis results are reported in microseconds.
-
-2. Observe counter changes on an Intel machine:
-
-   ```sh
-   sudo python3 scripts/probe_rapl_frequency.py --duration 5 --core 0
-   ```
-
-   This continuously polls `MSR_PKG_ENERGY_STATUS`, using `/dev/cpu/0/msr`,
-   and reports observed changes and their intervals. The module `msr` and
-   permission to read the device are required. The initial interval is from
-   the first read to the first detected change and can be partial. Polling
-   consumes CPU and can affect energy and scheduling; observed changes do not
-   prove every hardware update was seen or reveal the exact hardware update
-   time. Repeat under the conditions being studied and record the hardware,
-   operating system, workload, and probe settings. This standalone probe measures
-   the counter under its own polling load, not simultaneously with the workload.
-
-3. Compare wall-clock times for the same workload with and without over-time sampling:
-
-   ```sh
-   python3 scripts/compare_overtime_overhead.py \
-     --config path/to/overtime.toml --runs 5
-   ```
-
-   The workload runs twice per pair, in reproducibly randomized order. The
-   TOML supplies the command, selected metrics, sampling interval and other
-   settings. An existing calibration file is required (using
-   `measurement.calibration_file` or the default `/tmp/cores_temperatures.txt`);
-   prepare it separately using a temperature-calibration TOML if necessary. The
-   script generates a temporary configured executable once and redirects its
-   output to a temporary CSV, without changing `measurement.output` in the
-   file or overwriting its configured CSV. Source paths and adapter paths are
-   resolved relative to the original configuration. Both modes run under the same
-   user as the script. The baseline uses shell elapsed time; over-time workload
-   time is approximated by its final sample timestamp, and `wrapper_ms` also
-   includes initialization, possible temperature waiting and CSV output.
-   The script prints every run in execution order and the difference in mean
-   workload time. It uses temporary CSVs and does not change `measurements_ot.csv`.
-   The command must be safe to repeat and run in the foreground. This is a
-   comparison of **wall time**, not energy overhead, and does not isolate
-   sampling overhead from noise, warm-up, thermal effects or scheduler effects.
-   An independent energy meter or another separately validated method is
-   needed to quantify energy overhead.
-
-   Redirect standard output to a file to retain the run order, individual
-   timings and summary, for example append `> overhead-report.txt`. Save
-   standard error separately when retaining warnings or failure diagnostics.
-   The comparison requires the TOML's powercap to be absent or `-1`, because
-   the unmeasured baseline cannot apply a GreenMeasurer cap. On Intel,
-   `-1` applies GreenMeasurer's saved baseline, so verify that it matches the
-   limits used by the unmeasured run. This does not remove a cap previously
-   applied outside this run.
-
-Over-time sampling reads the backends and system metrics sequentially. `Timestamp_ms` is
-captured before the backend reads and is not their exact simultaneous read time.
-The configured 1 ms pause begins after completing a cycle, so it is not a
-guaranteed 1 ms period. RAPL energy values are counter readings in joules, not
-instantaneous power. Differences between successive readings estimate interval
-energy; account for counter wrap or reset when interpreting them. The final
-reading can occur slightly after workload completion. Package energy includes unrelated system activity.
-Save raw results, repeat experiments, report variation and document conditions;
-the scripts' summaries alone do not establish statistical significance.
+The timing analyzer treats changes in language, program or powercap, or a
+non-increasing timestamp, as run boundaries. Identical runs with a single
+sample may be indistinguishable. RAPL probing requires Linux MSR access and
+its own polling changes the system load.

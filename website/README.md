@@ -1,20 +1,19 @@
 # GreenMeasurer website
 
-The website is a dependency-free static site:
+The dependency-free static site documents the current configuration-driven,
+aspect-oriented weaver:
 
-- `index.html`: overview and links to the documentation.
-- `guide.html`: installation, configuration, modes and powercap warnings.
-- `fibonacci.html`: a GreenMeasurer usage walkthrough with a Python sample workload and standard/over-time CSVs.
-- `metrics.html`: metric names, reading functions and sources.
-- `reference.html`: backend callbacks, metric definitions and developer tools.
+- `index.html`: overview, workflow, authors and acknowledgements.
+- `guide.html`: setup, declarations, measurement modes and calibration.
+- `fibonacci.html`: the four-stage Fibonacci sequence.
+- `metrics.html`: explicitly declared metrics and optional device readers.
+- `reference.html`: generated code, device hooks and tools.
 - `styles.css`, `favicon.svg` and `logo.svg`: shared presentation and assets.
-- `architecture.drawio.png` and `diagram.drawio.png`: workflow and framework
-  diagrams, copied from the corresponding files in `docs/`.
+- `website.zip`: a packaged copy of the site.
 
-The documentation describes the current Linux implementation. macOS and
-Windows are not currently supported; adding the shared interfaces alone does
-not provide the OS-specific measurements, build support or validation needed
-for those platforms.
+The old `architecture.drawio.png` and `diagram.drawio.png` are retained as
+historical assets; they depict the removed engine and are not used by the
+current pages.
 
 ## Preview
 
@@ -25,18 +24,12 @@ python3 -m http.server 8000 --directory website
 ```
 
 Visit `http://localhost:8000`. No JavaScript, build step or package manager is
-required. Copy the complete directory to a static host or GitHub Pages. The stylesheet
-URL includes a version query string because static hosts may cache CSS for a
-long time; change its version in every HTML page whenever `styles.css` changes.
+required.
 
 ## Maintenance
 
-Update the guide and catalogue when the TOML schema, modes, metrics or
-hardware behavior change. Update the backend API reference when callback
-contracts, extension mechanisms or build behavior change. Check the actual
-source and hardware validation status before documenting powercap behavior;
-`-1` applies the saved per-machine RAPL baseline.
-When updating diagrams, refresh the PNG files in both `docs/` and `website/`
-before packaging the site.
-Keep the authors on the overview and the submission and acknowledgements in
-each page footer consistent when the paper details change.
+Check the source, [project README](../README.md) and
+[weaver documentation](../docs/WEAVER.md) when updating the site. Keep examples,
+hardware warnings, authors and funding acknowledgements consistent with the
+project. If the site changes, refresh the corresponding files in `website.zip`;
+the historical diagrams remain in the archive but are not used by the pages.

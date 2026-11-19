@@ -1,0 +1,67 @@
+#include "toy.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+static unsigned long energy;
+static int calls;
+
+static void log_event(const char *event) {
+    const char *path = getenv("TOY_LOG");
+    FILE *fp = path ? fopen(path, "a") : NULL;
+    if (!fp) return;
+    fprintf(fp, "%s\n", event);
+    fclose(fp);
+}
+
+int toy_setup(void) {
+    log_event("setup");
+    return getenv("TOY_FAIL_SETUP") != NULL;
+}
+
+void toy_teardown(void) { log_event("teardown"); }
+
+unsigned long toy_energy(void) { return energy += 10; }
+
+float toy_temperature(void) {
+    return getenv("TOY_FAIL_TEMPERATURE") ? -1.0f : 40.5f + (float)(calls++ % 3);
+}
+
+int toy_processes(void) { return 3; }
+
+double toy_thermal(void) { return 40.0; }
+
+int toy_cap_set(int watts) {
+    char event[32];
+    snprintf(event, sizeof(event), "set:%d", watts);
+    log_event(event);
+    return 0;
+}
+
+int toy_cap_restore(void) {
+    log_event("restore");
+    return 0;
+}
+
+/* Same contract as intel_cpu_calibrate_powercap: -1, then min..max, through the engine's runTesting. */
+extern int runTesting(int, int, const char *, const char *, const char *, const char *, int, int,
+                      float, int, int);
+
+int toy_calibrate(int ntimes, int core, const char *command, const char *language,
+                  const char *program, const char *csv, const char *script, int min_powercap,
+                  int max_powercap, int timeout, float temperature, int variance, int memory) {
+    (void)script;
+    if (getenv("TOY_LOG_TIMEOUT")) {
+        char event[32];
+        snprintf(event, sizeof(event), "timeout:%d", timeout);
+        log_event(event);
+    }
+    for (int cap = -1; cap <= max_powercap; cap = cap == -1 ? min_powercap : cap + 1) {
+        toy_cap_set(cap);
+        int result = runTesting(ntimes, core, command, language, program, csv, cap, timeout,
+                                temperature, variance, memory);
+        toy_cap_restore();
+        if (result != 0) return -1;
+    }
+    return 0;
+}

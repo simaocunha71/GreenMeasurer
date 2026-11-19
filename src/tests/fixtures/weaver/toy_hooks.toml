@@ -1,0 +1,22 @@
+[measurement]
+mode = "over-time"
+command = "sleep 0.2"
+language = "Shell"
+program = "sleep"
+output = "hooks.csv"
+interval_ms = 10
+
+[[device]]
+name = "Cpu"
+lib = "libtoy.a"
+header = "toy.h"
+thermal = "double toy_thermal()"
+powercap_set = "int toy_cap_set(int)"
+powercap_restore = "int toy_cap_restore()"
+powercap_calibration = "toy_calibrate"
+
+[[device.metric]]
+name = "Package"
+read = "unsigned long toy_energy()"
+kind = "counter"
+unit = "uJ"

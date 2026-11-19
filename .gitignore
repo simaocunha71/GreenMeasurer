@@ -1,12 +1,6 @@
 *.o
+*.a
 *.so
 *.py[cod]
 __pycache__/
-/src/main
-/src/list-metrics
-/src/greenmeasurer-engine
-/src/metric-adapter-check
-/src/tests/legacy-engine
-/src/tests/intel-powercap-test
-/src/tests/nvidia-metric-test
-/src/tests/intel-gpu-sensors-test
+/src/tests/energy-counter-test

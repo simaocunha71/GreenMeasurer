@@ -2,12 +2,10 @@
 """Compare standard-mode wall times with progressively more selected metrics."""
 
 import argparse
-import copy
 import csv
 import math
 from pathlib import Path
 import random
-import re
 import statistics
 import subprocess
 import sys
@@ -15,16 +13,7 @@ import tempfile
 import time
 
 from compare_overtime_overhead import positive_int
-from generate_config import generate_configured
-from validate_config import tomllib, validate_config
-
-
-SYSTEM_COLUMNS = {
-    "system.memory": "CPU_Memory_KB",
-    "system.cores": "Cores",
-    "system.workload_processes": "Workload_Processes_Peak",
-    "system.running_processes": "System_Running_Processes_Peak",
-}
+from weave import tomllib, validate, weave
 
 
 def run_timed(command):
@@ -41,27 +30,11 @@ def run_timed(command):
                                f"{stdout.read()}{diagnostics}")
         if diagnostics:
             print(diagnostics, file=sys.stderr, end="")
-        waited = any("Waiting for temperature (" in line for line in stdout)
+        waited = any("Waiting for temperature" in line for line in stdout)
     return elapsed_ms, waited
 
 
-def metric_columns(metric, header, source_metrics):
-    if metric in SYSTEM_COLUMNS:
-        return [SYSTEM_COLUMNS[metric]] if SYSTEM_COLUMNS[metric] in header else []
-    if metric == "system.core_frequency":
-        return [column for column in header
-                if re.fullmatch(r"Core[0-9]+_Avg_Freq_MHz", column)]
-    parts = metric.split(".")
-    if len(parts) == 3 and parts[0] == "external":
-        for source in source_metrics:
-            if source["name"] == parts[1] and source["function"] == parts[2]:
-                parts[2] = source["metric"]
-                break
-    prefix = ".".join(parts) + "_"
-    return [column for column in header if column.startswith(prefix)]
-
-
-def read_measurement(path, metrics, source_metrics):
+def read_measurement(path, metrics, metric_columns):
     with path.open(newline="", encoding="utf-8") as source:
         reader = csv.DictReader(source, skipinitialspace=True)
         header = reader.fieldnames or []
@@ -70,12 +43,11 @@ def read_measurement(path, metrics, source_metrics):
         raise ValueError("expected one standard measurement with a Time_ms column")
     row = rows[0]
     for metric in metrics:
-        columns = metric_columns(metric, header, source_metrics)
-        if not columns:
+        column = metric_columns[metric]
+        if column not in header:
             raise ValueError(f"selected metric '{metric}' is absent from the CSV; "
                              "check hardware support and permissions")
-        if any(row[column] is None or row[column].strip() in ("", "NOT_SUPPORTED")
-               for column in columns):
+        if row[column] is None or row[column].strip() in ("", "NOT_SUPPORTED"):
             raise ValueError(f"selected metric '{metric}' could not be read")
     try:
         elapsed = float(row["Time_ms"])
@@ -86,22 +58,7 @@ def read_measurement(path, metrics, source_metrics):
     return elapsed, tuple(header)
 
 
-def prepare_config(base, metrics, output):
-    config = copy.deepcopy(base)
-    config["measurement"].update(output=str(output), repetitions=1, powercap=-1)
-    config["metrics"]["select"] = metrics
-    if "external_metrics" in config:
-        config["external_metrics"] = [
-            item for item in config["external_metrics"]
-            if any(name in metrics for name in (
-                f'external.{item["name"]}.{item["metric"]}',
-                f'external.{item["name"]}.{item["function"]}',
-            ))
-        ]
-    return config
-
-
-def collect_records(executables, metrics, command, source_metrics, runs, seed):
+def collect_records(executable, output, metrics, command, metric_columns, runs, seed):
     rng = random.Random(seed)
     headers = {}
     records = []
@@ -113,11 +70,13 @@ def collect_records(executables, metrics, command, source_metrics, runs, seed):
                 total_ms, _ = run_timed(["/bin/sh", "-c", command])
                 workload_ms, waited = total_ms, False
             else:
-                executable, selected, output = executables[count]
+                selected = metrics[:count]
                 if output.exists():
                     output.unlink()
-                total_ms, waited = run_timed([str(executable)])
-                workload_ms, header = read_measurement(output, selected, source_metrics)
+                total_ms, waited = run_timed(
+                    [str(executable), "-output", str(output), "-n_times", "1",
+                     "-powercap", "-1", *[f"--{metric}" for metric in selected]])
+                workload_ms, header = read_measurement(output, selected, metric_columns)
                 if count in headers and headers[count] != header:
                     raise ValueError(f"CSV schema changed between runs for {count} metrics")
                 headers[count] = header
@@ -176,31 +135,31 @@ def main():
         config_path = args.config.resolve()
         with config_path.open("rb") as source:
             base = tomllib.load(source)
-        validate_config(base, config_path)
+        model = validate(base, config_path)
         measurement = base["measurement"]
         if measurement["mode"] != "standard" or "command" not in measurement:
             raise ValueError("a standard configuration with measurement.command is required")
         calibration = Path(measurement.get("calibration_file", "/tmp/cores_temperatures.txt"))
-        if not calibration.is_file():
+        if any("thermal" in device for device in model["devices"]) and not calibration.is_file():
             raise ValueError(f"calibration file does not exist: {calibration}")
+        metric_columns = {
+            f'{device["name"]}.{metric["name"]}':
+                f'{device["name"]}.{metric["name"]}' +
+                (f'_{metric["unit"]}' if metric["unit"] else "")
+            for device in model["devices"] for metric in device["metrics"]
+        }
+        for metric in args.metrics:
+            if metric not in metric_columns:
+                raise ValueError(f"metric '{metric}' is not declared in the configuration")
 
         print("Using one repetition and powercap=-1 for every measured run. "
               "Existing system power limits may still apply.", file=sys.stderr)
         print(f"Rounds: {args.runs}; seed: {args.seed}", file=sys.stderr)
         with tempfile.TemporaryDirectory(prefix="greenmeasurer-standard-overhead-") as directory:
             root = Path(directory)
-            executables = {}
-            source_metrics = base.get("external_metrics", [])
-            for count in range(1, len(args.metrics) + 1):
-                selected = args.metrics[:count]
-                config = prepare_config(base, selected, root / f"result-{count}.csv")
-                validate_config(config, config_path)
-                executable = generate_configured(config, config_path, root / f"build-{count}",
-                                                 log=sys.stderr)
-                executables[count] = (executable, selected, Path(config["measurement"]["output"]))
-
-            records = collect_records(executables, args.metrics, measurement["command"],
-                                      source_metrics, args.runs, args.seed)
+            executable, _ = weave(config_path, root / "build", 1000000)
+            records = collect_records(executable, root / "result.csv", args.metrics,
+                                      measurement["command"], metric_columns, args.runs, args.seed)
         report_summary(records, len(args.metrics))
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError, csv.Error) as error:
         print(f"Error: {error}", file=sys.stderr)

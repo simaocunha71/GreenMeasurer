@@ -11,8 +11,7 @@ import tempfile
 import time
 
 from analyze_overtime import read_runs
-from generate_config import generate_configured
-from validate_config import tomllib, validate_config
+from weave import tomllib, validate, weave
 
 
 def positive_int(value):
@@ -55,17 +54,17 @@ def main():
         config_path = args.config.resolve()
         with config_path.open("rb") as source:
             config = tomllib.load(source)
-        validate_config(config, config_path)
+        validate(config, config_path)
         measurement = config["measurement"]
         if measurement["mode"] != "over-time":
             raise ValueError("measurement.mode must be 'over-time' for this comparison")
         if "command" not in measurement:
             raise ValueError("measurement.command is required")
-        if measurement.get("powercap", -1) != -1:
+        if measurement["powercap"] != [-1]:
             raise ValueError("measurement.powercap must be -1; "
                              "the baseline cannot apply a GreenMeasurer power cap")
         calibration = Path(measurement.get("calibration_file", "/tmp/cores_temperatures.txt"))
-        if not calibration.is_file():
+        if any("thermal" in device for device in config.get("device", [])) and not calibration.is_file():
             raise ValueError(f"calibration file does not exist: {calibration}")
     except (OSError, ValueError, UnicodeError) as error:
         print(f"Error: {error}", file=sys.stderr)
@@ -82,9 +81,7 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="greenmeasurer-overhead-") as directory:
             output = Path(directory) / "overtime.csv"
-            measurement["output"] = str(output)
-            executable = generate_configured(config, config_path, Path(directory) / "generated",
-                                             log=sys.stderr)
+            executable, _ = weave(config_path, Path(directory) / "generated", 1000000)
             for pair in range(1, args.runs + 1):
                 modes = ["baseline", "over-time"]
                 rng.shuffle(modes)
@@ -97,7 +94,7 @@ def main():
                     else:
                         if output.exists():
                             output.unlink()
-                        elapsed = run_timed([str(executable)])
+                        elapsed = run_timed([str(executable), "-output", str(output), "-n_times", "1"])
                         runs = read_runs(output)
                         if len(runs) != 1:
                             raise ValueError("expected exactly one over-time run in generated CSV")

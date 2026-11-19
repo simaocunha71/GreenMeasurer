@@ -1,78 +1,76 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Measure software energy on Linux with GreenMeasurer.">
-  <title>GreenMeasurer — software energy measurement</title>
+  <meta name="description" content="GreenMeasurer composes measurement aspects into a configuration-specific executable.">
+  <title>GreenMeasurer — Aspect-oriented measurement</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=20261112-diagrams">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="topbar"><div class="topbar-inner">
   <a class="brand" href="index.html"><img src="favicon.svg" alt="" width="30" height="30">GreenMeasurer</a>
-  <nav aria-label="Main navigation"><a aria-current="page" href="index.html">Overview</a><a href="guide.html">Guide</a><a href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a href="reference.html">Backend API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
+  <nav aria-label="Main navigation"><a aria-current="page" href="index.html">Overview</a><a href="guide.html">Guide</a><a href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a href="reference.html">Weaver API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
 </div></header>
 <main id="main">
   <section class="hero"><div class="wrap hero-grid">
     <div>
       <p class="eyebrow"><span class="status-dot"></span> Open source · Linux</p>
-      <h1>GreenMeasurer: A Non-Intrusive, Extensible Framework for Software Energy Profiling</h1>
+      <h1>Measurement concerns, woven around your workload.</h1>
+      <p class="lead">GreenMeasurer separates measurement from the program being studied. Declare the devices, metrics and experiment in TOML; the weaver composes a dedicated executable to run it.</p>
+      <div class="actions"><a class="button primary" href="guide.html">Get started <span aria-hidden="true">↗</span></a><a class="button secondary" href="reference.html">How weaving works <span aria-hidden="true">→</span></a></div>
       <div class="paper-authors" aria-label="Authors">
         <div><strong>Simão Cunha</strong><a href="mailto:simao.s.cunha@inesctec.pt">simao.s.cunha@inesctec.pt</a></div>
         <div><strong>João Saraiva</strong><a href="mailto:saraiva@di.uminho.pt">saraiva@di.uminho.pt</a></div>
       </div>
       <p class="paper-affiliation">University of Minho &amp; HASLab, INESC TEC</p>
-      <p class="lead">Run a program, choose the metrics your hardware exposes, and work with the results in CSV. No changes to your program.</p>
-      <div class="actions"><a class="button primary" href="guide.html">Get started <span aria-hidden="true">↗</span></a><a class="button secondary" href="metrics.html">Explore metrics <span aria-hidden="true">→</span></a></div>
     </div>
     <div class="terminal" aria-label="Example measurement workflow">
       <div class="terminal-bar"><span class="terminal-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>greenmeasurer / terminal</span></div>
-      <pre><span class="terminal-comment"># Configure your workload</span>
-<span class="terminal-prompt">$</span> $EDITOR configuration.toml
+      <pre><span class="terminal-comment"># Build the example device libraries</span>
+<span class="terminal-prompt">$</span> make -C src
 
-<span class="terminal-comment"># Generate and run</span>
-<span class="terminal-prompt">$</span> ./src/main --directory my-build
-<span class="terminal-prompt">$</span> ./my-build/greenmeasurer
+<span class="terminal-comment"># Generate a configured executable</span>
+<span class="terminal-prompt">$</span> python3 scripts/weave.py config.toml -o build
 
-<span class="terminal-result">→ measurements.csv</span></pre>
+<span class="terminal-comment"># Run it with the required permissions</span>
+<span class="terminal-prompt">$</span> ./build/greenmeasurer</pre>
     </div>
   </div></section>
   <div class="wrap">
-    <section class="overview-section" aria-labelledby="how-title">
-      <div class="section-heading"><div><p class="eyebrow">01 / Workflow</p><h2 id="how-title">From command to data.</h2></div><p>A small workflow for repeatable measurements, with the configuration kept separate from the program.</p></div>
+    <section class="overview-section" aria-labelledby="how-title" id="architecture-title">
+      <div class="section-heading"><div><p class="eyebrow">01 / Composition</p><h2 id="how-title">From aspects to an experiment.</h2></div><p>Each configuration selects the concerns needed for one experiment.</p></div>
       <div class="step-grid">
-        <article class="step"><span>01</span><h3>Configure</h3><p>Choose a foreground command, metrics and a measurement mode in TOML.</p></article>
-        <article class="step"><span>02</span><h3>Generate</h3><p>Compile an executable with your configuration embedded. Generation does not run the workload.</p></article>
-        <article class="step"><span>03</span><h3>Measure</h3><p>Run it and inspect the CSV. Available metrics depend on your hardware and permissions.</p></article>
+        <article class="step"><span>01 / DECLARE</span><h3>Describe the experiment</h3><p>Choose a workload and mode. Declare each device, metric reader and optional thermal or powercap hook explicitly.</p></article>
+        <article class="step"><span>02 / WEAVE</span><h3>Generate and compile</h3><p>The weaver validates the TOML and generates device sampling code and registration glue, linked with the declared libraries and runtime.</p></article>
+        <article class="step"><span>03 / MEASURE</span><h3>Run the executable</h3><p>The generated program coordinates the workload, configured hooks and metric collection, and writes the results.</p></article>
       </div>
-      <figure class="diagram">
-        <a href="architecture.drawio.png"><img src="architecture.drawio.png" alt="GreenMeasurer workflow from TOML configuration through calibration, standard measurement and over-time measurement to output files." loading="lazy"></a>
-        <figcaption>Measurement workflow. Select the diagram to view it at full size.</figcaption>
-      </figure>
+      <p>The workload remains separate: the weaver does not rewrite or instrument its source code.</p>
     </section>
-    <section class="overview-section" aria-labelledby="architecture-title">
-      <div class="section-heading"><div><p class="eyebrow">02 / Architecture</p><h2 id="architecture-title">Built to extend.</h2></div><p>CPU and GPU backends and external metric adapters extend the measurement engine.</p></div>
-      <figure class="diagram">
-        <a href="diagram.drawio.png"><img src="diagram.drawio.png" alt="GreenMeasurer source layout showing the measurement engine, CPU and GPU backends, platform-specific metrics and external metric adapters." loading="lazy"></a>
-        <figcaption>Framework structure and extension points. Select the diagram to view it at full size.</figcaption>
-      </figure>
+    <section class="overview-section" aria-labelledby="modes-title">
+      <div class="section-heading"><div><p class="eyebrow">02 / Modes</p><h2 id="modes-title">Four ways to run.</h2></div><p>Compose measurement and calibration behavior without embedding it in the workload.</p></div>
+      <div class="link-grid">
+        <a class="link-card" href="guide.html#modes"><span class="card-label">Measure</span><span class="card-arrow">↗</span><h3>Standard</h3><p>Summarize each workload run with counter differences and final gauge readings.</p></a>
+        <a class="link-card" href="guide.html#modes"><span class="card-label">Sample</span><span class="card-arrow">↗</span><h3>Over time</h3><p>Sample declared metrics on per-device threads and align readings in a CSV.</p></a>
+        <a class="link-card" href="guide.html#temperature"><span class="card-label">Calibrate</span><span class="card-arrow">↗</span><h3>Temperature</h3><p>Wait, take one thermal reading and write a baseline for later runs.</p></a>
+        <a class="link-card" href="guide.html#powercap"><span class="card-label">Calibrate</span><span class="card-arrow">↗</span><h3>Powercap</h3><p>Sweep a configured range through a device's calibration hook.</p></a>
+      </div>
     </section>
     <section class="overview-section" aria-labelledby="explore-title">
-      <div class="section-heading"><div><p class="eyebrow">03 / Documentation</p><h2 id="explore-title">Go where you need to.</h2></div><p>Start with a run, look up a metric, or add hardware support.</p></div>
-      <div class="link-grid">
-        <a class="link-card" href="guide.html"><span class="card-label">Run</span><h3>Measurement guide</h3><p>Install, configure and choose between standard, over-time and calibration.</p><span class="card-arrow" aria-hidden="true">↗</span></a>
-        <a class="link-card" href="fibonacci.html"><span class="card-label">Try it</span><h3>Usage example</h3><p>Follow a complete measurement from a sample program to CSV results.</p><span class="card-arrow" aria-hidden="true">↗</span></a>
-        <a class="link-card" href="metrics.html"><span class="card-label">Understand</span><h3>Metric catalogue</h3><p>Names, units, functions and sources for Intel CPU, Intel GPU and NVIDIA.</p><span class="card-arrow" aria-hidden="true">↗</span></a>
-        <a class="link-card" href="reference.html"><span class="card-label">Build</span><h3>Backend API</h3><p>Lifecycle callbacks, metric definitions and a practical guide for contributors.</p><span class="card-arrow" aria-hidden="true">↗</span></a>
+      <div class="section-heading"><div><p class="eyebrow">03 / Explore</p><h2 id="explore-title">Build your measurement.</h2></div></div>
+      <div class="step-grid">
+        <article class="step"><span>GUIDE</span><h3>Configure and run</h3><p>Understand the TOML, generated executable and output. <a href="guide.html">Read the guide →</a></p></article>
+        <article class="step"><span>EXAMPLE</span><h3>Follow the sequence</h3><p>See the four-stage Fibonacci experiment and its hardware requirements. <a href="fibonacci.html">View the example →</a></p></article>
+        <article class="step"><span>EXTEND</span><h3>Use your own devices</h3><p>Declare readers and hooks from your own code or the optional libraries. <a href="reference.html">Explore the API →</a></p></article>
       </div>
     </section>
-    <aside class="notice" aria-label="Temperature requirement"><strong>Before a run</strong><p>With a supported CPU backend, a readable CPU temperature is required, even when you select only system or GPU metrics; if it is unavailable, the workload does not start. Without a CPU backend, but with a GPU backend, this check is skipped. <a href="guide.html#temperature">Read about calibration →</a></p></aside>
+    <aside class="notice warning"><strong>Hardware matters</strong><p>Device libraries and readings depend on available hardware, dependencies and permissions. Powercap experiments can change CPU limits; review the configuration and run them only on a suitable machine.</p></aside>
   </div>
 </main>
 <footer><div class="wrap">
-  <div class="footer-inner"><span>GreenMeasurer <span class="muted">/ software energy measurement</span></span><a href="https://github.com/simaocunha71/GreenMeasurer">Source on GitHub ↗</a></div>
+  <div class="footer-inner"><span>GreenMeasurer <span class="muted">/ aspect-oriented measurement</span></span><a href="https://github.com/simaocunha71/GreenMeasurer">Source on GitHub ↗</a></div>
   <div class="footer-notes"><p><strong>Submission</strong> Submitted to the 11th International Workshop on Green and Sustainable Software (GREENS’27).</p><p><strong>Acknowledgements</strong> This work is funded by national funds through FCT - Fundação para a Ciência e a Tecnologia, I.P., under the support <a href="https://doi.org/10.54499/UID/50014/2025">UID/50014/2025</a>. Simão Cunha is also funded by FCT grant <a href="https://doi.org/10.54499/2025.04596.BDANA">2025.04596.BDANA</a>.</p></div>
 </div></footer>
 </body>

@@ -23,7 +23,7 @@ case "$1" in
         for config in "$@"; do
             index=$((index + 1))
             printf -v name 'run-%04d' "$index"
-            python3 "$root/scripts/generate_config.py" "$config" --directory "$directory/$name"
+            python3 "$root/scripts/weave.py" "$config" -o "$directory/$name"
         done
         printf '%s\n' "$index" > "$directory/.complete"
         echo "[INFO] Generation finished. Run the batch separately with: $0 run $directory"

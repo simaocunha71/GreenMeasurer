@@ -21,7 +21,7 @@ compile:
 
 generate:
 	@test -n "$(CONFIG)" -a -n "$(BUILD_DIR)" || { echo "Set CONFIG and BUILD_DIR."; exit 1; }
-	python3 ../../../scripts/generate_config.py "$(CONFIG)" --directory "$(BUILD_DIR)"
+	python3 ../../../scripts/weave.py "$(CONFIG)" -o "$(BUILD_DIR)"
 
 run-configured:
 	@test -n "$(BUILD_DIR)" || { echo "Set BUILD_DIR."; exit 1; }

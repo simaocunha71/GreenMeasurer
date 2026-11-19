@@ -1,4 +1,0 @@
-[measurement]
-mode = "temperature-calibration"
-sleep_seconds = 20
-calibration_file = "/tmp/cores_temperatures.txt"

@@ -75,7 +75,7 @@ def process_csv(filename):
     data = pd.read_csv(filename)
     package_columns = [
         column for column in data.columns
-        if column == 'Package' or column.startswith('cpu.Package_')
+        if column == 'Package' or '.Package_' in column
     ]
     if not package_columns:
         raise ValueError("CSV does not contain a CPU Package energy metric.")

@@ -1,12 +1,9 @@
 # GreenMeasurer: A Non-Intrusive Framework to Measure the Energy Consumption of Software Systems
 
-> **Historical interface notice:** Commands and workflow descriptions in this
-> draft predate the TOML-only interface. For current usage, see the
-> [README](../README.md) and [scripts guide](../scripts/README.md).
-
-Current configuration note: `metrics.select = "all"` selects all system
-metrics, metrics of the runtime-selected CPU/GPU backends, and metrics in
-declared external adapters and source definitions, subject to availability.
+> **Historical draft:** This describes the previous engine and its removed
+> plugin interface. Its architecture, configuration examples and commands do
+> not describe the current implementation. See [WEAVER.md](WEAVER.md) and the
+> [README](../README.md) for current usage.
 
 > **Draft status.** This document follows the section structure of `GreenMeasurer.pdf` while documenting only capabilities present in the current repository. It is an engineering and paper-writing draft, not a completed scientific evaluation. Quantitative accuracy, measurement overhead and broad hardware compatibility still require controlled experiments.
 

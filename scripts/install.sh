@@ -93,7 +93,7 @@ fi
 "$ROOT_DIR/.venv/bin/pip" install --upgrade pip
 "$ROOT_DIR/.venv/bin/pip" install pandas
 
-echo "#### Building core benchmark tool in src/..."
+echo "#### Building optional device libraries..."
 cd "$ROOT_DIR/src"
 make clean
 make

@@ -1,115 +1,54 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Learn how to use GreenMeasurer from a sample program to CSV results.">
-  <title>Usage example — GreenMeasurer</title>
-  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css?v=20261112-diagrams">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Run the four GreenMeasurer Fibonacci experiments in sequence.">
+  <title>Fibonacci example — GreenMeasurer</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="topbar"><div class="topbar-inner">
   <a class="brand" href="index.html"><img src="favicon.svg" alt="" width="30" height="30">GreenMeasurer</a>
-  <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="guide.html">Guide</a><a aria-current="page" href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a href="reference.html">Backend API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
+  <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="guide.html">Guide</a><a aria-current="page" href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a href="reference.html">Weaver API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
 </div></header>
-<main id="main" class="wrap">
-  <header class="doc-header"><p class="eyebrow">Getting started / Walkthrough</p><h1>Using GreenMeasurer</h1><p class="lead">Follow a complete measurement: configure a program, run it in standard and over-time modes, and inspect the resulting CSVs.</p></header>
-  <div class="doc-layout">
-    <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#before">Before you start</a><a href="#program">1. Write the program</a><a href="#config">2. Configure</a><a href="#run">3. Generate &amp; run</a><a href="#results">4. Read the CSVs</a><a href="#your-program">Use your own program</a></nav>
+<main id="main">
+  <div class="wrap doc-header"><p class="eyebrow">Documentation / 02</p><h1>Fibonacci, four ways</h1><p class="lead">A sequential example: establish a temperature baseline, then measure and calibrate the same Python workload.</p></div>
+  <div class="wrap doc-layout">
+    <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#before">Before running</a><a href="#config">Configurations</a><a href="#run">Run the sequence</a><a href="#results">Inspect results</a><a href="#your-program">Adapt the example</a></nav>
     <div class="doc-content">
-      <section id="before"><h2>Before you start</h2>
-        <p>This walkthrough uses a small recursive Fibonacci program in Python only as an example workload. The same GreenMeasurer workflow applies to other foreground programs and languages: choose a command, configure measurements, generate an executable and run it.</p>
-        <p>Run the commands below from the GreenMeasurer repository root. Follow the <a href="guide.html#install">installation guide</a> first: this example requires Python, the built launcher and a working CPU backend with a readable temperature sensor. Intel package energy also needs the Intel RAPL backend and permission to read MSRs.</p>
-        <p>The example uses <code>powercap = -1</code>, which applies GreenMeasurer's saved per-machine RAPL baseline. On first use, that baseline is captured from the current hardware limits; verify they are the values you want before the first run. It does not run powercap calibration.</p>
-        <p>The commands create <code>fibonacci.py</code>, two TOML files, two build directories, a temperature baseline and two CSVs in the repository root. The file-creation commands and successful measurements overwrite files with those names. Choose different names if you need to keep existing files.</p>
+      <section id="before"><p class="eyebrow">01 / Prepare</p><h2>Check the machine</h2>
+        <p>The example configurations use Intel CPU, Intel GPU and NVIDIA GPU device libraries. Generation requires all declared libraries and their dependencies, including NVML, even if a GPU is unavailable. The Intel CPU must support the configured thermal and powercap operations. Check permissions for sensors, RAPL and power limits. Consult the <a href="https://github.com/simaocunha71/GreenMeasurer#requirements">repository requirements</a> and review the TOMLs before running.</p>
+        <aside class="notice warning"><strong>Plan the run</strong><p>The sequence changes CPU power limits and can take a long time. It overwrites <code>/tmp/cores_temperatures.txt</code>, appends to standard and over-time CSVs, and may replace the powercap calibration output. Save any existing results first.</p></aside>
       </section>
-      <section id="program"><p class="eyebrow">Step 01</p><h2>Write the workload</h2>
-        <p>Create a deliberately recursive implementation without memoization. It prints <code>9227465</code> for <code>fibonacci(35)</code>.</p>
-        <pre><code>cat &gt; fibonacci.py &lt;&lt;'PY'
-def fibonacci(n):
-    if n &lt; 2:
-        return n
-    return fibonacci(n - 1) + fibonacci(n - 2)
-
-
-if __name__ == "__main__":
-    print(fibonacci(35))
-PY
-
-python3 fibonacci.py</code></pre>
-        <p>Increase or decrease 35 to adjust the workload duration; recursive Fibonacci becomes much slower as the input increases. This program is intentionally inefficient so that it can be sampled.</p>
+      <section id="config"><p class="eyebrow">02 / Configure</p><h2>Four separate aspects</h2>
+        <p>The configurations in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/configurations-generated">configurations-generated/</a> share the temperature baseline and declare their own devices and metrics:</p>
+        <ol>
+          <li><strong>Temperature calibration</strong> — <code>fibonacci-python-temperature-calibration.toml</code> waits 60 seconds, then records one thermal reading and a sensors snapshot.</li>
+          <li><strong>Standard</strong> — <code>fibonacci-python-standard.toml</code> measures runs at the configured powercaps.</li>
+          <li><strong>Over-time</strong> — <code>fibonacci-python-overtime.toml</code> samples metrics during repeated runs.</li>
+          <li><strong>Powercap calibration</strong> — <code>fibonacci-python-powercap-calibration.toml</code> measures the saved baseline and the configured range of power limits.</li>
+        </ol>
+        <p id="program">The workload stages run <code>Languages/Python/Fibonacci/fibonacci.py</code> and declare CPU Package, Core and DRAM energy, NVIDIA GPU energy and temperature, and Intel GPU energy. Both GPUs can be measured in the same run. If a GPU cannot initialize, its columns contain <code>NOT_SUPPORTED</code> and the other measurements continue. Individual unavailable readings use the same value. Repetitions, pauses, limits and output names come from the TOMLs; inspect them for the current values.</p>
       </section>
-      <section id="config"><p class="eyebrow">Step 02</p><h2>Create two configurations</h2>
-        <p>First, configure three standard measurements. Each execution produces one row. The first run creates <code>fibonacci-temperature.txt</code> if it does not exist.</p>
-        <pre><code>cat &gt; fibonacci-standard.toml &lt;&lt;'TOML'
-[measurement]
-mode = "standard"
-command = "python3 fibonacci.py"
-language = "Python"
-program = "fibonacci"
-output = "fibonacci-standard.csv"
-repetitions = 3
-timeout_hours = 1
-sleep_seconds = 0
-variance = 5
-powercap = -1
-calibration_file = "fibonacci-temperature.txt"
-
-[metrics]
-select = ["system.cores", "cpu.Package", "cpu.Temperature"]
-TOML</code></pre>
-        <p>Now configure over-time sampling for one execution of the same program. It uses the same temperature baseline and writes a separate CSV.</p>
-        <pre><code>cat &gt; fibonacci-overtime.toml &lt;&lt;'TOML'
-[measurement]
-mode = "over-time"
-command = "python3 fibonacci.py"
-language = "Python"
-program = "fibonacci"
-output = "fibonacci-overtime.csv"
-interval_ms = 10
-sleep_seconds = 0
-variance = 5
-powercap = -1
-calibration_file = "fibonacci-temperature.txt"
-
-[metrics]
-select = ["system.cores", "cpu.Package", "cpu.Temperature"]
-TOML</code></pre>
-        <p>These selections assume an Intel CPU backend. Run <code>./src/main --list-metrics</code> to inspect compiled backend names. On another CPU backend, use the metrics it declares, or select only <code>system.cores</code> in both files; a readable CPU temperature is still required. Without an available energy metric the CSV cannot report energy.</p>
+      <section id="run"><p class="eyebrow">03 / Execute</p><h2>Run the sequence</h2>
+        <p>From the repository root, with the permissions required by the configured devices:</p>
+        <pre><code>bash scripts/run_fibonacci_sequence.sh</code></pre>
+        <p>The script builds the optional device libraries, generates all four executables first, then runs them in the order above. It stops on failure. By default it creates <code>generated-fibonacci-sequence</code>; pass a different, non-existent directory as the optional argument:</p>
+        <pre><code>bash scripts/run_fibonacci_sequence.sh my-new-sequence</code></pre>
+        <p>The script runs from the repository root, so workload and output paths are relative to that directory. It does not automatically obtain elevated privileges.</p>
       </section>
-      <section id="run"><p class="eyebrow">Step 03</p><h2>Generate and measure</h2>
-        <pre><code>make -C src
-./src/main --config fibonacci-standard.toml --directory fibonacci-standard-build
-./src/main --config fibonacci-overtime.toml --directory fibonacci-overtime-build
-
-./fibonacci-standard-build/greenmeasurer
-./fibonacci-overtime-build/greenmeasurer</code></pre>
-        <p>Generation compiles an executable but does not run Fibonacci. The two build directories must not already exist. If you change a TOML file, generate a new executable in a new directory.</p>
-        <p>On Intel systems, applying the saved RAPL baseline may require elevated privileges. Run the generated executables with <code>sudo</code> when needed, for example <code>sudo ./fibonacci-standard-build/greenmeasurer</code>. Files created with sudo may be owned by root. Use elevation only when needed and inspect trusted commands before running them.</p>
-        <p>If CPU temperature cannot be read, GreenMeasurer reports an error and does not start the workload. It can wait between runs for the CPU to cool to the baseline plus <code>variance</code>. With <code>sleep_seconds = 0</code> the baseline is immediate, not a stabilized temperature; increase it for more controlled experiments. See <a href="guide.html#troubleshooting">troubleshooting</a> if a metric is unavailable.</p>
+      <section id="results"><p class="eyebrow">04 / Inspect</p><h2>Read the output</h2>
+        <pre><code>cat /tmp/cores_temperatures.txt
+head -n 5 fibonacci-python-standard.csv
+head -n 5 fibonacci-python-overtime.csv
+head -n 5 fibonacci-python-powercap-calibration.csv</code></pre>
+        <p>These are the example paths; use the configured paths if you change the TOMLs. Use fresh CSVs when the metric schema changes. The temperature line represents one reading after the wait, not a time average. Standard counters are differences between the beginning and end of a run; over-time counters are raw samples. The powercap post-processor requires valid CPU Package readings and reports an error if they are unavailable, even though the CSV is written. See <a href="metrics.html#output">the output guide</a> before interpreting energy readings.</p>
       </section>
-      <section id="results"><p class="eyebrow">Step 04</p><h2>Inspect the CSVs</h2>
-        <pre><code>head -n 5 fibonacci-standard.csv
-head -n 5 fibonacci-overtime.csv</code></pre>
-        <p>Open the files in a spreadsheet or any CSV reader. The examples below use <strong>illustrative values, not actual measurements</strong>. Your values and available columns will depend on your machine.</p>
-        <h3>Standard: one row per run</h3>
-        <pre><code>Language,Program,Powercap,Time_ms,Cores,cpu.Package_J,cpu.Temperature_C
-Python, fibonacci, -1, 12000.000000, 12, 150.000000000000000000, 55.000000000000000000
-Python, fibonacci, -1, 12100.000000, 12, 152.000000000000000000, 56.000000000000000000
-Python, fibonacci, -1, 11900.000000, 12, 149.000000000000000000, 55.000000000000000000</code></pre>
-        <p>Standard contains three data rows on a successful run. <code>Time_ms</code> is the elapsed time for each run, and <code>cpu.Package_J</code>, when available, is the package energy over that run.</p>
-        <h3>Over-time: first three samples</h3>
-        <pre><code>Language,Program,Powercap,Timestamp_ms,Cores,cpu.Package_J,cpu.Temperature_C
-Python, fibonacci, -1, 10200.000000, 12.000000000000000000, 100.125000000000000000, 50.000000000000000000
-Python, fibonacci, -1, 20500.000000, 12.000000000000000000, 100.255000000000000000, 50.000000000000000000
-Python, fibonacci, -1, 30800.000000, 12.000000000000000000, 100.383000000000000000, 51.000000000000000000</code></pre>
-        <p>Over-time mode contains a row per sample. <code>Timestamp_ms</code> is elapsed time in milliseconds, and <code>cpu.Package_J</code> is the energy counter reading, not instantaneous power or energy since the previous sample. Counters may wrap or reset. The 10,000 µs interval is a pause between cycles, not a guaranteed sampling period.</p>
-        <p>Column availability and values vary with hardware and permissions. Package energy includes other activity and may overlap with other domains; it is not the energy of the Python process alone. A later failed reading is recorded as <code>NOT_SUPPORTED</code>.</p>
-      </section>
-      <section id="your-program"><h2>Use your own program</h2>
-        <p>Replace <code>command</code> in both TOML files with the command that runs your program in the foreground. Set <code>language</code> and <code>program</code> to labels that identify it in the CSV, and choose output names and metrics for your experiment. The command can run a program written in another language; those labels do not change how it is executed.</p>
-        <p>Generate new executables in new directories after changing the TOML files, then run them and inspect the CSVs as above. Make sure the command and its files are accessible from the directory in which you run the generated executable.</p>
-        <div class="page-links"><a href="guide.html">Measurement guide →</a><a href="metrics.html">Understand the metrics →</a></div>
+      <section id="your-program"><h2>Adapt the experiment</h2>
+        <p>Change the workload command, labels, output paths, device declarations and settings as appropriate for your machine. Generate new executables after editing. Device libraries are optional: you can declare your own readers and hooks instead. See the <a href="guide.html">measurement guide</a> and <a href="reference.html">weaver API</a>.</p>
       </section>
     </div>
   </div>

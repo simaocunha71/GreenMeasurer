@@ -1,7 +1,5 @@
-import os
 from pathlib import Path
 
-from temperature_fixture import install_temperature_backend
 import subprocess
 import sys
 import tempfile
@@ -84,29 +82,21 @@ class OvertimeScriptsTest(unittest.TestCase):
         self.assertIn("finite and positive", result.stderr)
 
     def test_compare_with_toy_backend(self):
-        backend_dir = self.directory / "backends" / "cpu" / "toy"
-        backend_dir.mkdir(parents=True)
-        subprocess.run(
-            ["cc", "-O2", "-fPIC", "-shared", "-I", str(ROOT / "src" / "include"),
-             "-o", str(backend_dir / "backend.so"),
-             str(ROOT / "src" / "tests" / "fixtures" / "toy_backends" / "cpu" / "toy_cpu" / "toy_cpu.c")],
-            check=True,
-        )
-        calibration = self.directory / "calib.txt"
-        calibration.write_text("0\n", encoding="utf-8")
+        (self.directory / "metric.h").write_text("int metric(void);\n", encoding="utf-8")
+        (self.directory / "metric.c").write_text("int metric(void) { return 42; }\n",
+                                                  encoding="utf-8")
         output = self.directory / "user-results.csv"
         output.write_text("preserved\n", encoding="utf-8")
         config = self.directory / "config.toml"
         config.write_text(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
-            f'calibration_file="{calibration}"\noutput="{output}"\n'
-            'variance=100\nsleep_seconds=0\ninterval_ms=5\n'
-            '[metrics]\nselect=["cpu.Energy"]\n', encoding="utf-8",
+            f'output="{output}"\n'
+            'variance=100\nsleep_seconds=0\ninterval_ms=5\nrepetitions=2\n'
+            '[[device]]\nname="Toy"\nheader="metric.h"\nlib="metric.c"\n'
+            '[[device.metric]]\nname="Value"\nread="int metric()"\n', encoding="utf-8",
         )
-        env = os.environ.copy()
-        env["GREENMEASURER_BACKEND_DIR"] = str(self.directory / "backends")
         result = self.run_script(
-            COMPARE, "--config", config, "--runs", "2", env=env,
+            COMPARE, "--config", config, "--runs", "2",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count(",baseline,"), 2)
@@ -120,17 +110,10 @@ class OvertimeScriptsTest(unittest.TestCase):
         self.assertIn("does not measure energy overhead", result.stdout)
         self.assertEqual(output.read_text(encoding="utf-8"), "preserved\n")
 
-        config.write_text(config.read_text(encoding="utf-8").replace(
-            'select=["cpu.Energy"]', 'select="all"'), encoding="utf-8")
-        result = self.run_script(COMPARE, "--config", config, "--runs", "1", env=env)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.count(",overtime,"), 1)
-        self.assertEqual(output.read_text(encoding="utf-8"), "preserved\n")
-
         config.write_text(config.read_text(encoding="utf-8").replace("sleep 0.03", "exit 4"),
                           encoding="utf-8")
         failure = self.run_script(
-            COMPARE, "--config", config, "--runs", "1", env=env,
+            COMPARE, "--config", config, "--runs", "1",
         )
         self.assertNotEqual(failure.returncode, 0)
         self.assertIn("status", failure.stderr)
@@ -141,8 +124,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         calibration.write_text("0\n", encoding="utf-8")
         config.write_text(
             '[measurement]\nmode="standard"\ncommand="true"\n'
-            f'calibration_file="{calibration}"\n'
-            '[metrics]\nselect=["system.cores"]\n', encoding="utf-8",
+            f'calibration_file="{calibration}"\n', encoding="utf-8",
         )
         result = self.run_script(COMPARE, "--config", config)
         self.assertNotEqual(result.returncode, 0)
@@ -152,8 +134,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         self.assertIn("--config", result.stderr)
         config.write_text(
             '[measurement]\nmode="over-time"\ncommand="true"\npowercap=5\n'
-            f'calibration_file="{calibration}"\n'
-            '[metrics]\nselect=["system.cores"]\n', encoding="utf-8",
+            f'calibration_file="{calibration}"\n', encoding="utf-8",
         )
         result = self.run_script(COMPARE, "--config", config)
         self.assertNotEqual(result.returncode, 0)
@@ -166,24 +147,17 @@ class OvertimeScriptsTest(unittest.TestCase):
         (self.directory / "metric.c").write_text(
             '#include "metric.h"\nint metric(void) { return 42; }\n', encoding="utf-8",
         )
-        backends = self.directory / "backends"
-        backends.mkdir()
-        install_temperature_backend(backends)
-        env = os.environ.copy()
-        env["GREENMEASURER_BACKEND_DIR"] = str(backends)
         config = self.directory / "config.toml"
         config.write_text(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
             f'calibration_file="{calibration}"\n'
             'variance=100\nsleep_seconds=0\ninterval_ms=5\n'
-            '[metrics]\nselect=["external.demo.Value"]\n'
-            '[[external_metrics]]\nname="demo"\nmetric="Value"\nunit="count"\n'
-            'function="metric"\nheader="metric.h"\nsources=["metric.c"]\n'
-            'return_type="int"\n', encoding="utf-8",
+            '[[device]]\nname="Demo"\nheader="metric.h"\nlib="metric.c"\n'
+            '[[device.metric]]\nname="Value"\nread="int metric()"\nunit="count"\n',
+            encoding="utf-8",
         )
-        result = self.run_script(COMPARE, "--config", config, "--runs", "1", env=env)
+        result = self.run_script(COMPARE, "--config", config, "--runs", "1")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Built external metric", result.stderr)
         self.assertEqual(result.stdout.count(",overtime,"), 1)
 
 

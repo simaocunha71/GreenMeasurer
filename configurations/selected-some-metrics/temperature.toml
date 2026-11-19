@@ -1,4 +1,0 @@
-[measurement]
-mode = "temperature-calibration"
-sleep_seconds = 10
-calibration_file = "greenmeasurer-test-temperature.txt"
