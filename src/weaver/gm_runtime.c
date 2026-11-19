@@ -1,9 +1,9 @@
-/* Runtime of the generated GreenMeasurer: runs the workload, drives the generated device
+/* Runtime of the generated GreenMeasurer: runs the workload, drives the generated aspect
    threads and writes the CSV. It knows nothing about any concrete metric. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-#include "gm_device.h"
+#include "gm_aspect.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -92,7 +92,7 @@ static unsigned char device_unavailable[GM_MAX_DEVICES];
 static unsigned char sampler_started[GM_MAX_DEVICES];
 
 /* State shared by the measurement helpers, set once by gm_main. */
-static const GmDevice *ctx_devices;
+static const GmAspect *ctx_devices;
 static size_t ctx_count;
 static const sigset_t *ctx_mask;
 static const GmConfig *ctx_config;
@@ -105,31 +105,31 @@ static void on_sigint(int signum) {
     terminate_requested = 1;
 }
 
-static int has_hooks(const GmDevice *device) {
-    return device->thermal || device->powercap_set || device->powercap_restore ||
-           device->powercap_calibrate;
+static int has_hooks(const GmAspect *aspect) {
+    return aspect->thermal || aspect->powercap_set || aspect->powercap_restore ||
+           aspect->powercap_calibrate;
 }
 
-static int setup_devices(const GmDevice *devices, size_t count) {
+static int setup_devices(const GmAspect *aspects, size_t count) {
     for (size_t d = 0; d < count; d++) {
-        if (!device_active[d] && !has_hooks(&devices[d])) continue;
-        if (devices[d].setup && devices[d].setup() != 0) {
+        if (!device_active[d] && !has_hooks(&aspects[d])) continue;
+        if (aspects[d].setup && aspects[d].setup() != 0) {
             if (!device_active[d]) {
-                fprintf(stderr, "[WARNING] Setup of device '%s' failed; its thermal and powercap "
-                        "hooks are disabled.\n", devices[d].name);
+                fprintf(stderr, "[WARNING] Setup of aspect '%s' failed; its thermal and powercap "
+                        "hooks are disabled.\n", aspects[d].name);
                 hooks_disabled[d] = 1;
                 continue;
             }
-            if (devices[d].optional) {
-                fprintf(stderr, "[WARNING] Setup of optional device '%s' failed; its metrics "
-                                "are unavailable and its hooks are disabled.\n", devices[d].name);
+            if (aspects[d].optional) {
+                fprintf(stderr, "[WARNING] Setup of optional aspect '%s' failed; its metrics "
+                                "are unavailable and its hooks are disabled.\n", aspects[d].name);
                 device_unavailable[d] = 1;
                 hooks_disabled[d] = 1;
                 continue;
             }
-            fprintf(stderr, "[ERROR] Setup of device '%s' failed.\n", devices[d].name);
+            fprintf(stderr, "[ERROR] Setup of aspect '%s' failed.\n", aspects[d].name);
             for (size_t u = d; u-- > 0;)
-                if (setup_done[u] && devices[u].teardown) devices[u].teardown();
+                if (setup_done[u] && aspects[u].teardown) aspects[u].teardown();
             memset(setup_done, 0, sizeof(setup_done));
             return -1;
         }
@@ -138,30 +138,30 @@ static int setup_devices(const GmDevice *devices, size_t count) {
     thermal_dev = powercap_dev = calibration_dev = -1;
     for (size_t d = 0; d < count; d++) {
         if (hooks_disabled[d]) continue;
-        if (thermal_dev < 0 && devices[d].thermal) thermal_dev = (int)d;
-        if (powercap_dev < 0 && devices[d].powercap_set && devices[d].powercap_restore)
+        if (thermal_dev < 0 && aspects[d].thermal) thermal_dev = (int)d;
+        if (powercap_dev < 0 && aspects[d].powercap_set && aspects[d].powercap_restore)
             powercap_dev = (int)d;
-        if (calibration_dev < 0 && devices[d].powercap_calibrate) calibration_dev = (int)d;
+        if (calibration_dev < 0 && aspects[d].powercap_calibrate) calibration_dev = (int)d;
     }
     return 0;
 }
 
-static void teardown_devices(const GmDevice *devices, size_t count) {
+static void teardown_devices(const GmAspect *aspects, size_t count) {
     for (size_t d = count; d-- > 0;)
-        if (setup_done[d] && devices[d].teardown) devices[d].teardown();
+        if (setup_done[d] && aspects[d].teardown) aspects[d].teardown();
     memset(setup_done, 0, sizeof(setup_done));
     thermal_dev = powercap_dev = calibration_dev = -1;
 }
 
-static int start_samplers(const GmDevice *devices, size_t count, unsigned interval_ms,
+static int start_samplers(const GmAspect *aspects, size_t count, unsigned interval_ms,
                           const struct timespec *origin) {
     for (size_t d = 0; d < count; d++) {
         if (!device_active[d] || device_unavailable[d]) continue;
-        if (devices[d].start(selected_mask[d], interval_ms, origin) != 0) {
+        if (aspects[d].start(selected_mask[d], interval_ms, origin) != 0) {
             fprintf(stderr, "[ERROR] Failed to start the sampling thread of '%s'.\n",
-                    devices[d].name);
+                    aspects[d].name);
             for (size_t u = 0; u < d; u++)
-                if (sampler_started[u]) devices[u].stop();
+                if (sampler_started[u]) aspects[u].stop();
             memset(sampler_started, 0, sizeof(sampler_started));
             return -1;
         }
@@ -170,9 +170,9 @@ static int start_samplers(const GmDevice *devices, size_t count, unsigned interv
     return 0;
 }
 
-static void stop_samplers(const GmDevice *devices, size_t count) {
+static void stop_samplers(const GmAspect *aspects, size_t count) {
     for (size_t d = 0; d < count; d++)
-        if (sampler_started[d]) devices[d].stop();
+        if (sampler_started[d]) aspects[d].stop();
     memset(sampler_started, 0, sizeof(sampler_started));
 }
 
@@ -187,9 +187,9 @@ static pid_t start_workload(const char *command, const sigset_t *old_mask) {
     return pid;
 }
 
-/* Waits for the workload; aborts it when a device runs out of static sample capacity or the
+/* Waits for the workload; aborts it when an aspect runs out of static sample capacity or the
    timeout expires. Returns the exit status, or -1 on failure. */
-static int wait_workload(pid_t pid, const GmDevice *devices, size_t count, unsigned timeout_s) {
+static int wait_workload(pid_t pid, const GmAspect *aspects, size_t count, unsigned timeout_s) {
     sigset_t chld;
     sigemptyset(&chld);
     sigaddset(&chld, SIGCHLD);
@@ -209,9 +209,9 @@ static int wait_workload(pid_t pid, const GmDevice *devices, size_t count, unsig
             return -1;
         }
         for (size_t d = 0; d < count; d++) {
-            if (!sampler_started[d] || !devices[d].overflowed()) continue;
-            fprintf(stderr, "[ERROR] Sample capacity (%d) of device '%s' exceeded; "
-                    "measurement aborted.\n", GM_MAX_SAMPLES, devices[d].name);
+            if (!sampler_started[d] || !aspects[d].overflowed()) continue;
+            fprintf(stderr, "[ERROR] Sample capacity (%d) of aspect '%s' exceeded; "
+                    "measurement aborted.\n", GM_MAX_SAMPLES, aspects[d].name);
             kill(pid, SIGKILL);
             waitpid(pid, &status, 0);
             return -1;
@@ -254,7 +254,7 @@ static double read_baseline_file(const char *path) {
 /* Stores the "sensors" snapshot and the current temperature in the calibration file. */
 static int calibrate_temperature(const char *path, unsigned sleep_seconds) {
     if (thermal_dev < 0) {
-        fprintf(stderr, "[ERROR] No available device declares a thermal sensor; "
+        fprintf(stderr, "[ERROR] No available aspect declares a thermal sensor; "
                         "temperature calibration cannot run.\n");
         return -1;
     }
@@ -334,7 +334,7 @@ static int wait_for_temperature(double baseline, unsigned variance) {
 static int apply_powercap(int powercap) {
     if (powercap_dev < 0) {
         if (powercap > 0) {
-            fprintf(stderr, "[ERROR] No device declares powercap_set/powercap_restore; "
+            fprintf(stderr, "[ERROR] No aspect declares powercap_set/powercap_restore; "
                             "cannot apply %d W.\n", powercap);
             return -1;
         }
@@ -367,14 +367,14 @@ static void write_value(FILE *fp, const GmMetric *metric, double value) {
     else fprintf(fp, "%.9g", value);
 }
 
-static void write_header(FILE *fp, const char *time_column, const GmDevice *devices, size_t count) {
+static void write_header(FILE *fp, const char *time_column, const GmAspect *aspects, size_t count) {
     fprintf(fp, "Language,Program,Powercap,%s", time_column);
     for (size_t d = 0; d < count; d++) {
         if (!device_active[d]) continue;
-        for (size_t m = 0; m < devices[d].metric_count; m++) {
+        for (size_t m = 0; m < aspects[d].metric_count; m++) {
             if (!selected_mask[d][m]) continue;
-            const GmMetric *metric = &devices[d].metrics[m];
-            fprintf(fp, ",%s.%s", devices[d].name, metric->name);
+            const GmMetric *metric = &aspects[d].metrics[m];
+            fprintf(fp, ",%s.%s", aspects[d].name, metric->name);
             if (metric->unit && *metric->unit) fprintf(fp, "_%s", metric->unit);
         }
     }
@@ -382,7 +382,7 @@ static void write_header(FILE *fp, const char *time_column, const GmDevice *devi
 }
 
 static FILE *open_output(const char *path, const char *time_column,
-                         const GmDevice *devices, size_t count) {
+                         const GmAspect *aspects, size_t count) {
     FILE *fp = fopen(path, "a");
     if (!fp) {
         perror("[ERROR] Failed to open the output CSV");
@@ -390,23 +390,23 @@ static FILE *open_output(const char *path, const char *time_column,
     }
     struct stat info;
     if (fstat(fileno(fp), &info) == 0 && info.st_size == 0)
-        write_header(fp, time_column, devices, count);
+        write_header(fp, time_column, aspects, count);
     return fp;
 }
 
-/* Every device samples on its own thread, so rows are aligned on a common time grid:
-   a device contributes its latest sample whose time is within half an interval of the
-   row. The final row, at the workload exit time, takes the last sample of each device. */
+/* Every aspect samples on its own thread, so rows are aligned on a common time grid:
+   an aspect contributes its latest sample whose time is within half an interval of the
+   row. The final row, at the workload exit time, takes the last sample of each aspect. */
 static int dump_over_time(const char *path, const char *language, const char *program,
-                          int powercap, const GmDevice *devices, size_t count,
+                          int powercap, const GmAspect *aspects, size_t count,
                           unsigned interval_ms, double workload_ms) {
-    FILE *fp = open_output(path, "Timestamp_ms", devices, count);
+    FILE *fp = open_output(path, "Timestamp_ms", aspects, count);
     if (!fp) return -1;
     size_t next[GM_MAX_DEVICES] = {0};
     double total = workload_ms;
     for (size_t d = 0; d < count; d++) {
-        size_t n = device_active[d] && !device_unavailable[d] ? devices[d].count() : 0;
-        if (n && devices[d].timestamp(n - 1) > total) total = devices[d].timestamp(n - 1);
+        size_t n = device_active[d] && !device_unavailable[d] ? aspects[d].count() : 0;
+        if (n && aspects[d].timestamp(n - 1) > total) total = aspects[d].timestamp(n - 1);
     }
     double step = (double)interval_ms;
     for (size_t k = 1;; k++) {
@@ -416,14 +416,14 @@ static int dump_over_time(const char *path, const char *language, const char *pr
         fprintf(fp, "%s,%s,%d,%.6f", language, program, powercap, t);
         for (size_t d = 0; d < count; d++) {
             if (!device_active[d]) continue;
-            size_t n = device_unavailable[d] ? 0 : devices[d].count();
-            while (next[d] < n && (final_row || devices[d].timestamp(next[d]) < t + step / 2.0))
+            size_t n = device_unavailable[d] ? 0 : aspects[d].count();
+            while (next[d] < n && (final_row || aspects[d].timestamp(next[d]) < t + step / 2.0))
                 next[d]++;
-            for (size_t m = 0; m < devices[d].metric_count; m++) {
+            for (size_t m = 0; m < aspects[d].metric_count; m++) {
                 if (!selected_mask[d][m]) continue;
                 fputc(',', fp);
                 if (next[d] == 0) fputs(GM_UNAVAILABLE, fp);
-                else write_value(fp, &devices[d].metrics[m], devices[d].metrics[m].sample(next[d] - 1));
+                else write_value(fp, &aspects[d].metrics[m], aspects[d].metrics[m].sample(next[d] - 1));
             }
         }
         fputc('\n', fp);
@@ -509,7 +509,7 @@ static int measure_standard(const char *command, FILE *fp, const char *language,
     return fflush(fp) == 0 ? 0 : 1;
 }
 
-/* Called by the device libraries' powercap calibration: measures the workload ntimes in
+/* Called by the aspect libraries' powercap calibration: measures the workload ntimes in
    standard mode at the given powercap and appends the rows to measurements_file. */
 int runTesting(int ntimes, int core, const char *command, const char *language,
                const char *program, const char *measurements_file, int powercap,
@@ -623,7 +623,7 @@ static void run_powercap_processor(const char *csv) {
 static int run_powercap_calibration(const char *command, const char *csv, int min_powercap,
                                     int max_powercap, double baseline, unsigned timeout_s) {
     if (calibration_dev < 0) {
-        fprintf(stderr, "[ERROR] No device declares powercap_calibration.\n");
+        fprintf(stderr, "[ERROR] No aspect declares powercap_calibration.\n");
         return 1;
     }
     int result = ctx_devices[calibration_dev].powercap_calibrate(
@@ -687,7 +687,7 @@ static int parse_powercaps(const char *text, int *caps, int capacity) {
 typedef enum { ACTION_MEASURE, ACTION_TEMPERATURE, ACTION_POWERCAP } Action;
 
 int gm_main(int argc, char **argv, const GmConfig *defaults,
-            const GmDevice *devices, size_t device_count,
+            const GmAspect *aspects, size_t device_count,
             const GmFlag *flags, size_t flag_count) {
     GmConfig config = *defaults;
     const char *command = defaults->command, *output = defaults->output;
@@ -702,12 +702,12 @@ int gm_main(int argc, char **argv, const GmConfig *defaults,
     static int powercaps[GM_MAX_POWERCAPS];
 
     if (device_count > GM_MAX_DEVICES) {
-        fprintf(stderr, "[ERROR] At most %d devices are supported.\n", GM_MAX_DEVICES);
+        fprintf(stderr, "[ERROR] At most %d aspects are supported.\n", GM_MAX_DEVICES);
         return 1;
     }
     for (size_t d = 0; d < device_count; d++)
-        if (devices[d].metric_count > GM_MAX_METRICS_PER_DEVICE) {
-            fprintf(stderr, "[ERROR] At most %d metrics per device are supported.\n",
+        if (aspects[d].metric_count > GM_MAX_METRICS_PER_DEVICE) {
+            fprintf(stderr, "[ERROR] At most %d metrics per aspect are supported.\n",
                     GM_MAX_METRICS_PER_DEVICE);
             return 1;
         }
@@ -780,17 +780,17 @@ int gm_main(int argc, char **argv, const GmConfig *defaults,
                 fprintf(stderr, "[ERROR] Unknown or incomplete argument '%s'.\n", arg);
                 return 1;
             }
-            chosen[flags[f].device][flags[f].metric] = 1;
+            chosen[flags[f].aspect][flags[f].metric] = 1;
             metric_flags_given = 1;
         }
     }
     if (!metric_flags_given)
         for (size_t f = 0; f < flag_count; f++)
-            if (flags[f].default_on) chosen[flags[f].device][flags[f].metric] = 1;
+            if (flags[f].default_on) chosen[flags[f].aspect][flags[f].metric] = 1;
 
     memcpy(selected_mask, chosen, sizeof(selected_mask));
     for (size_t d = 0; d < device_count; d++)
-        for (size_t m = 0; m < devices[d].metric_count; m++)
+        for (size_t m = 0; m < aspects[d].metric_count; m++)
             if (selected_mask[d][m]) device_active[d] = 1;
 
     if (action != ACTION_TEMPERATURE && (!command || !*command)) {
@@ -814,7 +814,7 @@ int gm_main(int argc, char **argv, const GmConfig *defaults,
     sigaddset(&block, SIGCHLD);
     sigprocmask(SIG_BLOCK, &block, &old_mask);
     signal(SIGINT, on_sigint);
-    ctx_devices = devices;
+    ctx_devices = aspects;
     ctx_count = device_count;
     ctx_mask = &old_mask;
     ctx_config = &config;
@@ -822,7 +822,7 @@ int gm_main(int argc, char **argv, const GmConfig *defaults,
 
     int result = 1;
     double baseline;
-    if (setup_devices(devices, device_count) == 0) {
+    if (setup_devices(aspects, device_count) == 0) {
         if (action == ACTION_TEMPERATURE) {
             result = calibrate_temperature(calibration_file, config.sleep_seconds) == 0 ? 0 : 1;
         } else if (resolve_baseline(calibration_file, config.sleep_seconds, &baseline) == 0) {
@@ -834,7 +834,7 @@ int gm_main(int argc, char **argv, const GmConfig *defaults,
             else
                 result = run_over_time(command, output, baseline);
         }
-        teardown_devices(devices, device_count);
+        teardown_devices(aspects, device_count);
     }
     sigprocmask(SIG_SETMASK, &old_mask, NULL);
     return result;

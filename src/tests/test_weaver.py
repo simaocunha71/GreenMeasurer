@@ -62,6 +62,36 @@ class WeaverTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.directory / "generated-toy" / "greenmeasurer").is_file())
 
+    def test_without_aspects_runs_system_without_measurements(self):
+        config = self.directory / "plain.toml"
+        config.write_text('[measurement]\nmode = "standard"\n'
+                          'calibration_file = "unused.txt"\ncommand = "printf executed"\n')
+        executable = self.weave(config, self.directory / "plain")
+        generated = (self.directory / "plain" / "GreenMeasurer.c").read_text()
+        self.assertIn('system("printf executed")', generated)
+        compile_command = subprocess.run(
+            [sys.executable, str(WEAVER), str(config), "--no-build",
+             "-o", str(self.directory / "plain-source")],
+            text=True, capture_output=True, timeout=30)
+        self.assertEqual(compile_command.returncode, 0, compile_command.stderr)
+        self.assertNotIn("gm_runtime.c", compile_command.stdout)
+        self.assertNotIn("-pthread", compile_command.stdout)
+        result = subprocess.run([str(executable)], cwd=self.directory,
+                                text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "executed")
+        self.assertFalse((self.directory / "measurements.csv").exists())
+        result = subprocess.run([str(executable), "--standard"], cwd=self.directory,
+                                text=True, capture_output=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not accept arguments", result.stderr)
+        config.write_text(config.read_text().replace("printf executed", "exit 7"))
+        executable = self.weave(config, self.directory / "plain-failure")
+        result = subprocess.run([str(executable)], cwd=self.directory,
+                                text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("status 7", result.stderr)
+
     def test_over_time_aligns_devices_on_one_csv(self):
         result, rows, events = self.run_engine("-command", "sleep 0.3")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -94,6 +124,23 @@ class WeaverTest(unittest.TestCase):
             self.assertEqual(row["Energy.Package_uJ"], "10")
             self.assertEqual(row["Processes.NumberProcesses"], "3")
 
+    def test_only_over_time_starts_sampling_threads(self):
+        source = self.directory / "deny-threads.c"
+        library = self.directory / "deny-threads.so"
+        source.write_text(
+            '#include <pthread.h>\n#include <errno.h>\n'
+            'int pthread_create(pthread_t *t, const pthread_attr_t *a, '
+            'void *(*start)(void *), void *arg) { return EAGAIN; }\n')
+        subprocess.run(["gcc", "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
+        standard, rows, _ = self.run_engine("--standard", "-command", "true",
+                                            LD_PRELOAD=str(library))
+        self.assertEqual(standard.returncode, 0, standard.stderr)
+        self.assertTrue(rows)
+        overtime, _, _ = self.run_engine("--over-time", "-command", "sleep 0.1",
+                                         LD_PRELOAD=str(library))
+        self.assertNotEqual(overtime.returncode, 0)
+        self.assertIn("Failed to start the sampling thread", overtime.stderr)
+
     def test_metric_flags_select_what_is_measured(self):
         result, rows, events = self.run_engine("--Processes.NumberProcesses", "-command", "true")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -109,7 +156,7 @@ class WeaverTest(unittest.TestCase):
     def test_failed_setup_aborts_and_tears_down(self):
         result, rows, _ = self.run_engine("-command", "true", TOY_FAIL_SETUP="1")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("Setup of device 'Energy' failed", result.stderr)
+        self.assertIn("Setup of aspect 'Energy' failed", result.stderr)
         self.assertEqual(rows, [])
 
     def test_optional_device_preserves_columns_when_setup_fails(self):
@@ -122,7 +169,7 @@ class WeaverTest(unittest.TestCase):
                 result, rows, events = self.run_engine(
                     mode, "-command", "sleep 0.1", executable=executable, TOY_FAIL_SETUP="1")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("Setup of optional device 'Energy' failed", result.stderr)
+                self.assertIn("Setup of optional aspect 'Energy' failed", result.stderr)
                 self.assertTrue(rows)
                 self.assertTrue(all(row["Energy.Package_uJ"] == "NOT_SUPPORTED" and
                                     row["Energy.Temperature_C"] == "NOT_SUPPORTED" and
@@ -286,7 +333,7 @@ class WeaverTest(unittest.TestCase):
     def test_power_capping_needs_a_device_with_powercap_hooks(self):
         result, _, _ = self.run_engine("-powercap", "5", "-command", "true")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("No device declares powercap_set", result.stderr)
+        self.assertIn("No aspect declares powercap_set", result.stderr)
 
     def test_over_time_applies_and_restores_each_powercap(self):
         result, rows, events = self.run_engine(
@@ -336,7 +383,7 @@ class WeaverTest(unittest.TestCase):
         baseline.write_text("Average temperature: 40.0 C\n")
         output = "configured-powercap-calibration.csv"
         source = (FIXTURES / "toy_hooks.toml").read_text()
-        device_config = source.split("[[device]]", 1)[1]
+        device_config = source.split("[[aspect]]", 1)[1]
         config = self.directory / "configured-powercap-calibration.toml"
         config.write_text(
             '[measurement]\n'
@@ -353,7 +400,7 @@ class WeaverTest(unittest.TestCase):
             'sleep_seconds = 0\n'
             f'calibration_file = "{baseline}"\n'
             'variance = 5\n\n'
-            '[[device]]' + device_config
+            '[[aspect]]' + device_config
         )
         executable = self.weave(config, self.directory / "configured-calibration")
         log = self.directory / "configured-calibration.log"
@@ -442,35 +489,45 @@ class WeaverValidationTest(unittest.TestCase):
 
     DEVICE = ('[measurement]\nmode = "over-time"\n'
               'calibration_file = "temperature-baseline.txt"\n'
-              '[[device]]\nname = "D"\nheader = "d.h"\n')
+              '[[aspect]]\nname = "D"\nheader = "d.h"\n')
 
-    def test_rejects_devices_inside_measurement(self):
-        self.check('[measurement]\nmode = "over-time"\ndevice = "RAPL"\n', "[[device]]")
+    def test_rejects_aspects_inside_measurement(self):
+        self.check('[measurement]\nmode = "over-time"\naspect = "RAPL"\n', "[[aspect]]")
+
+    def test_rejects_old_device_tables(self):
+        self.check('[measurement]\nmode = "standard"\n'
+                   'calibration_file = "baseline.txt"\ncommand = "true"\n'
+                   '[[device]]\nname = "D"\n', "unknown top-level keys")
 
     def test_requires_calibration_file(self):
         self.check('[measurement]\nmode = "over-time"\n',
                    "measurement.calibration_file is required")
 
+    def test_rejects_measurement_options_without_aspects(self):
+        self.check('[measurement]\nmode = "standard"\ncalibration_file = "baseline.txt"\n'
+                   'command = "true"\nrepetitions = 2\n',
+                   "measurement settings require at least one aspect")
+
     def test_rejects_unsupported_return_type(self):
-        self.check(self.DEVICE + '[[device.metric]]\nname = "M"\nread = "char f()"\n',
+        self.check(self.DEVICE + '[[aspect.metric]]\nname = "M"\nread = "char f()"\n',
                    "unsupported return type")
 
     def test_rejects_function_with_arguments(self):
-        self.check(self.DEVICE + '[[device.metric]]\nname = "M"\nread = "int f(int x)"\n',
+        self.check(self.DEVICE + '[[aspect.metric]]\nname = "M"\nread = "int f(int x)"\n',
                    "must have the form")
 
     def test_rejects_device_without_metrics(self):
         self.check(self.DEVICE, "at least one")
 
     def test_rejects_unknown_kind(self):
-        self.check(self.DEVICE + '[[device.metric]]\nname = "M"\nread = "int f()"\nkind = "x"\n',
+        self.check(self.DEVICE + '[[aspect.metric]]\nname = "M"\nread = "int f()"\nkind = "x"\n',
                    "kind must be one of")
 
     def test_rejects_non_boolean_optional_device(self):
         self.check(self.DEVICE + 'optional = "yes"\n', "optional must be a boolean")
 
     def test_rejects_powercap_set_without_restore(self):
-        self.check(self.DEVICE + 'powercap_set = "int f(int)"\n[[device.metric]]\nname = "M"\n'
+        self.check(self.DEVICE + 'powercap_set = "int f(int)"\n[[aspect.metric]]\nname = "M"\n'
                    'read = "int f()"\n', "declared together")
 
     def test_rejects_invalid_powercap_list(self):
@@ -480,21 +537,21 @@ class WeaverValidationTest(unittest.TestCase):
     def test_rejects_powercap_calibration_without_range(self):
         self.check('[measurement]\nmode = "powercap-calibration"\ncommand = "true"\n'
                    'calibration_file = "temperature-baseline.txt"\npowercap_min = 2\n'
-                   '[[device]]\nname = "D"\nheader = "d.h"\n'
-                   '[[device.metric]]\nname = "M"\nread = "int f()"\n',
+                   '[[aspect]]\nname = "D"\nheader = "d.h"\n'
+                   '[[aspect.metric]]\nname = "M"\nread = "int f()"\n',
                    "measurement.powercap_max must be between 1")
 
     def test_rejects_powercap_calibration_without_device_hook(self):
         self.check('[measurement]\nmode = "powercap-calibration"\ncommand = "true"\n'
                    'calibration_file = "temperature-baseline.txt"\n'
-                   'powercap_min = 2\npowercap_max = 3\n[[device]]\nname = "D"\n'
-                   'header = "d.h"\n[[device.metric]]\nname = "M"\nread = "int f()"\n',
-                   "requires a device declaring powercap_calibration")
+                   'powercap_min = 2\npowercap_max = 3\n[[aspect]]\nname = "D"\n'
+                   'header = "d.h"\n[[aspect.metric]]\nname = "M"\nread = "int f()"\n',
+                   "requires an aspect declaring powercap_calibration")
 
     def test_rejects_temperature_calibration_without_thermal_hook(self):
         self.check('[measurement]\nmode = "temperature-calibration"\n'
                    'calibration_file = "temperature-baseline.txt"\n',
-                   "temperature-calibration mode requires a device declaring thermal")
+                   "temperature-calibration mode requires an aspect declaring thermal")
 
     def test_rejects_invalid_timeout(self):
         self.check('[measurement]\nmode = "standard"\n'
@@ -553,6 +610,8 @@ class WeaverScriptsTest(unittest.TestCase):
     def test_batch_generation_and_execution(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
+            (directory / "metric.h").write_text("int metric(void);\n")
+            (directory / "metric.c").write_text("int metric(void) { return 1; }\n")
             configs = []
             for mode in ("standard", "over-time"):
                 config = directory / f"{mode}.toml"
@@ -560,7 +619,9 @@ class WeaverScriptsTest(unittest.TestCase):
                     f'[measurement]\nmode = "{mode}"\n'
                     f'calibration_file = "{directory / "temperature-baseline.txt"}"\n'
                     f'command = "true"\n'
-                    f'output = "{directory / (mode + ".csv")}"\n')
+                    f'output = "{directory / (mode + ".csv")}"\n'
+                    '[[aspect]]\nname = "Toy"\nheader = "metric.h"\nlib = "metric.c"\n'
+                    '[[aspect.metric]]\nname = "Value"\nread = "int metric()"\n')
                 configs.append(config)
             script = ROOT / "scripts" / "measure.sh"
             batch = directory / "batch"
@@ -639,8 +700,7 @@ class WeaverScriptsTest(unittest.TestCase):
             directory = Path(name)
             config = directory / "standard.toml"
             config.write_text('[measurement]\nmode = "standard"\ncommand = "true"\n'
-                              'calibration_file = "temperature-baseline.txt"\n'
-                              'output = "measurements.csv"\n')
+                              'calibration_file = "temperature-baseline.txt"\n')
             results = directory / "results"
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_all_configurations.sh"),
@@ -648,7 +708,7 @@ class WeaverScriptsTest(unittest.TestCase):
                 text=True, capture_output=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             self.assertIn("PASS: 1  WARN: 0  FAIL: 0", result.stdout)
-            self.assertEqual(len(list(results.rglob("measurements.csv"))), 1)
+            self.assertFalse(list(results.rglob("measurements.csv")))
 
     def test_run_all_reports_warnings_and_continues_after_failure(self):
         with tempfile.TemporaryDirectory() as name:
@@ -659,8 +719,8 @@ class WeaverScriptsTest(unittest.TestCase):
             (directory / "b-warning.toml").write_text(
                 '[measurement]\nmode = "standard"\ncommand = "true"\n'
                 'calibration_file = "baseline.txt"\noutput = "measurements.csv"\n'
-                '[[device]]\nname = "Toy"\nheader = "metric.h"\nlib = "metric.c"\n'
-                '[[device.metric]]\nname = "Value"\nread = "int metric()"\n')
+                '[[aspect]]\nname = "Toy"\nheader = "metric.h"\nlib = "metric.c"\n'
+                '[[aspect.metric]]\nname = "Value"\nread = "int metric()"\n')
             results = directory / "results"
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_all_configurations.sh"),

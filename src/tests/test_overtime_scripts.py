@@ -93,8 +93,8 @@ class OvertimeScriptsTest(unittest.TestCase):
             'calibration_file="unused-baseline.txt"\n'
             f'output="{output}"\n'
             'variance=100\nsleep_seconds=0\ninterval_ms=5\nrepetitions=2\n'
-            '[[device]]\nname="Toy"\nheader="metric.h"\nlib="metric.c"\n'
-            '[[device.metric]]\nname="Value"\nread="int metric()"\n', encoding="utf-8",
+            '[[aspect]]\nname="Toy"\nheader="metric.h"\nlib="metric.c"\n'
+            '[[aspect.metric]]\nname="Value"\nread="int metric()"\n', encoding="utf-8",
         )
         result = self.run_script(
             COMPARE, "--config", config, "--runs", "2",
@@ -135,8 +135,11 @@ class OvertimeScriptsTest(unittest.TestCase):
         self.assertIn("--config", result.stderr)
         config.write_text(
             '[measurement]\nmode="over-time"\ncommand="true"\npowercap=5\n'
-            f'calibration_file="{calibration}"\n', encoding="utf-8",
+            f'calibration_file="{calibration}"\n'
+            '[[aspect]]\nname="Demo"\nheader="metric.h"\n'
+            '[[aspect.metric]]\nname="Value"\nread="int metric()"\n', encoding="utf-8",
         )
+        (self.directory / "metric.h").write_text("int metric(void);\n", encoding="utf-8")
         result = self.run_script(COMPARE, "--config", config)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("powercap must be -1", result.stderr)
@@ -153,8 +156,8 @@ class OvertimeScriptsTest(unittest.TestCase):
             '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
             f'calibration_file="{calibration}"\n'
             'variance=100\nsleep_seconds=0\ninterval_ms=5\n'
-            '[[device]]\nname="Demo"\nheader="metric.h"\nlib="metric.c"\n'
-            '[[device.metric]]\nname="Value"\nread="int metric()"\nunit="count"\n',
+            '[[aspect]]\nname="Demo"\nheader="metric.h"\nlib="metric.c"\n'
+            '[[aspect.metric]]\nname="Value"\nread="int metric()"\nunit="count"\n',
             encoding="utf-8",
         )
         result = self.run_script(COMPARE, "--config", config, "--runs", "1")

@@ -7,29 +7,29 @@ program = "sleep"
 output = "toy.csv"
 interval_ms = 10
 
-[[device]]
+[[aspect]]
 name = "Energy"
 lib = "libtoy.a"
 header = "toy.h"
 setup = "int toy_setup()"
 teardown = "void toy_teardown()"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Package"
 read = "unsigned long toy_energy()"
 kind = "counter"
 unit = "uJ"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Temperature"
 read = "float toy_temperature()"
 unit = "C"
 
-[[device]]
+[[aspect]]
 name = "Processes"
 lib = "libtoy.a"
 header = "toy.h"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "NumberProcesses"
 read = "int toy_processes()"

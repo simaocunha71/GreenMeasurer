@@ -19,7 +19,7 @@
     <div>
       <p class="eyebrow"><span class="status-dot"></span> Open source · Linux</p>
       <h1>Measurement concerns, woven around your workload.</h1>
-      <p class="lead">GreenMeasurer separates measurement from the program being studied. Declare the devices, metrics and experiment in TOML; the weaver composes a dedicated executable to run it.</p>
+      <p class="lead">GreenMeasurer separates measurement from the program being studied. Declare the aspects, metrics and experiment in TOML; the weaver composes a dedicated executable to run it.</p>
       <div class="actions"><a class="button primary" href="guide.html">Get started <span aria-hidden="true">↗</span></a><a class="button secondary" href="reference.html">How weaving works <span aria-hidden="true">→</span></a></div>
       <div class="paper-authors" aria-label="Authors">
         <div><strong>Simão Cunha</strong><a href="mailto:simao.s.cunha@inesctec.pt">simao.s.cunha@inesctec.pt</a></div>
@@ -43,8 +43,8 @@
     <section class="overview-section" aria-labelledby="how-title" id="architecture-title">
       <div class="section-heading"><div><p class="eyebrow">01 / Composition</p><h2 id="how-title">From aspects to an experiment.</h2></div><p>Each configuration selects the concerns needed for one experiment.</p></div>
       <div class="step-grid">
-        <article class="step"><span>01 / DECLARE</span><h3>Describe the experiment</h3><p>Choose a workload and mode. Declare each device, metric reader and optional thermal or powercap hook explicitly.</p></article>
-        <article class="step"><span>02 / WEAVE</span><h3>Generate and compile</h3><p>The weaver validates the TOML and generates device sampling code and registration glue, linked with the declared libraries and runtime.</p></article>
+        <article class="step"><span>01 / DECLARE</span><h3>Describe the experiment</h3><p>Choose a workload and mode. Declare each aspect, metric reader and optional thermal or powercap hook explicitly.</p></article>
+        <article class="step"><span>02 / WEAVE</span><h3>Generate and compile</h3><p>The weaver validates the TOML and generates aspect sampling code and registration glue, linked with the declared libraries and runtime.</p></article>
         <article class="step"><span>03 / MEASURE</span><h3>Run the executable</h3><p>The generated program coordinates the workload, configured hooks and metric collection, and writes the results.</p></article>
       </div>
       <p>The workload remains separate: the weaver does not rewrite or instrument its source code.</p>
@@ -53,7 +53,7 @@
       <div class="section-heading"><div><p class="eyebrow">02 / Modes</p><h2 id="modes-title">Four ways to run.</h2></div><p>Compose measurement and calibration behavior without embedding it in the workload.</p></div>
       <div class="link-grid">
         <a class="link-card" href="guide.html#modes"><span class="card-label">Measure</span><span class="card-arrow">↗</span><h3>Standard</h3><p>Summarize each workload run with counter differences and final gauge readings.</p></a>
-        <a class="link-card" href="guide.html#modes"><span class="card-label">Sample</span><span class="card-arrow">↗</span><h3>Over time</h3><p>Sample declared metrics on per-device threads and align readings in a CSV.</p></a>
+        <a class="link-card" href="guide.html#modes"><span class="card-label">Sample</span><span class="card-arrow">↗</span><h3>Over time</h3><p>Sample declared metrics on per-aspect threads and align readings in a CSV.</p></a>
         <a class="link-card" href="guide.html#temperature"><span class="card-label">Calibrate</span><span class="card-arrow">↗</span><h3>Temperature</h3><p>Wait, take one thermal reading and write a baseline for later runs.</p></a>
         <a class="link-card" href="guide.html#powercap"><span class="card-label">Calibrate</span><span class="card-arrow">↗</span><h3>Powercap</h3><p>Sweep a configured range through a device's calibration hook.</p></a>
       </div>

@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 #include "system.h"
-#include "gm_device.h"
+#include "gm_aspect.h"
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>

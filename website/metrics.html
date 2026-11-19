@@ -20,9 +20,9 @@
     <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#declaration">Declaring metrics</a><a href="#cpu">Intel CPU</a><a href="#gpu">GPUs</a><a href="#system">System</a><a href="#output">Reading results</a></nav>
     <div class="doc-content">
       <section id="declaration"><span id="reading"></span><p class="eyebrow">01 / Declare</p><h2>Readers, not a fixed catalogue</h2>
-        <p>A metric is a no-argument C function declared in <code>[[device.metric]]</code>. Its configured name, return type, kind and unit determine the generated flag, storage and CSV column. A <code>counter</code> is cumulative; a <code>gauge</code> is an instantaneous value. The default kind is gauge.</p>
-        <p>The following readers are examples from optional libraries in <code>src/devices/</code>, not built-in metrics. Add them to a device declaration before using them; names in the CSV come from your TOML, not the function names. Hardware and permissions determine availability.</p>
-        <pre><code>[[device.metric]]
+        <p>A metric is a no-argument C function declared in <code>[[aspect.metric]]</code>. Its configured name, return type, kind and unit determine the generated flag, storage and CSV column. A <code>counter</code> is cumulative; a <code>gauge</code> is an instantaneous value. The default kind is gauge.</p>
+        <p>The following readers are examples from optional libraries in <code>src/devices/</code>, not built-in metrics. Add them to an aspect declaration before using them; names in the CSV come from your TOML, not the function names. Hardware and permissions determine availability.</p>
+        <pre><code>[[aspect.metric]]
 name = "Package"
 read = "double intel_cpu_get_package()"
 kind = "counter"

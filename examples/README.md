@@ -6,7 +6,7 @@ Fibonacci with argument `30` once:
 
 - `standard.toml`: one CSV row per run; counters are differences between
   readings and gauges are the final readings.
-- `overtime.toml`: periodically samples each selected device and writes
+- `overtime.toml`: periodically samples each selected aspect and writes
   aligned CSV rows. Counters are raw readings.
 - `powercap-calibration.toml`: measures the saved powercap baseline and a
   short range of CPU power limits.
@@ -21,10 +21,10 @@ Choose the configuration set that matches your experiment:
 - The TOMLs directly in `examples/`: all four devices together, including both
   GPUs in the same run.
 
-The Intel CPU and Intel GPU are separate devices because each declares its own
+The Intel CPU and Intel GPU are separate aspects because each declares its own
 header, library and setup, and over-time mode uses a sampling thread per
-selected device. In `nvidia/` and `system/`, powercap calibration adds an
-Intel CPU device for its thermal and powercap hooks and Package energy. Their
+selected aspect. In `nvidia/` and `system/`, powercap calibration adds an
+Intel CPU aspect for its thermal and powercap hooks and Package energy. Their
 temperature-calibration TOMLs use only the Intel CPU: this mode records a CPU
 baseline and does not read the NVIDIA or system metrics.
 
@@ -54,14 +54,14 @@ All declared libraries must be built and linkable. Intel CPU configurations
 require the CPU library's dependencies; NVIDIA configurations require NVML
 development and runtime libraries. Standard and over-time examples in
 `system/` need neither Intel nor NVIDIA libraries. This remains true for
-devices marked `optional = true`: that setting allows a run to continue after
-a device's setup fails, but does not remove build dependencies. On machines
-without a declared library, remove its entire `[[device]]` block and its
-`[[device.metric]]` blocks before generating.
+aspects marked `optional = true`: that setting allows a run to continue after
+an aspect's setup fails, but does not remove build dependencies. On machines
+without a declared library, remove its entire `[[aspect]]` block and its
+`[[aspect.metric]]` blocks before generating.
 
 The CPU example requires a supported Intel CPU. Readings also depend on
 hardware, drivers and permissions. Failed readings and metrics of optional
-devices that fail setup appear as `NOT_SUPPORTED` in the CSV. The Intel GPU
+aspects that fail setup appear as `NOT_SUPPORTED` in the CSV. The Intel GPU
 temperature reader currently selects the first hwmon sensor labelled `GPU`;
 verify its source on systems with multiple GPUs. NVIDIA VRAM uses the workload
 process tree's root PID. Workload-scoped gauges can be unavailable after a
@@ -81,9 +81,9 @@ output files when changing metrics.
 ## Adapting a configuration
 
 Change `command`, `language`, `program`, `output` and the mode settings for
-your experiment. Keep only the device and metric declarations you need, or
+your experiment. Keep only the aspect and metric declarations you need, or
 add your own compatible reader functions. Each metric has a name, a
 no-argument `read` signature, a `counter` or `gauge` kind, and an optional
 unit. Generate a new executable after editing the TOML.
 
-See [the weaver guide](../docs/WEAVER.md) for all settings and device hooks.
+See [the weaver guide](../docs/WEAVER.md) for all settings and aspect hooks.

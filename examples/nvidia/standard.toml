@@ -8,7 +8,7 @@ program = "fibonacci-30"
 output = "example-nvidia-standard.csv"
 repetitions = 1
 
-[[device]]
+[[aspect]]
 name = "NvidiaGPU"
 optional = true
 lib = "../../src/devices/libgm_nvidia_gpu.a"
@@ -17,31 +17,31 @@ link = ["-lnvidia-ml"]
 setup = "int nvidia_begin()"
 teardown = "void nvidia_end()"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Energy"
 read = "double nvidia_get_energy()"
 kind = "counter"
 unit = "J"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Power"
 read = "double nvidia_get_power()"
 kind = "gauge"
 unit = "W"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Temperature"
 read = "double nvidia_get_temperature()"
 kind = "gauge"
 unit = "C"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Utilization"
 read = "double nvidia_get_utilization()"
 kind = "gauge"
 unit = "%"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "VRAM"
 read = "double nvidia_get_vram()"
 kind = "gauge"

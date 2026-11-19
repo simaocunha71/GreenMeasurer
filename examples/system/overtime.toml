@@ -9,36 +9,36 @@ output = "example-system-overtime.csv"
 repetitions = 1
 interval_ms = 10
 
-[[device]]
+[[aspect]]
 name = "System"
 lib = "../../src/devices/libgm_system.a"
 header = "../../src/devices/linux/system.h"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Cores"
 read = "double system_get_core_count()"
 kind = "gauge"
 unit = "cores"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "CoreFrequency"
 read = "double system_get_core_frequency_mhz()"
 kind = "gauge"
 unit = "MHz"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "RunningProcesses"
 read = "double system_get_running_processes()"
 kind = "gauge"
 unit = "processes"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "WorkloadProcesses"
 read = "double system_get_workload_processes()"
 kind = "gauge"
 unit = "processes"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "WorkloadMemory"
 read = "double system_get_workload_memory_kb()"
 kind = "gauge"

@@ -7,7 +7,7 @@ program = "sleep"
 output = "hooks.csv"
 interval_ms = 10
 
-[[device]]
+[[aspect]]
 name = "Cpu"
 lib = "libtoy.a"
 header = "toy.h"
@@ -16,7 +16,7 @@ powercap_set = "int toy_cap_set(int)"
 powercap_restore = "int toy_cap_restore()"
 powercap_calibration = "toy_calibrate"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Package"
 read = "unsigned long toy_energy()"
 kind = "counter"

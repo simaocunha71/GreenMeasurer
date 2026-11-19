@@ -10,7 +10,7 @@ powercap_min = 5
 powercap_max = 5
 calibration_file = "example-intel-temperature-baseline.txt"
 
-[[device]]
+[[aspect]]
 name = "IntelCPU"
 lib = "../../src/devices/libgm_intel_cpu.a"
 header = "../../src/devices/linux/cpu/intel/intel_cpu.h"
@@ -20,31 +20,31 @@ teardown = "void intel_cpu_end()"
 thermal = "double intel_cpu_get_temperature()"
 powercap_calibration = "intel_cpu_calibrate_powercap"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Package"
 read = "double intel_cpu_get_package()"
 kind = "counter"
 unit = "J"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Core"
 read = "double intel_cpu_get_core()"
 kind = "counter"
 unit = "J"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "DRAM"
 read = "double intel_cpu_get_dram()"
 kind = "counter"
 unit = "J"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Temperature"
 read = "double intel_cpu_get_temperature()"
 kind = "gauge"
 unit = "C"
 
-[[device]]
+[[aspect]]
 name = "IntelGPU"
 optional = true
 lib = "../../src/devices/libgm_intel_gpu.a"
@@ -52,13 +52,13 @@ header = "../../src/devices/linux/gpu/intel/intel_gpu.h"
 setup = "int intel_gpu_begin()"
 teardown = "void intel_gpu_end()"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Energy"
 read = "double intel_gpu_get_energy()"
 kind = "counter"
 unit = "J"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Temperature"
 read = "double intel_gpu_get_temperature()"
 kind = "gauge"

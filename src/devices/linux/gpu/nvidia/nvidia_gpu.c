@@ -1,5 +1,5 @@
 #include "nvidia_gpu.h"
-#include "gm_device.h"
+#include "gm_aspect.h"
 #include <nvml.h>
 #include <stdlib.h>
 

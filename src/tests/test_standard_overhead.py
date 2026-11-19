@@ -27,11 +27,12 @@ class StandardOverheadTest(unittest.TestCase):
         self.config = self.directory / "config.toml"
         self.config.write_text(
             '[measurement]\nmode="standard"\ncommand="sleep 0.03"\n'
+            'calibration_file="unused-baseline.txt"\n'
             f'output="{self.output}"\n'
             'variance=100\nsleep_seconds=0\nrepetitions=3\npowercap=[-1, 5]\n'
-            '[[device]]\nname="System"\nheader="metric.h"\nlib="metric.c"\n'
-            '[[device.metric]]\nname="Cores"\nread="int cores()"\n'
-            '[[device.metric]]\nname="Processes"\nread="int processes()"\n',
+            '[[aspect]]\nname="System"\nheader="metric.h"\nlib="metric.c"\n'
+            '[[aspect.metric]]\nname="Cores"\nread="int cores()"\n'
+            '[[aspect.metric]]\nname="Processes"\nread="int processes()"\n',
             encoding="utf-8",
         )
 

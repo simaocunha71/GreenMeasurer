@@ -28,7 +28,7 @@ python3 scripts/weave.py config.toml -o generated-experiment
         <p>Run these commands from the repository root with a standard or over-time configuration. Generation compiles the executable but does not execute the workload. Without <code>-o</code>, the output is <code>generated-&lt;config name&gt;</code> alongside the TOML. Runtime hardware access may require additional permissions.</p>
       </section>
       <section id="configuration"><p class="eyebrow">02 / Configuration</p><h2>Compose the aspects</h2>
-        <p><code>[measurement]</code> describes the mode and experiment. Each <code>[[device]]</code> declares a header and optionally a library, setup and teardown functions, and control hooks. Each device must declare at least one <code>[[device.metric]]</code>, with a reader function and an optional kind and unit. Set <code>optional = true</code> to continue if a device fails setup: its selected columns remain in the CSV as <code>NOT_SUPPORTED</code>, with a warning and its hooks disabled. Its build dependencies are still required.</p>
+        <p><code>[measurement]</code> describes the mode and experiment. Each <code>[[aspect]]</code> declares a header and optionally a library, setup and teardown functions, and control hooks. Each aspect must declare at least one <code>[[aspect.metric]]</code>, with a reader function and an optional kind and unit. Set <code>optional = true</code> to continue if an aspect fails setup: its selected columns remain in the CSV as <code>NOT_SUPPORTED</code>, with a warning and its hooks disabled. Its build dependencies are still required.</p>
         <pre><code>[measurement]
 mode = "standard"
 calibration_file = "temperature-baseline.txt"
@@ -37,32 +37,33 @@ language = "Python"
 program = "example"
 output = "measurements.csv"
 
-[[device]]
+[[aspect]]
 name = "System"
 header = "../src/devices/linux/system.h"
 lib = "../src/devices/libgm_system.a"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Cores"
 read = "double system_get_core_count()"
 kind = "gauge"
 unit = "cores"</code></pre>
         <p>This example assumes the TOML is in a directory immediately under the repository root and that <code>my_program.py</code> exists in the root. Device paths resolve relative to the TOML; workload commands and output paths resolve from the directory in which the generated executable is run. Reweave after changing the TOML.</p>
         <p>Every configuration must set a non-empty <code>calibration_file</code> path in <code>[measurement]</code>. There is no default temperature-baseline path; choose the same path in configurations that should share a baseline.</p>
-        <p>Only declared metrics exist in the generated executable. With no metric flags, declared metrics are selected by default; passing metric flags such as <code>--System.Cores</code> selects those flags instead. <code>--no-metrics</code> selects none, but does not necessarily disable thermal or powercap hooks. A configuration can also omit devices entirely to run without metrics.</p>
+        <p>Only declared metrics exist in the generated executable. With no metric flags, declared metrics are selected by default; passing metric flags such as <code>--System.Cores</code> selects those flags instead. <code>--no-metrics</code> selects none, but does not necessarily disable thermal or powercap hooks. If the TOML declares no aspects, the generated executable instead calls <code>system(command)</code> once: no CSV, timeout or command-line overrides are available. Only <code>mode</code>, <code>calibration_file</code> and <code>command</code> may be specified.</p>
         <p>For adaptable Fibonacci configurations, see the combined TOMLs and the <code>intel/</code>, <code>nvidia/</code> and <code>system/</code> folders in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/examples">examples/</a>. The NVIDIA and system calibration examples use Intel CPU hooks; temperature calibration does not run the workload. For an explanation of every TOML field, see the <a href="reference.html#definitions">configuration reference</a>.</p>
       </section>
       <section id="modes"><p class="eyebrow">03 / Measure</p><h2>Standard and over-time</h2>
-        <p>In <code>standard</code> mode, each run produces a row with <code>Time_ms</code>. Counter metrics are reported as end minus start; gauges use their final reading. In <code>over-time</code> mode, each selected device samples on its own thread. The CSV aligns samples on a common <code>Timestamp_ms</code> grid and retains a final row; counters are raw readings, not per-interval energy or power.</p>
+        <p>In <code>standard</code> mode, aspects remain active without sampling threads, and each run produces a row with <code>Time_ms</code>. Counter metrics are reported as end minus start; gauges use their final reading. In <code>over-time</code> mode, the runtime starts one sampling thread per active aspect through functions generated in its <code>&lt;Aspect&gt;.c</code> file. The CSV aligns samples on a common <code>Timestamp_ms</code> grid and retains a final row; counters are raw readings, not per-interval energy or power.</p>
         <p>Set <code>interval_ms</code> for over-time sampling, and <code>repetitions</code> and <code>sleep_seconds</code> for repeated runs and pauses. The interval is a target, not a guarantee of exact timing. Standard and over-time output append to the configured CSV; use separate files when changing the selected metrics or experiment schema.</p>
         <p>The generator's <code>--max-samples</code> sets the per-metric capacity at compile time. Exceeding it aborts the measurement. See <a href="metrics.html#output">interpreting results</a> for unavailable values and scope.</p>
       </section>
       <section id="temperature"><p class="eyebrow">04 / Calibrate</p><h2>Temperature baseline</h2>
-        <p><code>temperature-calibration</code> requires a device with a <code>thermal</code> hook. It waits <code>sleep_seconds</code>, takes one reading, then overwrites <code>calibration_file</code> with a <code>sensors</code> snapshot and an <code>Average temperature: ...</code> line. It does not run the workload or calculate an average over the waiting period. The Intel CPU hook averages the current core temperature readings. A failed snapshot is reported as a warning.</p>
+        <p><code>temperature-calibration</code> requires an aspect with a <code>thermal</code> hook. It waits <code>sleep_seconds</code>, takes one reading, then overwrites <code>calibration_file</code> with a <code>sensors</code> snapshot and an <code>Average temperature: ...</code> line. It does not run the workload or calculate an average over the waiting period. The Intel CPU hook averages the current core temperature readings. A failed snapshot is reported as a warning.</p>
         <p>For other modes, a configured thermal hook enables a wait before each run until the temperature is at most the baseline plus <code>variance</code>. If the explicitly configured baseline file is missing, it is calibrated first and written to that path. Without a thermal hook, there is no thermal control.</p>
       </section>
       <section id="powercap"><p class="eyebrow">05 / Control</p><h2>Power limits and calibration</h2>
         <p>Standard and over-time configurations may specify <code>powercap</code> as a value or list in watts. Positive limits require paired <code>powercap_set</code> and <code>powercap_restore</code> hooks. For the Intel CPU implementation, <code>-1</code> applies the saved per-machine baseline; the runtime restores limits after measurement.</p>
+        <p>The Intel implementation stores the RAPL package/die limits and enabled state in <code>/var/lib/greenmeasurer/intel-rapl-baseline</code>. When powercap is first used, it loads that file or, if missing, saves the current state before changing limits. This happens during powercap setup, not ordinary aspect initialization; the saved state is not necessarily a factory or boot-time default.</p>
         <p><code>powercap-calibration</code> requires a calibration hook and <code>powercap_min</code> and <code>powercap_max</code>. The supplied Intel implementation measures the saved baseline and each integer watt value in that range, then merges the results. An optional <code>compile_command</code> can compile the workload before the sweep. Executables generated for this mode do not accept command-line arguments; change the TOML and regenerate to adjust the experiment.</p>
         <aside class="notice warning"><strong>Use with care</strong><p>Powercap operations alter hardware limits and may require privileges. Review the range, output paths and device requirements before running. Calibration may replace its output file.</p></aside>
       </section>

@@ -2,7 +2,7 @@
 
 Python 3.11 or `tomli` is required for TOML parsing.
 
-- `weave.py`: generates and compiles an executable from a device-based TOML.
+- `weave.py`: generates and compiles an executable from an aspect-based TOML.
 - `measure.sh`: generates a batch and runs it separately.
 - `run_powercap_calibration.sh`: generates a powercap calibration executable.
 - `run_all_configurations.sh`: builds and runs a set of configurations.

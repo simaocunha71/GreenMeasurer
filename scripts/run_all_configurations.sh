@@ -80,9 +80,13 @@ for config in "${ordered[@]}"; do
         cp "$work/generate.log" "$work/run.log"
     fi
     if [[ $status == PASS ]]; then
-        # An execution that exits 0 but produced no output file is still a failure.
-        produced=$(find "$work" -maxdepth 1 \( -name '*.csv' -o -name '*.txt' \) | wc -l)
-        [[ $produced -eq 0 ]] && status=FAIL && echo "no output file produced" >>"$work/run.log"
+        # A configuration without aspects only executes the command and produces no CSV.
+        has_aspects=$(PYTHONPATH="$root/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
+            'import sys; from weave import tomllib; f = open(sys.argv[1], "rb"); print(int(bool(tomllib.load(f).get("aspect", []))))' "$config") || status=FAIL
+        if [[ $status == PASS && $has_aspects == 1 ]]; then
+            produced=$(find "$work" -maxdepth 1 \( -name '*.csv' -o -name '*.txt' \) | wc -l)
+            [[ $produced -eq 0 ]] && status=FAIL && echo "no output file produced" >>"$work/run.log"
+        fi
     fi
     if [[ $status == PASS ]] && {
         grep -qF '[WARNING]' "$work/generate.log" "$work/run.log" ||

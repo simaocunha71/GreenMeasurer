@@ -1,9 +1,10 @@
 # GreenMeasurer
 
 GreenMeasurer generates a Linux measurement executable from a TOML configuration.
-The configuration explicitly declares the devices, metrics, and functions to use;
-no metrics are selected automatically. The generator links the declared source files
-or libraries with a runtime that executes the workload and writes CSV results.
+The configuration explicitly declares the aspects, metrics, and functions to use;
+no metrics are selected automatically. When aspects are declared, the generator links
+their source files or libraries with a runtime that executes the workload and writes CSV
+results. Without aspects, the generated executable only runs the command with `system()`.
 
 | Authors | Contacts |
 |---------|----------|
@@ -15,7 +16,7 @@ or libraries with a runtime that executes the workload and writes CSV results.
 - Python 3.11 or Python 3 with `tomli`
 - A C compiler, `make`, and POSIX threads
 - Any headers, libraries, hardware access, and permissions required by the
-  devices declared in the configuration
+  aspects declared in the configuration
 
 Optional example device libraries live in [src/devices](src/devices). Build
 the ones whose dependencies are installed with:
@@ -44,7 +45,7 @@ calibration paths are relative to the executable's working directory. Header and
 library paths are relative to the TOML file. The output CSV may be overwritten.
 
 Measurement executables accept `--help` for available options. With no metric
-flags they use the metrics declared in the TOML; pass specific `--Device.Metric`
+flags they use the metrics declared in the TOML; pass specific `--Aspect.Metric`
 flags to select a subset, or `--no-metrics` to run without collecting metrics.
 Thermal control and powercap hooks are independent of metric selection.
 Configured powercap-calibration executables do not accept command-line overrides.

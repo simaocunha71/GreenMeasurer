@@ -17,19 +17,19 @@
 <main id="main">
   <div class="wrap doc-header"><p class="eyebrow">Documentation / 04</p><h1>Weaver API</h1><p class="lead">The contract between configuration, generated measurement code and device libraries.</p></div>
   <div class="wrap doc-layout">
-    <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#overview">Architecture</a><a href="#definitions">TOML structure</a><a href="#measurement-fields">Measurement fields</a><a href="#device-fields">Device fields</a><a href="#metric-fields">Metric fields</a><a href="#callbacks">Hooks</a><a href="#new-backend">Custom devices</a><a href="#tools">Commands</a></nav>
+    <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#overview">Architecture</a><a href="#definitions">TOML structure</a><a href="#measurement-fields">Measurement fields</a><a href="#device-fields">Aspect fields</a><a href="#metric-fields">Metric fields</a><a href="#callbacks">Hooks</a><a href="#new-backend">Custom devices</a><a href="#tools">Commands</a></nav>
     <div class="doc-content">
       <section id="overview"><p class="eyebrow">01 / Architecture</p><h2>Weaving measurement concerns</h2>
         <p><code>scripts/weave.py</code> validates a TOML file, generates C code specialized to its declarations, and compiles it with the shared runtime and specified device code. This is aspect-oriented composition of measurement concerns: the workload is run as a separate command, not rewritten or instrumented by the weaver.</p>
         <div class="step-grid">
           <article class="step"><span>INPUT</span><h3>TOML + device code</h3><p>Experiment defaults, reader functions and optional hooks.</p></article>
-          <article class="step"><span>GENERATED</span><h3>Device code + glue</h3><p>Per-device sampling code and static metric arrays, plus registration and flags.</p></article>
+          <article class="step"><span>GENERATED</span><h3>Aspect code + glue</h3><p>Per-aspect sampling code and static metric arrays, plus registration and flags.</p></article>
           <article class="step"><span>LINKED</span><h3>Executable</h3><p>Shared runtime and declared libraries coordinate the workload and output.</p></article>
         </div>
-        <p>In over-time mode each selected device uses a sampling thread; standard mode reads counters at the start and end and gauges at the end, without sampling threads. The source of truth for the runtime contract is <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/include/gm_device.h">gm_device.h</a>.</p>
+        <p>In over-time mode the runtime calls each active aspect's start and stop functions; the thread is created and joined inside its generated <code>&lt;Aspect&gt;.c</code>. Standard mode keeps the aspects active but uses no sampling threads. The source of truth for the runtime contract is <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/include/gm_aspect.h">gm_aspect.h</a>.</p>
       </section>
       <section id="definitions"><span id="symbols"></span><p class="eyebrow">02 / TOML</p><h2>Read a configuration</h2>
-        <p>A TOML file has one <code>[measurement]</code> table, followed by zero or more <code>[[device]]</code> tables. Each device has one or more <code>[[device.metric]]</code> tables; each metric belongs to the most recently declared device. This example is based on the NVIDIA over-time configuration:</p>
+        <p>A TOML file has one <code>[measurement]</code> table, followed by zero or more <code>[[aspect]]</code> tables. Each aspect has one or more <code>[[aspect.metric]]</code> tables; each metric belongs to the most recently declared aspect. The old <code>[[device]]</code> format is no longer accepted. This example is based on the NVIDIA over-time configuration:</p>
         <pre><code>[measurement]
 mode = "over-time"
 calibration_file = "temperature-baseline.txt"
@@ -40,7 +40,7 @@ output = "example-nvidia-overtime.csv"
 repetitions = 1
 interval_ms = 10
 
-[[device]]
+[[aspect]]
 name = "NvidiaGPU"
 optional = true
 lib = "../../src/devices/libgm_nvidia_gpu.a"
@@ -49,12 +49,12 @@ link = ["-lnvidia-ml"]
 setup = "int nvidia_begin()"
 teardown = "void nvidia_end()"
 
-[[device.metric]]
+[[aspect.metric]]
 name = "Energy"
 read = "double nvidia_get_energy()"
 kind = "counter"
 unit = "J"</code></pre>
-        <p>For example, <code>name = "NvidiaGPU"</code> names the device, while <code>name = "Energy"</code> names one metric within it. Together they produce the flag <code>--NvidiaGPU.Energy</code> and CSV column <code>NvidiaGPU.Energy_J</code>. The <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/examples/nvidia/overtime.toml">complete example</a> declares additional metrics.</p>
+        <p>For example, <code>name = "NvidiaGPU"</code> names the aspect, while <code>name = "Energy"</code> names one metric within it. Together they produce the flag <code>--NvidiaGPU.Energy</code> and CSV column <code>NvidiaGPU.Energy_J</code>. The <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/examples/nvidia/overtime.toml">complete example</a> declares additional metrics.</p>
         <p>Relative <code>header</code> and <code>lib</code> paths are resolved from the TOML's directory. The workload command, CSV and calibration paths are resolved from the generated executable's working directory. Re-generate after editing the TOML.</p>
         <p class="table-hint">On a small screen, scroll the tables horizontally to see every column.</p>
       </section>
@@ -77,10 +77,10 @@ unit = "J"</code></pre>
           <tr><td><code>compile_command</code></td><td>Optional non-empty shell command to compile the workload before a powercap calibration; not valid in other TOML modes.</td></tr>
         </tbody></table></div>
       </section>
-      <section id="device-fields"><p class="eyebrow">04 / Field reference</p><h2><code>[[device]]</code></h2>
-        <p>Declares where the device functions come from and which lifecycle or control hooks to use. It must contain at least one metric. A file can omit devices entirely to run a workload without metrics.</p>
+      <section id="device-fields"><p class="eyebrow">04 / Field reference</p><h2><code>[[aspect]]</code></h2>
+        <p>Declares where the aspect functions come from and which lifecycle or control hooks to use. It must contain at least one metric. Without any aspects, the generated executable runs the configured command once using <code>system()</code>, without CSV, timeout or command-line overrides; only <code>mode</code>, <code>calibration_file</code> and <code>command</code> are accepted.</p>
         <div class="table-wrap"><table><thead><tr><th>Field</th><th>Meaning and default</th></tr></thead><tbody>
-          <tr><td><code>name</code></td><td>Required unique device identifier, for example <code>NvidiaGPU</code>. It must use ASCII letters, digits and underscores, beginning with a letter or underscore.</td></tr>
+          <tr><td><code>name</code></td><td>Required unique aspect identifier, for example <code>NvidiaGPU</code>. It must use ASCII letters, digits and underscores, beginning with a letter or underscore.</td></tr>
           <tr><td><code>header</code></td><td>Required path to an existing C header declaring the functions. Relative to the TOML file.</td></tr>
           <tr><td><code>lib</code></td><td>Optional path to an existing <code>.c</code>, <code>.o</code>, <code>.a</code> or <code>.so</code> providing the functions, relative to the TOML. Other linked sources may provide them instead.</td></tr>
           <tr><td><code>link</code></td><td>Optional array of extra linker flags such as <code>["-lnvidia-ml"]</code> or <code>["-L/usr/local/lib", "-lsensors"]</code>. Entries must use the supported <code>-l</code> or <code>-L</code> form.</td></tr>
@@ -93,22 +93,22 @@ unit = "J"</code></pre>
         </tbody></table></div>
         <p>When several devices declare control hooks, the runtime chooses the first available thermal hook, the first available powercap set/restore pair and the first available calibration hook, independently, in TOML order. It does not apply multiple devices' powercaps simultaneously. The supplied NVIDIA library provides readers, not powercap hooks.</p>
       </section>
-      <section id="metric-fields"><p class="eyebrow">05 / Field reference</p><h2><code>[[device.metric]]</code></h2>
-        <p>Declares one reading for the preceding device. Metrics are selected by default unless the generated executable is given specific metric flags or <code>--no-metrics</code>.</p>
+      <section id="metric-fields"><p class="eyebrow">05 / Field reference</p><h2><code>[[aspect.metric]]</code></h2>
+        <p>Declares one reading for the preceding aspect. Metrics are selected by default unless the generated executable is given specific metric flags or <code>--no-metrics</code>.</p>
         <div class="table-wrap"><table><thead><tr><th>Field</th><th>Meaning and default</th></tr></thead><tbody>
-          <tr><td><code>name</code></td><td>Required C identifier, unique within this device, such as <code>Energy</code>. Together with the device name it defines the flag and CSV column prefix.</td></tr>
+          <tr><td><code>name</code></td><td>Required C identifier, unique within this aspect, such as <code>Energy</code>. Together with the aspect name it defines the flag and CSV column prefix.</td></tr>
           <tr><td><code>read</code></td><td>Required no-argument C function signature, for example <code>double nvidia_get_energy()</code>. The header and linked code must provide it. Supported return types include <code>float</code>, <code>double</code> and the integer types listed in the <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/scripts/weave.py">weaver</a>.</td></tr>
           <tr><td><code>kind</code></td><td><code>counter</code> for a cumulative reading or <code>gauge</code> for an instantaneous reading; default <code>gauge</code>. Standard mode uses the counter difference or final gauge value; over-time records raw readings.</td></tr>
           <tr><td><code>unit</code></td><td>Optional label appended to the CSV column after an underscore, such as <code>J</code>, <code>W</code>, <code>C</code>, <code>%</code> or <code>MiB</code>. Default is empty. Allowed characters are letters, digits, <code>_</code>, <code>%</code>, <code>.</code>, <code>/</code> and <code>-</code>; the label does not convert values.</td></tr>
         </tbody></table></div>
         <p>Negative or non-finite readings are written as <code>NOT_SUPPORTED</code>. The <a href="metrics.html">metrics page</a> describes the optional library readers and their units.</p>
       </section>
-      <section id="callbacks"><p class="eyebrow">06 / Hooks</p><h2>Optional device hooks</h2>
+      <section id="callbacks"><p class="eyebrow">06 / Hooks</p><h2>Optional aspect hooks</h2>
         <div class="table-wrap"><table><thead><tr><th>Key</th><th>Contract</th></tr></thead><tbody>
           <tr><td><code>setup</code>, <code>teardown</code></td><td>No-argument <code>void</code> or <code>int</code> functions; non-zero setup means failure.</td></tr>
           <tr><td><code>thermal</code></td><td>No-argument numeric reader for thermal control, in °C.</td></tr>
           <tr><td><code>powercap_set</code>, <code>powercap_restore</code></td><td>Declare together: <code>int set(int)</code> and <code>int restore()</code>; return zero on success.</td></tr>
-          <tr><td><code>powercap_calibration</code></td><td>Function name matching <code>GmCalibratePowercapFn</code> in <code>gm_device.h</code>; required for powercap calibration.</td></tr>
+          <tr><td><code>powercap_calibration</code></td><td>Function name matching <code>GmCalibratePowercapFn</code> in <code>gm_aspect.h</code>; required for powercap calibration.</td></tr>
         </tbody></table></div>
         <p>The runtime supplies <code>runTesting()</code> for calibration implementations such as the Intel CPU library. Hook-only devices whose setup fails lose their hooks with a warning. A thermal hook enables baseline-based waiting; powercap hooks may change hardware state.</p>
       </section>

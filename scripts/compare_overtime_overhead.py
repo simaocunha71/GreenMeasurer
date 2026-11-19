@@ -64,7 +64,7 @@ def main():
             raise ValueError("measurement.powercap must be -1; "
                              "the baseline cannot apply a GreenMeasurer power cap")
         calibration = Path(measurement["calibration_file"])
-        if any("thermal" in device for device in config.get("device", [])) and not calibration.is_file():
+        if any("thermal" in device for device in config.get("aspect", [])) and not calibration.is_file():
             raise ValueError(f"calibration file does not exist: {calibration}")
     except (OSError, ValueError, UnicodeError) as error:
         print(f"Error: {error}", file=sys.stderr)

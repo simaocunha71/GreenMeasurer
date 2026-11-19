@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Weave a GreenMeasurer executable from a TOML file that declares devices and metrics.
+"""Weave a GreenMeasurer executable from a TOML file that declares aspects and metrics.
 
-For every [[device]] the weaver generates <Device>.c (one sampling thread and one static
+For every [[aspect]] the weaver generates <Aspect>.c (one sampling thread and one static
 array per metric, filled by the user's own functions) and GreenMeasurer.c (the glue that
-registers the devices, one command-line flag per metric and the defaults of the TOML).
+registers the aspects, one command-line flag per metric and the defaults of the TOML).
 Everything is then compiled and linked with the declared libraries.
 """
 
@@ -49,7 +49,7 @@ MEASUREMENT_KEYS = {
     "variance": int, "calibration_file": str, "powercap_min": int, "powercap_max": int,
     "timeout_hours": int, "compile_command": str,
 }
-DEVICE_KEYS = {"name", "lib", "header", "link", "setup", "teardown", "metric", "optional",
+ASPECT_KEYS = {"name", "lib", "header", "link", "setup", "teardown", "metric", "optional",
                "thermal", "powercap_set", "powercap_restore", "powercap_calibration"}
 PROTOTYPE = re.compile(
     r"^\s*(?P<type>[A-Za-z_][A-Za-z0-9_ ]*?)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
@@ -117,14 +117,15 @@ def resolve_file(base, value, where):
 
 def validate(config, config_path):
     """Return a normalised model of the configuration or raise ValueError."""
-    unknown = set(config) - {"measurement", "device"}
+    unknown = set(config) - {"measurement", "aspect"}
     if unknown:
         fail(f"unknown top-level keys: {sorted(unknown)}")
     measurement = config.get("measurement")
     if not isinstance(measurement, dict):
         fail("[measurement] is required")
-    if "device" in measurement or "metrics" in measurement:
-        fail("devices are declared with [[device]] tables, not inside [measurement]")
+    if "aspect" in measurement or "metrics" in measurement:
+        fail("aspects are declared with [[aspect]] tables, not inside [measurement]")
+    specified_measurement = set(measurement)
     for key, value in measurement.items():
         expected = MEASUREMENT_KEYS.get(key)
         if expected is None:
@@ -169,55 +170,55 @@ def validate(config, config_path):
             fail(f"measurement.{key} cannot contain CSV delimiters or newlines")
 
     base = config_path.parent
-    devices, seen = [], set()
-    for index, raw in enumerate(config.get("device", [])):
-        where = f"device[{index}]"
-        unknown = set(raw) - DEVICE_KEYS
+    aspects, seen = [], set()
+    for index, raw in enumerate(config.get("aspect", [])):
+        where = f"aspect[{index}]"
+        unknown = set(raw) - ASPECT_KEYS
         if unknown:
             fail(f"{where} has unknown keys: {sorted(unknown)}")
         name = raw.get("name")
         if not isinstance(name, str) or not IDENTIFIER.match(name):
             fail(f"{where}.name must be a C identifier")
         if name in seen:
-            fail(f"duplicate device name {name!r}")
+            fail(f"duplicate aspect name {name!r}")
         seen.add(name)
         optional = raw.get("optional", False)
         if not isinstance(optional, bool):
             fail(f"{where}.optional must be a boolean")
-        device = {"name": name, "sources": [], "include_dirs": [], "link": [],
+        aspect = {"name": name, "sources": [], "include_dirs": [], "link": [],
                   "optional": optional}
         if "header" not in raw:
             fail(f"{where}.header is required")
         header = resolve_file(base, raw["header"], f"{where}.header")
-        device["header"] = header
-        device["include_dirs"].append(header.parent)
+        aspect["header"] = header
+        aspect["include_dirs"].append(header.parent)
         if "lib" in raw:
             lib = resolve_file(base, raw["lib"], f"{where}.lib")
             if lib.suffix not in (".a", ".so", ".o", ".c"):
                 fail(f"{where}.lib must be a .a, .so, .o or .c file")
-            device["lib"] = lib
+            aspect["lib"] = lib
         for flag in raw.get("link", []):
             if not isinstance(flag, str) or not LINK_FLAG.match(flag):
                 fail(f"{where}.link entries must look like \"-lname\" or \"-L/dir\"")
-            device["link"].append(flag)
+            aspect["link"].append(flag)
         for hook in ("setup", "teardown"):
             if hook in raw:
-                device[hook] = parse_hook(raw[hook], f"{where}.{hook}")
+                aspect[hook] = parse_hook(raw[hook], f"{where}.{hook}")
         if "thermal" in raw:
             c_type, function = parse_signature(raw["thermal"], f"{where}.thermal")
-            device["thermal"] = (c_type, function)
+            aspect["thermal"] = (c_type, function)
         if ("powercap_set" in raw) != ("powercap_restore" in raw):
             fail(f"{where}: powercap_set and powercap_restore must be declared together")
         if "powercap_set" in raw:
-            device["powercap_set"] = parse_prototype(raw["powercap_set"], f"{where}.powercap_set",
+            aspect["powercap_set"] = parse_prototype(raw["powercap_set"], f"{where}.powercap_set",
                                                      "int", "int")
-            device["powercap_restore"] = parse_prototype(
+            aspect["powercap_restore"] = parse_prototype(
                 raw["powercap_restore"], f"{where}.powercap_restore", "int", "")
         if "powercap_calibration" in raw:
             function = raw["powercap_calibration"]
             if not isinstance(function, str) or not IDENTIFIER.match(function):
                 fail(f"{where}.powercap_calibration must be a C function name")
-            device["powercap_calibration"] = function
+            aspect["powercap_calibration"] = function
         metrics, names = [], set()
         for m_index, metric in enumerate(raw.get("metric", [])):
             m_where = f"{where}.metric[{m_index}]"
@@ -228,7 +229,7 @@ def validate(config, config_path):
             if not isinstance(m_name, str) or not IDENTIFIER.match(m_name):
                 fail(f"{m_where}.name must be a C identifier")
             if m_name in names:
-                fail(f"duplicate metric {m_name!r} in device {name!r}")
+                fail(f"duplicate metric {m_name!r} in aspect {name!r}")
             names.add(m_name)
             kind = metric.get("kind", "gauge")
             if kind not in KINDS:
@@ -241,16 +242,22 @@ def validate(config, config_path):
                             "type": c_type, "function": function,
                             "integer": c_type in INTEGER_TYPES})
         if not metrics:
-            fail(f"{where} must declare at least one [[device.metric]]")
-        device["metrics"] = metrics
-        devices.append(device)
+            fail(f"{where} must declare at least one [[aspect.metric]]")
+        aspect["metrics"] = metrics
+        aspects.append(aspect)
     if measurement["mode"] == "powercap-calibration" and not any(
-            "powercap_calibration" in device for device in devices):
-        fail("powercap-calibration mode requires a device declaring powercap_calibration")
+            "powercap_calibration" in aspect for aspect in aspects):
+        fail("powercap-calibration mode requires an aspect declaring powercap_calibration")
     if measurement["mode"] == "temperature-calibration" and not any(
-            "thermal" in device for device in devices):
-        fail("temperature-calibration mode requires a device declaring thermal")
-    return {"measurement": measurement, "devices": devices}
+            "thermal" in aspect for aspect in aspects):
+        fail("temperature-calibration mode requires an aspect declaring thermal")
+    if not aspects:
+        if not measurement.get("command", "").strip() or "\0" in measurement["command"]:
+            fail("measurement.command must be non-empty and contain no NUL when no aspects are declared")
+        unused = specified_measurement - {"mode", "calibration_file", "command"}
+        if unused:
+            fail(f"measurement settings require at least one aspect: {sorted(unused)}")
+    return {"measurement": measurement, "aspects": aspects}
 
 
 def c_string(value):
@@ -262,12 +269,12 @@ def c_string(value):
     return '"' + "".join(encode(byte) for byte in os.fsencode(value)) + '"'
 
 
-def generate_device(device, source_name):
-    name, metrics = device["name"], device["metrics"]
+def generate_aspect(aspect, source_name):
+    name, metrics = aspect["name"], aspect["metrics"]
     lines = [
         f"/* Generated by scripts/weave.py from {source_name}; do not edit. */",
-        "#include <stdint.h>", "#include <stddef.h>", '#include "gm_device.h"',
-        f"#include {c_string(device['header'].name)}", "",
+        "#include <stdint.h>", "#include <stddef.h>", '#include "gm_aspect.h"',
+        f"#include {c_string(aspect['header'].name)}", "",
         "static GmSampler gm_sampler;", "static pthread_t gm_thread;",
         "static int gm_thread_running;", "static unsigned char gm_selected[%d];" % len(metrics),
         "static size_t gm_count;", "static int gm_overflow;",
@@ -315,41 +322,65 @@ def generate_device(device, source_name):
               "static int gm_get_overflow(void) { return __atomic_load_n(&gm_overflow, __ATOMIC_ACQUIRE); }",
               ""]
     for hook in ("setup", "teardown"):
-        if hook in device:
-            kind, function = device[hook]
+        if hook in aspect:
+            kind, function = aspect[hook]
             body = f"return {function}() != 0;" if hook == "setup" and kind == "int" \
                 else f"{function}(); return 0;" if hook == "setup" else f"{function}();"
             signature = "int gm_setup(void)" if hook == "setup" else "void gm_teardown(void)"
             lines += [f"static {signature} {{ {body} }}", ""]
-    if "thermal" in device:
-        lines += [f"static double gm_thermal(void) {{ return (double){device['thermal'][1]}(); }}", ""]
-    if "powercap_set" in device:
-        lines += [f"static int gm_powercap_set(int watts) {{ return {device['powercap_set']}(watts); }}",
-                  f"static int gm_powercap_restore(void) {{ return {device['powercap_restore']}(); }}", ""]
-    lines += [f"static const GmDevice gm_device = {{", f"    {c_string(name)}, {len(metrics)}, gm_metrics,",
-              "    %s," % ("gm_setup" if "setup" in device else "NULL"),
-              "    %s," % ("gm_teardown" if "teardown" in device else "NULL"),
+    if "thermal" in aspect:
+        lines += [f"static double gm_thermal(void) {{ return (double){aspect['thermal'][1]}(); }}", ""]
+    if "powercap_set" in aspect:
+        lines += [f"static int gm_powercap_set(int watts) {{ return {aspect['powercap_set']}(watts); }}",
+                  f"static int gm_powercap_restore(void) {{ return {aspect['powercap_restore']}(); }}", ""]
+    lines += [f"static const GmAspect gm_aspect = {{", f"    {c_string(name)}, {len(metrics)}, gm_metrics,",
+              "    %s," % ("gm_setup" if "setup" in aspect else "NULL"),
+              "    %s," % ("gm_teardown" if "teardown" in aspect else "NULL"),
               "    gm_start, gm_stop, gm_get_count, gm_get_timestamp, gm_get_overflow,",
-              "    %s," % ("gm_thermal" if "thermal" in device else "NULL"),
-              "    %s," % ("gm_powercap_set" if "powercap_set" in device else "NULL"),
-              "    %s," % ("gm_powercap_restore" if "powercap_set" in device else "NULL"),
-              "    %s," % device.get("powercap_calibration", "NULL"),
-              "    %d" % int(device["optional"]),
-              "};", "", f"const GmDevice *gm_device_{name}(void) {{ return &gm_device; }}", ""]
+              "    %s," % ("gm_thermal" if "thermal" in aspect else "NULL"),
+              "    %s," % ("gm_powercap_set" if "powercap_set" in aspect else "NULL"),
+              "    %s," % ("gm_powercap_restore" if "powercap_set" in aspect else "NULL"),
+              "    %s," % aspect.get("powercap_calibration", "NULL"),
+              "    %d" % int(aspect["optional"]),
+              "};", "", f"const GmAspect *gm_aspect_{name}(void) {{ return &gm_aspect; }}", ""]
     return "\n".join(lines)
 
 
 def generate_main(model, source_name):
-    devices, measurement = model["devices"], model["measurement"]
+    aspects, measurement = model["aspects"], model["measurement"]
+    if not aspects:
+        return "\n".join([
+            f"/* Generated by scripts/weave.py from {source_name}; do not edit. */",
+            "#include <stdio.h>", "#include <stdlib.h>", "#include <sys/wait.h>", "",
+            "int main(int argc, char **argv) {",
+            "    (void)argv;",
+            "    if (argc != 1) {",
+            '        fprintf(stderr, "[ERROR] This executable does not accept arguments.\\n");',
+            "        return 1;",
+            "    }",
+            f"    int status = system({c_string(measurement['command'])});",
+            "    if (status == -1) {",
+            '        perror("[ERROR] Failed to execute command");',
+            "        return 1;",
+            "    }",
+            "    if (WIFEXITED(status)) {",
+            "        int code = WEXITSTATUS(status);",
+            '        if (code != 0) fprintf(stderr, "[ERROR] Command exited with status %d.\\n", code);',
+            "        return code;",
+            "    }",
+            '    fprintf(stderr, "[ERROR] Command terminated abnormally.\\n");',
+            "    return 1;",
+            "}", "",
+        ])
     lines = [f"/* Generated by scripts/weave.py from {source_name}; do not edit. */",
-             "#include <stdio.h>", '#include "gm_device.h"', ""]
-    lines += [f"const GmDevice *gm_device_{d['name']}(void);" for d in devices]
+             "#include <stdio.h>", '#include "gm_aspect.h"', ""]
+    lines += [f"const GmAspect *gm_aspect_{d['name']}(void);" for d in aspects]
     lines += ["", "/* One flag per metric; the metrics declared in the TOML are on by default. */",
               "static const GmFlag gm_flags[] = {"]
     flag_count = 0
-    for d_index, device in enumerate(devices):
-        for m_index, metric in enumerate(device["metrics"]):
-            lines.append(f"    {{{c_string('--' + device['name'] + '.' + metric['name'])}, "
+    for d_index, aspect in enumerate(aspects):
+        for m_index, metric in enumerate(aspect["metrics"]):
+            lines.append(f"    {{{c_string('--' + aspect['name'] + '.' + metric['name'])}, "
                          f"{d_index}, {m_index}, 1}},")
             flag_count += 1
     if not flag_count:
@@ -370,8 +401,8 @@ def generate_main(model, source_name):
               f"    {measurement.get('timeout_hours', 0)}u, "
               f"{c_string(measurement['compile_command']) if 'compile_command' in measurement else 'NULL'}",
               "};", "", "int main(int argc, char **argv) {",
-              f"    static GmDevice devices[{max(len(devices), 1)}];"]
-    lines += [f"    devices[{i}] = *gm_device_{d['name']}();" for i, d in enumerate(devices)]
+              f"    static GmAspect aspects[{max(len(aspects), 1)}];"]
+    lines += [f"    aspects[{i}] = *gm_aspect_{d['name']}();" for i, d in enumerate(aspects)]
     if measurement["mode"] == "powercap-calibration":
         powercap_range = f'{measurement["powercap_min"]}-{measurement["powercap_max"]}'
         output = measurement.get("output", "powercap_calibration.csv")
@@ -386,11 +417,11 @@ def generate_main(model, source_name):
             f"{c_string(powercap_range)}, \"-output\", {c_string(output)}, NULL",
             "    };",
             f"    return gm_main((int)(sizeof(calibration_args) / sizeof(calibration_args[0])) - 1, "
-            f"calibration_args, &gm_defaults, devices, {len(devices)}, gm_flags, {flag_count});",
+            f"calibration_args, &gm_defaults, aspects, {len(aspects)}, gm_flags, {flag_count});",
             "}", "",
         ]
     else:
-        lines += [f"    return gm_main(argc, argv, &gm_defaults, devices, {len(devices)}, "
+        lines += [f"    return gm_main(argc, argv, &gm_defaults, aspects, {len(aspects)}, "
                   f"gm_flags, {flag_count});", "}", ""]
     return "\n".join(lines)
 
@@ -405,23 +436,26 @@ def weave(config_path, out_dir, max_samples, build=True):
     sources = [out_dir / "GreenMeasurer.c"]
     sources[0].write_text(generate_main(model, config_path.name))
     includes, objects, link = [INCLUDE_DIR], [], []
-    for device in model["devices"]:
-        path = out_dir / f"{device['name']}.c"
-        path.write_text(generate_device(device, config_path.name))
+    for aspect in model["aspects"]:
+        path = out_dir / f"{aspect['name']}.c"
+        path.write_text(generate_aspect(aspect, config_path.name))
         sources.append(path)
-        includes += device["include_dirs"]
-        if "lib" in device:
-            objects.append(str(device["lib"]))
-            if device["lib"].suffix == ".so":
-                link.append(f"-Wl,-rpath,{device['lib'].parent}")
-        link += device["link"]
+        includes += aspect["include_dirs"]
+        if "lib" in aspect:
+            objects.append(str(aspect["lib"]))
+            if aspect["lib"].suffix == ".so":
+                link.append(f"-Wl,-rpath,{aspect['lib'].parent}")
+        link += aspect["link"]
     executable = out_dir / "greenmeasurer"
-    command = [os.environ.get("CC", "gcc"), "-O2", "-Wall", "-pthread", "-D_GNU_SOURCE",
-               f"-DGM_MAX_SAMPLES={max_samples}",
-               f"-DGM_PROCESSOR={c_string(str(PROCESSOR))}"]
+    command = [os.environ.get("CC", "gcc"), "-O2", "-Wall"]
+    if model["aspects"]:
+        command += ["-pthread", "-D_GNU_SOURCE", f"-DGM_MAX_SAMPLES={max_samples}",
+                    f"-DGM_PROCESSOR={c_string(str(PROCESSOR))}"]
     command += [f"-I{path}" for path in dict.fromkeys(includes)]
-    command += [str(path) for path in sources] + [str(RUNTIME_SOURCE)] + objects + link
-    command += ["-lm", "-o", str(executable)]
+    command += [str(path) for path in sources]
+    if model["aspects"]:
+        command += [str(RUNTIME_SOURCE)] + objects + link + ["-lm"]
+    command += ["-o", str(executable)]
     if build:
         subprocess.run(command, check=True)
     return executable, command
