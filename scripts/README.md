@@ -6,6 +6,7 @@ Python 3.11 or `tomli` is required for TOML parsing.
 - `measure.sh`: generates a batch and runs it separately.
 - `run_powercap_calibration.sh`: generates a powercap calibration executable.
 - `run_all_configurations.sh`: builds and runs a set of configurations.
+- `test_examples.sh`: builds and runs every TOML under `examples/`.
 - `run_fibonacci_sequence.sh`: generates and runs the four Fibonacci configurations in order.
 - `compare_overtime_overhead.py`: compares workload wall time with and without sampling.
 - `compare_standard_overhead.py`: compares wall time with progressively more metrics.
@@ -29,6 +30,24 @@ For powercap calibration, generate with
 run `generated-powercap/greenmeasurer` with the necessary hardware permissions.
 The TOML must set `measurement.mode = "powercap-calibration"` and declare the
 calibration hook and range.
+
+## Check all examples
+
+```sh
+bash scripts/test_examples.sh
+```
+
+The script recursively runs all example TOMLs and reports `PASS`, `WARN`, or
+`FAIL`. A warning means the run completed but a log contains a warning or a
+CSV contains `NOT_SUPPORTED`; inspect the per-configuration logs and CSVs in
+the results directory printed at the end. Failures do not stop the remaining
+runs; the script exits non-zero if any configuration fails. Use `-o DIR` to
+choose the results directory or `-s` to stop at the first failure.
+
+Runs use the TOML settings and require the declared libraries, hardware and
+permissions. Powercap examples change CPU limits; review their configured
+ranges before running. Workload and output paths run in separate results
+directories; each example calibrates its own missing temperature baseline.
 
 ## Fibonacci sequence
 

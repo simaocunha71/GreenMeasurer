@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs every TOML under configurations-generated/ (or a given directory) on this machine
-# and prints a PASS/FAIL/SKIP summary, to validate GreenMeasurer on new hardware.
+# and prints a PASS/WARN/FAIL summary, to validate GreenMeasurer on new hardware.
 #
 # Usage: scripts/run_all_configurations.sh [-o results-dir] [-s] [config-dir-or-file ...]
 #   -o DIR  results directory (default: greenmeasurer-config-results-<host>-<date>)
@@ -57,7 +57,7 @@ make -C "$root/src" all >"$results/build.log" 2>&1 || {
 mapfile -t configs < <(find "$@" -name '*.toml' -type f | sort)
 ordered=("${configs[@]}")
 
-pass=0; fail=0
+pass=0; warn=0; fail=0
 summary=()
 for config in "${ordered[@]}"; do
     name=$(realpath --relative-to="$root" "$config" 2>/dev/null || echo "$config")
@@ -84,11 +84,18 @@ for config in "${ordered[@]}"; do
         produced=$(find "$work" -maxdepth 1 \( -name '*.csv' -o -name '*.txt' \) | wc -l)
         [[ $produced -eq 0 ]] && status=FAIL && echo "no output file produced" >>"$work/run.log"
     fi
-    if [[ $status == PASS ]]; then
-        pass=$((pass + 1))
-    else
-        fail=$((fail + 1)); tail -n 5 "$work/run.log" | sed 's/^/       /'
+    if [[ $status == PASS ]] && {
+        grep -qF '[WARNING]' "$work/generate.log" "$work/run.log" ||
+        find "$work" -maxdepth 1 -name '*.csv' -type f -exec grep -lF 'NOT_SUPPORTED' {} + | grep -q .
+    }; then
+        status=WARN
+        echo "       Warnings or unavailable metrics found; inspect logs and CSV files in $work."
     fi
+    case $status in
+        PASS) pass=$((pass + 1)) ;;
+        WARN) warn=$((warn + 1)) ;;
+        FAIL) fail=$((fail + 1)); tail -n 5 "$work/run.log" | sed 's/^/       /' ;;
+    esac
     summary+=("$status  $name")
     # Share the baseline with the following configs.
     [[ -f "$work/greenmeasurer-test-temperature.txt" ]] &&
@@ -99,5 +106,5 @@ done
 echo
 echo "===== Summary ($(hostname), $(date -Is)) ====="
 printf '%s\n' "${summary[@]}" | tee "$results/summary.txt"
-echo "PASS: $pass  FAIL: $fail   Results: $results"
+echo "PASS: $pass  WARN: $warn  FAIL: $fail   Results: $results"
 [[ $fail -eq 0 ]]

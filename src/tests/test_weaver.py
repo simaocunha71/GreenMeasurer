@@ -647,8 +647,48 @@ class WeaverScriptsTest(unittest.TestCase):
                  "-o", str(results), str(config)],
                 text=True, capture_output=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-            self.assertIn("PASS: 1  FAIL: 0", result.stdout)
+            self.assertIn("PASS: 1  WARN: 0  FAIL: 0", result.stdout)
             self.assertEqual(len(list(results.rglob("measurements.csv"))), 1)
+
+    def test_run_all_reports_warnings_and_continues_after_failure(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            (directory / "metric.h").write_text("int metric(void);\n")
+            (directory / "metric.c").write_text("int metric(void) { return -1; }\n")
+            (directory / "a-invalid.toml").write_text('[measurement]\nmode = "invalid"\n')
+            (directory / "b-warning.toml").write_text(
+                '[measurement]\nmode = "standard"\ncommand = "true"\n'
+                'calibration_file = "baseline.txt"\noutput = "measurements.csv"\n'
+                '[[device]]\nname = "Toy"\nheader = "metric.h"\nlib = "metric.c"\n'
+                '[[device.metric]]\nname = "Value"\nread = "int metric()"\n')
+            results = directory / "results"
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts" / "run_all_configurations.sh"),
+                 "-o", str(results), str(directory)],
+                text=True, capture_output=True, timeout=120)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("PASS: 0  WARN: 1  FAIL: 1", result.stdout)
+            summary = (results / "summary.txt").read_text()
+            self.assertIn("FAIL  ", summary)
+            self.assertIn("WARN  ", summary)
+            self.assertIn("NOT_SUPPORTED", next(results.rglob("measurements.csv")).read_text())
+
+    def test_examples_wrapper_forwards_options_and_examples_directory(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            bash = directory / "bash"
+            bash.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$ARGS_LOG"\nexit 23\n')
+            bash.chmod(0o755)
+            log = directory / "arguments.txt"
+            result = subprocess.run(
+                ["/bin/bash", str(ROOT / "scripts" / "test_examples.sh"), "-o", "results"],
+                env={**os.environ, "PATH": f'{directory}{os.pathsep}{os.environ["PATH"]}',
+                     "ARGS_LOG": str(log)},
+                text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 23)
+            self.assertEqual(log.read_text().splitlines(), [
+                str(ROOT / "scripts" / "run_all_configurations.sh"),
+                "-o", "results", str(ROOT / "examples")])
 
 
 if __name__ == "__main__":

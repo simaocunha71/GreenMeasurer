@@ -45,6 +45,11 @@ root, with the permissions required to access the devices. TOML header and
 library paths are relative to the TOML; workload and output paths are relative
 to the directory from which the executable is run.
 
+To build and run all example TOMLs with a per-configuration summary, use
+`bash scripts/test_examples.sh`. Results and logs are kept in separate
+directories. See [the scripts guide](../scripts/README.md#check-all-examples)
+for status meanings and powercap precautions.
+
 All declared libraries must be built and linkable. Intel CPU configurations
 require the CPU library's dependencies; NVIDIA configurations require NVML
 development and runtime libraries. Standard and over-time examples in
