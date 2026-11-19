@@ -172,6 +172,8 @@ class WeaverTest(unittest.TestCase):
                     if "libgm_intel_cpu.a" in line:
                         lines.append(f'lib = "{mock_source}"')
                     continue
+                if line.startswith("calibration_file = "):
+                    line = f'calibration_file = "{baseline}"'
                 if line.startswith("header = "):
                     path = line.split('"')[1]
                     line = f'header = "{(ROOT / "configurations-generated" / path).resolve()}"'
@@ -182,8 +184,6 @@ class WeaverTest(unittest.TestCase):
                         line = replacement
                         break
                 lines.append(line)
-                if line == "[measurement]":
-                    lines.append(f'calibration_file = "{baseline}"')
             config = self.directory / f"fibonacci-{mode}.toml"
             config.write_text("\n".join(lines) + "\n")
             executable = self.weave(config, self.directory / f"fibonacci-{mode}")
@@ -393,7 +393,9 @@ class WeaverTest(unittest.TestCase):
         calibration.write_text("old baseline\n")
         source = (FIXTURES / "toy_hooks.toml").read_text()
         source = source.replace('mode = "over-time"', 'mode = "temperature-calibration"\n'
-                                f'sleep_seconds = 1\ncalibration_file = "{calibration}"')
+                                'sleep_seconds = 1')
+        source = source.replace('calibration_file = "toy-temperature-baseline.txt"',
+                                f'calibration_file = "{calibration}"')
         config = self.directory / "configured-temperature.toml"
         config.write_text(source)
         executable = self.weave(config, self.directory / "configured-temperature")
@@ -409,7 +411,8 @@ class WeaverTest(unittest.TestCase):
         baseline = self.directory / "failed-temperature.txt"
         baseline.unlink(missing_ok=True)
         source = (FIXTURES / "toy_hooks.toml").read_text()
-        source = source.replace('mode = "over-time"', 'mode = "temperature-calibration"\n'
+        source = source.replace('mode = "over-time"', 'mode = "temperature-calibration"')
+        source = source.replace('calibration_file = "toy-temperature-baseline.txt"',
                                 f'calibration_file = "{baseline}"')
         source = source.replace('thermal = "double toy_thermal()"',
                                 'setup = "int toy_setup()"\nthermal = "double toy_thermal()"')
@@ -437,10 +440,16 @@ class WeaverValidationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn(expected, result.stderr)
 
-    DEVICE = '[measurement]\nmode = "over-time"\n[[device]]\nname = "D"\nheader = "d.h"\n'
+    DEVICE = ('[measurement]\nmode = "over-time"\n'
+              'calibration_file = "temperature-baseline.txt"\n'
+              '[[device]]\nname = "D"\nheader = "d.h"\n')
 
     def test_rejects_devices_inside_measurement(self):
         self.check('[measurement]\nmode = "over-time"\ndevice = "RAPL"\n', "[[device]]")
+
+    def test_requires_calibration_file(self):
+        self.check('[measurement]\nmode = "over-time"\n',
+                   "measurement.calibration_file is required")
 
     def test_rejects_unsupported_return_type(self):
         self.check(self.DEVICE + '[[device.metric]]\nname = "M"\nread = "char f()"\n',
@@ -465,30 +474,36 @@ class WeaverValidationTest(unittest.TestCase):
                    'read = "int f()"\n', "declared together")
 
     def test_rejects_invalid_powercap_list(self):
-        self.check('[measurement]\nmode = "over-time"\npowercap = [5, 5]\n', "unique")
+        self.check('[measurement]\nmode = "over-time"\n'
+                   'calibration_file = "temperature-baseline.txt"\npowercap = [5, 5]\n', "unique")
 
     def test_rejects_powercap_calibration_without_range(self):
         self.check('[measurement]\nmode = "powercap-calibration"\ncommand = "true"\n'
-                   'powercap_min = 2\n[[device]]\nname = "D"\nheader = "d.h"\n'
+                   'calibration_file = "temperature-baseline.txt"\npowercap_min = 2\n'
+                   '[[device]]\nname = "D"\nheader = "d.h"\n'
                    '[[device.metric]]\nname = "M"\nread = "int f()"\n',
                    "measurement.powercap_max must be between 1")
 
     def test_rejects_powercap_calibration_without_device_hook(self):
         self.check('[measurement]\nmode = "powercap-calibration"\ncommand = "true"\n'
+                   'calibration_file = "temperature-baseline.txt"\n'
                    'powercap_min = 2\npowercap_max = 3\n[[device]]\nname = "D"\n'
                    'header = "d.h"\n[[device.metric]]\nname = "M"\nread = "int f()"\n',
                    "requires a device declaring powercap_calibration")
 
     def test_rejects_temperature_calibration_without_thermal_hook(self):
-        self.check('[measurement]\nmode = "temperature-calibration"\n',
+        self.check('[measurement]\nmode = "temperature-calibration"\n'
+                   'calibration_file = "temperature-baseline.txt"\n',
                    "temperature-calibration mode requires a device declaring thermal")
 
     def test_rejects_invalid_timeout(self):
-        self.check('[measurement]\nmode = "standard"\ntimeout_hours = 0\n',
+        self.check('[measurement]\nmode = "standard"\n'
+                   'calibration_file = "temperature-baseline.txt"\ntimeout_hours = 0\n',
                    "measurement.timeout_hours must be between 1 and 1000")
 
     def test_rejects_compile_command_outside_calibration(self):
-        self.check('[measurement]\nmode = "standard"\ncompile_command = "true"\n',
+        self.check('[measurement]\nmode = "standard"\n'
+                   'calibration_file = "temperature-baseline.txt"\ncompile_command = "true"\n',
                    "measurement.compile_command is only valid")
 
 
@@ -542,7 +557,9 @@ class WeaverScriptsTest(unittest.TestCase):
             for mode in ("standard", "over-time"):
                 config = directory / f"{mode}.toml"
                 config.write_text(
-                    f'[measurement]\nmode = "{mode}"\ncommand = "true"\n'
+                    f'[measurement]\nmode = "{mode}"\n'
+                    f'calibration_file = "{directory / "temperature-baseline.txt"}"\n'
+                    f'command = "true"\n'
                     f'output = "{directory / (mode + ".csv")}"\n')
                 configs.append(config)
             script = ROOT / "scripts" / "measure.sh"
@@ -579,7 +596,9 @@ class WeaverScriptsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
             config = directory / "standard.toml"
-            config.write_text('[measurement]\nmode = "standard"\ncommand = "true"\n')
+            config.write_text('[measurement]\nmode = "standard"\n'
+                              'calibration_file = "temperature-baseline.txt"\n'
+                              'command = "true"\n')
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_powercap_calibration.sh"),
                  str(config), str(directory / "build")],
@@ -600,11 +619,11 @@ class WeaverScriptsTest(unittest.TestCase):
                 (FIXTURES / "toy_hooks.toml").read_text()
                 .replace('mode = "over-time"', 'mode = "powercap-calibration"\n'
                          'powercap_min = 2\npowercap_max = 2')
+                .replace('calibration_file = "toy-temperature-baseline.txt"',
+                         f'calibration_file = "{baseline}"')
                 .replace('command = "sleep 0.2"', 'command = "true"')
                 .replace("interval_ms = 10\n", "")
-                .replace('lib = "libtoy.a"', 'lib = "toy.c"')
-                .replace('output = "hooks.csv"',
-                         f'output = "hooks.csv"\ncalibration_file = "{baseline}"'))
+                .replace('lib = "libtoy.a"', 'lib = "toy.c"'))
             build = directory / "build"
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_powercap_calibration.sh"),
@@ -620,6 +639,7 @@ class WeaverScriptsTest(unittest.TestCase):
             directory = Path(name)
             config = directory / "standard.toml"
             config.write_text('[measurement]\nmode = "standard"\ncommand = "true"\n'
+                              'calibration_file = "temperature-baseline.txt"\n'
                               'output = "measurements.csv"\n')
             results = directory / "results"
             result = subprocess.run(

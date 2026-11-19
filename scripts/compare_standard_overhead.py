@@ -139,7 +139,7 @@ def main():
         measurement = base["measurement"]
         if measurement["mode"] != "standard" or "command" not in measurement:
             raise ValueError("a standard configuration with measurement.command is required")
-        calibration = Path(measurement.get("calibration_file", "/tmp/cores_temperatures.txt"))
+        calibration = Path(measurement["calibration_file"])
         if any("thermal" in device for device in model["devices"]) and not calibration.is_file():
             raise ValueError(f"calibration file does not exist: {calibration}")
         metric_columns = {

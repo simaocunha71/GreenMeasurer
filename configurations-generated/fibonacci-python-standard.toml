@@ -6,6 +6,7 @@
 
 [measurement]
 mode = "standard"
+calibration_file = "cores_temperatures.txt"
 command = "python3 Languages/Python/Fibonacci/fibonacci.py 42"
 language = "Python"
 program = "fibonacci-42"

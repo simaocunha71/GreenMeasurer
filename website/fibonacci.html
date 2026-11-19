@@ -21,10 +21,10 @@
     <div class="doc-content">
       <section id="before"><p class="eyebrow">01 / Prepare</p><h2>Check the machine</h2>
         <p>The example configurations use Intel CPU, Intel GPU and NVIDIA GPU device libraries. Generation requires all declared libraries and their dependencies, including NVML, even if a GPU is unavailable. The Intel CPU must support the configured thermal and powercap operations. Check permissions for sensors, RAPL and power limits. Consult the <a href="https://github.com/simaocunha71/GreenMeasurer#requirements">repository requirements</a> and review the TOMLs before running.</p>
-        <aside class="notice warning"><strong>Plan the run</strong><p>The sequence changes CPU power limits and can take a long time. It overwrites <code>/tmp/cores_temperatures.txt</code>, appends to standard and over-time CSVs, and may replace the powercap calibration output. Save any existing results first.</p></aside>
+        <aside class="notice warning"><strong>Plan the run</strong><p>The sequence changes CPU power limits and can take a long time. It overwrites the explicitly configured <code>cores_temperatures.txt</code> baseline, appends to standard and over-time CSVs, and may replace the powercap calibration output. Save any existing results first.</p></aside>
       </section>
       <section id="config"><p class="eyebrow">02 / Configure</p><h2>Four separate aspects</h2>
-        <p>The configurations in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/configurations-generated">configurations-generated/</a> share the temperature baseline and declare their own devices and metrics:</p>
+        <p>The configurations in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/configurations-generated">configurations-generated/</a> explicitly name the same <code>cores_temperatures.txt</code> temperature baseline and declare their own devices and metrics:</p>
         <ol>
           <li><strong>Temperature calibration</strong> — <code>fibonacci-python-temperature-calibration.toml</code> waits 60 seconds, then records one thermal reading and a sensors snapshot.</li>
           <li><strong>Standard</strong> — <code>fibonacci-python-standard.toml</code> measures runs at the configured powercaps.</li>
@@ -41,7 +41,7 @@
         <p>The script runs from the repository root, so workload and output paths are relative to that directory. It does not automatically obtain elevated privileges.</p>
       </section>
       <section id="results"><p class="eyebrow">04 / Inspect</p><h2>Read the output</h2>
-        <pre><code>cat /tmp/cores_temperatures.txt
+        <pre><code>cat cores_temperatures.txt
 head -n 5 fibonacci-python-standard.csv
 head -n 5 fibonacci-python-overtime.csv
 head -n 5 fibonacci-python-powercap-calibration.csv</code></pre>

@@ -31,6 +31,7 @@ python3 scripts/weave.py config.toml -o generated-experiment
         <p><code>[measurement]</code> describes the mode and experiment. Each <code>[[device]]</code> declares a header and optionally a library, setup and teardown functions, and control hooks. Each device must declare at least one <code>[[device.metric]]</code>, with a reader function and an optional kind and unit. Set <code>optional = true</code> to continue if a device fails setup: its selected columns remain in the CSV as <code>NOT_SUPPORTED</code>, with a warning and its hooks disabled. Its build dependencies are still required.</p>
         <pre><code>[measurement]
 mode = "standard"
+calibration_file = "temperature-baseline.txt"
 command = "python3 my_program.py"
 language = "Python"
 program = "example"
@@ -47,6 +48,7 @@ read = "double system_get_core_count()"
 kind = "gauge"
 unit = "cores"</code></pre>
         <p>This example assumes the TOML is in a directory immediately under the repository root and that <code>my_program.py</code> exists in the root. Device paths resolve relative to the TOML; workload commands and output paths resolve from the directory in which the generated executable is run. Reweave after changing the TOML.</p>
+        <p>Every configuration must set a non-empty <code>calibration_file</code> path in <code>[measurement]</code>. There is no default temperature-baseline path; choose the same path in configurations that should share a baseline.</p>
         <p>Only declared metrics exist in the generated executable. With no metric flags, declared metrics are selected by default; passing metric flags such as <code>--System.Cores</code> selects those flags instead. <code>--no-metrics</code> selects none, but does not necessarily disable thermal or powercap hooks. A configuration can also omit devices entirely to run without metrics.</p>
         <p>For adaptable Fibonacci configurations, see the combined TOMLs and the <code>intel/</code>, <code>nvidia/</code> and <code>system/</code> folders in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/examples">examples/</a>. The NVIDIA and system calibration examples use Intel CPU hooks; temperature calibration does not run the workload. For an explanation of every TOML field, see the <a href="reference.html#definitions">configuration reference</a>.</p>
       </section>
@@ -57,7 +59,7 @@ unit = "cores"</code></pre>
       </section>
       <section id="temperature"><p class="eyebrow">04 / Calibrate</p><h2>Temperature baseline</h2>
         <p><code>temperature-calibration</code> requires a device with a <code>thermal</code> hook. It waits <code>sleep_seconds</code>, takes one reading, then overwrites <code>calibration_file</code> with a <code>sensors</code> snapshot and an <code>Average temperature: ...</code> line. It does not run the workload or calculate an average over the waiting period. The Intel CPU hook averages the current core temperature readings. A failed snapshot is reported as a warning.</p>
-        <p>For other modes, a configured thermal hook enables a wait before each run until the temperature is at most the baseline plus <code>variance</code>. If the baseline file is missing, it is calibrated first. Without a thermal hook, there is no thermal control.</p>
+        <p>For other modes, a configured thermal hook enables a wait before each run until the temperature is at most the baseline plus <code>variance</code>. If the explicitly configured baseline file is missing, it is calibrated first and written to that path. Without a thermal hook, there is no thermal control.</p>
       </section>
       <section id="powercap"><p class="eyebrow">05 / Control</p><h2>Power limits and calibration</h2>
         <p>Standard and over-time configurations may specify <code>powercap</code> as a value or list in watts. Positive limits require paired <code>powercap_set</code> and <code>powercap_restore</code> hooks. For the Intel CPU implementation, <code>-1</code> applies the saved per-machine baseline; the runtime restores limits after measurement.</p>

@@ -1,5 +1,6 @@
 [measurement]
 mode = "over-time"
+calibration_file = "toy-temperature-baseline.txt"
 command = "sleep 0.3"
 language = "Shell"
 program = "sleep"

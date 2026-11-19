@@ -32,6 +32,7 @@
         <p>A TOML file has one <code>[measurement]</code> table, followed by zero or more <code>[[device]]</code> tables. Each device has one or more <code>[[device.metric]]</code> tables; each metric belongs to the most recently declared device. This example is based on the NVIDIA over-time configuration:</p>
         <pre><code>[measurement]
 mode = "over-time"
+calibration_file = "temperature-baseline.txt"
 command = "python3 Languages/Python/Fibonacci/fibonacci.py 30"
 language = "Python"
 program = "fibonacci-30"
@@ -58,7 +59,7 @@ unit = "J"</code></pre>
         <p class="table-hint">On a small screen, scroll the tables horizontally to see every column.</p>
       </section>
       <section id="measurement-fields"><p class="eyebrow">03 / Field reference</p><h2><code>[measurement]</code></h2>
-        <p>Defines the experiment. Only <code>mode</code> is always required in the TOML; workload modes also need a non-empty <code>command</code> at runtime. Integer ranges below apply to TOML values.</p>
+        <p>Defines the experiment. <code>mode</code> and a non-empty <code>calibration_file</code> path are required in every TOML; workload modes also need a non-empty <code>command</code> at runtime. Integer ranges below apply to TOML values.</p>
         <div class="table-wrap"><table><thead><tr><th>Field</th><th>Meaning and default</th></tr></thead><tbody>
           <tr><td><code>mode</code></td><td>Required string: <code>standard</code>, <code>over-time</code>, <code>temperature-calibration</code> or <code>powercap-calibration</code>. See the <a href="guide.html#modes">mode guide</a>.</td></tr>
           <tr><td><code>command</code></td><td>Workload command executed through a shell, for example <code>python3 program.py 30</code>. Required at runtime except for temperature calibration; no default command.</td></tr>
@@ -70,7 +71,7 @@ unit = "J"</code></pre>
           <tr><td><code>sleep_seconds</code></td><td>Pause between repetitions, or wait before taking a temperature baseline; 0–86,400 seconds, default <code>0</code>.</td></tr>
           <tr><td><code>powercap</code></td><td>Integer or list of up to 128 distinct values for standard and over-time, in watts. Each is <code>-1</code> or at least 1; default <code>-1</code>. Positive limits require paired device hooks. Not valid in powercap-calibration TOML.</td></tr>
           <tr><td><code>variance</code></td><td>Allowed temperature above the baseline before a run, in °C; integer 0–1,000, default <code>5</code>. It matters when a thermal hook is available.</td></tr>
-          <tr><td><code>calibration_file</code></td><td>Path to the temperature baseline; default <code>/tmp/cores_temperatures.txt</code>. Temperature calibration overwrites it; a thermal-controlled run creates it if missing.</td></tr>
+          <tr><td><code>calibration_file</code></td><td>Required non-empty path to the temperature baseline; there is no default. Temperature calibration overwrites it; a thermal-controlled run creates it if missing. The path is relative to the generated executable's working directory unless absolute.</td></tr>
           <tr><td><code>powercap_min</code>, <code>powercap_max</code></td><td>Inclusive watt range for powercap calibration only. Both are required for that mode; positive integers with min ≤ max and fewer than 128 values in the range.</td></tr>
           <tr><td><code>timeout_hours</code></td><td>Optional per-workload timeout in hours, from 1 to 1,000. Without it, powercap calibration uses one hour; other modes have no workload timeout.</td></tr>
           <tr><td><code>compile_command</code></td><td>Optional non-empty shell command to compile the workload before a powercap calibration; not valid in other TOML modes.</td></tr>

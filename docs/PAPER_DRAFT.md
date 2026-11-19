@@ -195,7 +195,7 @@ To add a backend, a contributor creates a directory under the appropriate CPU or
 
 GreenMeasurer provides two calibration workflows.
 
-**Temperature calibration (`--temperature-calibration`).** The framework waits for an idle period, reads available CPU temperatures and writes a baseline file (default: `/tmp/cores_temperatures.txt`). Standard and over-time modes use this baseline and the configured variance threshold to avoid running under temperatures that are too far above the reference. All measurement and calibration modes require a readable CPU temperature before starting the workload. This calibration controls one source of experimental variation; it does not eliminate all system noise.
+**Temperature calibration (`--temperature-calibration`).** The framework waits for an idle period, reads available CPU temperatures and writes the baseline file configured with `calibration_file` (or `-calib-file`). Standard and over-time modes use this baseline and the configured variance threshold to avoid running under temperatures that are too far above the reference. All measurement and calibration modes require a readable CPU temperature before starting the workload. This calibration controls one source of experimental variation; it does not eliminate all system noise.
 
 ```sh
 sudo ./src/main --temperature-calibration \
@@ -387,7 +387,7 @@ All modes accept `-command` (alias `-run_cmd`) with the command to run through `
 | `-interval-ms` | ms | over-time | Pause between sampling cycles (default 1) |
 | `-powercap` | W, or `-1` | standard, over-time | Package power limit (Intel only); `-1` applies the saved per-machine baseline (default); otherwise at least 1 |
 | `-sleep_time`, `-sleep-secs` | s | all | Idle time used to settle the machine when a temperature baseline has to be created (default 5; default 10 as `-secs_to_sleep` in power-cap calibration) |
-| `-calib-file` | path | all | Baseline-temperature file (default `/tmp/cores_temperatures.txt`); created by a calibration if missing |
+| `-calib-file` | path | all | Baseline-temperature file; the path must be supplied in the TOML or as a command-line option, and is created by calibration if missing |
 | `-output`, `-measurements-file` | path | all | Output CSV (defaults `measurements.csv`, `measurements_ot.csv`, `powercap_calibration.csv`) |
 | `-range` | `min-max`, W | power-cap calibration | Range of limits to test; minimum at least 1 W |
 | `-compile_cmd` | text | power-cap calibration | Optional command run once before the sweep |

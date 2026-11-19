@@ -43,8 +43,9 @@ directory is `generated-fibonacci-sequence`; the chosen directory must not
 already exist. Commands and output paths run from the repository root.
 
 The temperature configuration waits 60 seconds before taking one reading and
-overwrites `/tmp/cores_temperatures.txt`, which the other three configurations use
-by default. Measurements use the existing TOML settings and can take a long time.
+overwrites `cores_temperatures.txt`, which the other three configurations name
+explicitly in their TOMLs. Measurements use the existing TOML settings and can
+take a long time.
 Standard and over-time measurements append to their CSVs; powercap calibration
 may replace its output. Save existing results first, and use fresh CSVs after
 changing the metric schema. The three measurement configurations declare CPU

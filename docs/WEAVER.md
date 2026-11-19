@@ -11,6 +11,9 @@ python3 scripts/weave.py config.toml [-o out_dir] [--max-samples N]
 By default, the generated executable is placed in `generated-<config name>`
 next to the TOML file. Use `-o` to choose another output directory.
 
+Every `[measurement]` table must declare a non-empty `calibration_file` path.
+Modes that use thermal control read this file and create it if it is missing.
+
 ## TOML format
 
 ```toml
@@ -26,7 +29,7 @@ sleep_seconds = 0           # pause between repetitions
 timeout_hours = 1           # optional timeout per workload
 powercap = [-1, 40]         # limits in W (-1: saved RAPL baseline); default -1
 variance = 5                # thermal tolerance above the baseline, in C
-calibration_file = "/tmp/cores_temperatures.txt"   # temperature baseline
+calibration_file = "temperature-baseline.txt"     # required baseline path
 
 [[device]]
 name = "RAPL"

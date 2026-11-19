@@ -90,6 +90,7 @@ class OvertimeScriptsTest(unittest.TestCase):
         config = self.directory / "config.toml"
         config.write_text(
             '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
+            'calibration_file="unused-baseline.txt"\n'
             f'output="{output}"\n'
             'variance=100\nsleep_seconds=0\ninterval_ms=5\nrepetitions=2\n'
             '[[device]]\nname="Toy"\nheader="metric.h"\nlib="metric.c"\n'

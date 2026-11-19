@@ -6,7 +6,7 @@
 [measurement]
 mode = "temperature-calibration"
 sleep_seconds = 60
-calibration_file = "/tmp/cores_temperatures.txt"
+calibration_file = "cores_temperatures.txt"
 
 [[device]]
 name = "IntelCPU"

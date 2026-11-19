@@ -133,6 +133,8 @@ def validate(config, config_path):
             fail(f"measurement.{key} has an invalid type")
     if measurement.get("mode") not in MODES:
         fail(f"measurement.mode must be one of {MODES}")
+    if not measurement.get("calibration_file", "").strip():
+        fail("measurement.calibration_file is required and must be a non-empty path")
     for key, low, high in (("interval_ms", 1, 4294967), ("repetitions", 1, 1000000),
                            ("sleep_seconds", 0, 86400), ("timeout_hours", 1, 1000)):
         if key in measurement and not low <= measurement[key] <= high:
@@ -363,7 +365,7 @@ def generate_main(model, source_name):
               f"{measurement.get('interval_ms', 1)}u, {measurement.get('repetitions', 1)}u, "
               f"{measurement.get('sleep_seconds', 0)}u,",
               f"    {measurement.get('variance', 5)}u, "
-              f"{c_string(measurement.get('calibration_file', '/tmp/cores_temperatures.txt'))},",
+              f"{c_string(measurement['calibration_file'])},",
               f"    gm_powercaps, {len(measurement['powercap'])},",
               f"    {measurement.get('timeout_hours', 0)}u, "
               f"{c_string(measurement['compile_command']) if 'compile_command' in measurement else 'NULL'}",
