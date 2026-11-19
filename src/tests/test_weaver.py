@@ -212,6 +212,70 @@ class WeaverTest(unittest.TestCase):
                         else:
                             self.assertEqual(rows[-1][column] == "NOT_SUPPORTED", column == unavailable)
 
+    def test_examples_generate_and_run_all_declared_metrics(self):
+        mock_source = FIXTURES / "fibonacci_devices.c"
+        intel = [
+            "IntelCPU.Package_J", "IntelCPU.Core_J", "IntelCPU.DRAM_J", "IntelCPU.Temperature_C",
+            "IntelGPU.Energy_J", "IntelGPU.Temperature_C",
+        ]
+        nvidia = [
+            "NvidiaGPU.Energy_J", "NvidiaGPU.Power_W", "NvidiaGPU.Temperature_C",
+            "NvidiaGPU.Utilization_%", "NvidiaGPU.VRAM_MiB",
+        ]
+        system = [
+            "System.Cores_cores", "System.CoreFrequency_MHz", "System.RunningProcesses_processes",
+            "System.WorkloadProcesses_processes", "System.WorkloadMemory_KiB",
+        ]
+        groups = {"combined": intel + nvidia + system, "intel": intel,
+                  "nvidia": nvidia, "system": system}
+        for group, metrics in groups.items():
+            folder = ROOT / "examples"
+            if group != "combined":
+                folder /= group
+            baseline = self.directory / f"example-{group}-baseline.txt"
+            for mode in ("temperature-calibration", "standard", "overtime", "powercap-calibration"):
+                source_path = folder / f"{mode}.toml"
+                output = self.directory / f"example-{group}-{mode}.csv"
+                lines = []
+                injected = False
+                for line in source_path.read_text().splitlines():
+                    if line.startswith("lib = "):
+                        if not injected:
+                            lines.append(f'lib = "{mock_source}"')
+                            injected = True
+                        continue
+                    if line.startswith("header = "):
+                        path = line.split('"')[1]
+                        line = f'header = "{(folder / path).resolve()}"'
+                    if line.startswith("link = "):
+                        continue
+                    if line.startswith("output = "):
+                        line = f'output = "{output}"'
+                    if line.startswith("calibration_file = "):
+                        line = f'calibration_file = "{baseline}"'
+                    if line.startswith("sleep_seconds = "):
+                        line = "sleep_seconds = 0"
+                    lines.append(line)
+                config = self.directory / f"example-{group}-{mode}.toml"
+                config.write_text("\n".join(lines) + "\n")
+                executable = self.weave(config, self.directory / f"example-{group}-{mode}")
+                with self.subTest(group=group, mode=mode):
+                    result = subprocess.run([str(executable)], cwd=ROOT, text=True,
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if mode == "temperature-calibration":
+                        self.assertIn("Average temperature: 40.0", baseline.read_text())
+                    else:
+                        with output.open() as measurements:
+                            rows = list(csv.DictReader(measurements))
+                        self.assertTrue(rows)
+                        expected = metrics
+                        if mode == "powercap-calibration" and group in ("nvidia", "system"):
+                            expected = ["IntelCPU.Package_J"] + metrics
+                        self.assertEqual(list(rows[0])[4:], expected)
+                        self.assertTrue(all(rows[-1][column] != "NOT_SUPPORTED"
+                                            for column in expected))
+
     def test_capacity_is_a_compile_time_limit(self):
         small = self.weave(self.directory / "toy.toml", self.directory / "small", "--max-samples", "3")
         result, rows, _ = self.run_engine("-command", "sleep 1", executable=small)

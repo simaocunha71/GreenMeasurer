@@ -52,7 +52,8 @@ Configured powercap-calibration executables do not accept command-line overrides
 See [docs/WEAVER.md](docs/WEAVER.md) for the configuration format, modes,
 calibration, and CSV semantics. Example configurations are in
 [configurations-generated](configurations-generated). They are hardware-specific:
-adapt them to the host and available libraries.
+adapt them to the host and available libraries. For shorter, adaptable examples
+by device or with all included readers together, see [examples](examples).
 
 To run the four Fibonacci configurations sequentially, see the
 [Fibonacci sequence](scripts/README.md#fibonacci-sequence).

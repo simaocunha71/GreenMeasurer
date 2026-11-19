@@ -1,0 +1,48 @@
+# Run from the repository root; see examples/README.md for dependencies and adaptation.
+[measurement]
+mode = "over-time"
+command = "python3 Languages/Python/Fibonacci/fibonacci.py 30"
+language = "Python"
+program = "fibonacci-30"
+output = "example-nvidia-overtime.csv"
+repetitions = 1
+interval_ms = 10
+
+[[device]]
+name = "NvidiaGPU"
+optional = true
+lib = "../../src/devices/libgm_nvidia_gpu.a"
+header = "../../src/devices/linux/gpu/nvidia/nvidia_gpu.h"
+link = ["-lnvidia-ml"]
+setup = "int nvidia_begin()"
+teardown = "void nvidia_end()"
+
+[[device.metric]]
+name = "Energy"
+read = "double nvidia_get_energy()"
+kind = "counter"
+unit = "J"
+
+[[device.metric]]
+name = "Power"
+read = "double nvidia_get_power()"
+kind = "gauge"
+unit = "W"
+
+[[device.metric]]
+name = "Temperature"
+read = "double nvidia_get_temperature()"
+kind = "gauge"
+unit = "C"
+
+[[device.metric]]
+name = "Utilization"
+read = "double nvidia_get_utilization()"
+kind = "gauge"
+unit = "%"
+
+[[device.metric]]
+name = "VRAM"
+read = "double nvidia_get_vram()"
+kind = "gauge"
+unit = "MiB"

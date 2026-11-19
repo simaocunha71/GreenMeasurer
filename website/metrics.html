@@ -48,7 +48,7 @@ unit = "J"</code></pre>
           <tr><td><code>nvidia_get_utilization()</code></td><td>NVIDIA GPU 0 utilization, %</td><td>gauge</td></tr>
           <tr><td><code>nvidia_get_vram()</code></td><td>Workload process tree root GPU memory, MiB</td><td>gauge</td></tr>
         </tbody></table></div>
-        <p>The NVIDIA library uses NVML; Intel GPU readings depend on available RAPL and sensor support.</p>
+        <p>The NVIDIA library uses NVML; Intel GPU readings depend on available RAPL and sensor support. The Intel GPU temperature reader selects the first hwmon sensor labelled <code>GPU</code>, so verify its source on systems with multiple GPUs.</p>
       </section>
       <section id="system"><p class="eyebrow">04 / Optional library</p><h2>System</h2>
         <div class="table-wrap"><table><thead><tr><th>Reader</th><th>Quantity</th><th>Suggested kind</th></tr></thead><tbody>

@@ -7,7 +7,7 @@ aspect-oriented weaver:
 - `guide.html`: setup, declarations, measurement modes and calibration.
 - `fibonacci.html`: the four-stage Fibonacci sequence.
 - `metrics.html`: explicitly declared metrics and optional device readers.
-- `reference.html`: generated code, device hooks and tools.
+- `reference.html`: generated code, TOML field reference, device hooks and tools.
 - `styles.css`, `favicon.svg` and `logo.svg`: shared presentation and assets.
 - `website.zip`: a packaged copy of the site.
 
