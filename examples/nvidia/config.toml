@@ -1,0 +1,57 @@
+# Declare available aspects once; select the mode and execution options at runtime.
+
+[[aspect]]
+name = "NvidiaGPU.Energy"
+lib = "../../src/devices/libgm_nvidia_gpu.a"
+header = "../../src/devices/linux/gpu/nvidia/nvidia_gpu.h"
+link = ["-lnvidia-ml"]
+setup = "int nvidia_begin()"
+teardown = "void nvidia_end()"
+read = "double nvidia_get_energy()"
+kind = "counter"
+unit = "J"
+
+[[aspect]]
+name = "NvidiaGPU.Power"
+lib = "../../src/devices/libgm_nvidia_gpu.a"
+header = "../../src/devices/linux/gpu/nvidia/nvidia_gpu.h"
+link = ["-lnvidia-ml"]
+setup = "int nvidia_begin()"
+teardown = "void nvidia_end()"
+read = "double nvidia_get_power()"
+kind = "gauge"
+unit = "W"
+
+[[aspect]]
+name = "NvidiaGPU.Temperature"
+lib = "../../src/devices/libgm_nvidia_gpu.a"
+header = "../../src/devices/linux/gpu/nvidia/nvidia_gpu.h"
+link = ["-lnvidia-ml"]
+setup = "int nvidia_begin()"
+teardown = "void nvidia_end()"
+read = "double nvidia_get_temperature()"
+kind = "gauge"
+unit = "C"
+thermal = true
+
+[[aspect]]
+name = "NvidiaGPU.Utilization"
+lib = "../../src/devices/libgm_nvidia_gpu.a"
+header = "../../src/devices/linux/gpu/nvidia/nvidia_gpu.h"
+link = ["-lnvidia-ml"]
+setup = "int nvidia_begin()"
+teardown = "void nvidia_end()"
+read = "double nvidia_get_utilization()"
+kind = "gauge"
+unit = "%"
+
+[[aspect]]
+name = "NvidiaGPU.VRAM"
+lib = "../../src/devices/libgm_nvidia_gpu.a"
+header = "../../src/devices/linux/gpu/nvidia/nvidia_gpu.h"
+link = ["-lnvidia-ml"]
+setup = "int nvidia_begin()"
+teardown = "void nvidia_end()"
+read = "double nvidia_get_vram()"
+kind = "gauge"
+unit = "MiB"

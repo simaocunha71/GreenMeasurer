@@ -64,28 +64,73 @@ for config in "${ordered[@]}"; do
     slug=${name//\//__}; slug=${slug%.toml}
     work="$results/$slug"
     mkdir -p "$work"
-    [[ -f "$results/greenmeasurer-test-temperature.txt" ]] &&
-        cp -n "$results/greenmeasurer-test-temperature.txt" "$work/"
-    # Workload commands in the TOML are relative to the repo root (e.g. Languages/...).
-    [[ -e "$work/Languages" ]] || ln -s "$root/Languages" "$work/Languages"
     echo "[RUN ] $name"
     status=PASS
-    # Generation, compilation and execution all use the result directory as cwd
-    # so the relative output/calibration paths in the TOML land there.
     if (cd "$work" && python3 "$root/scripts/weave.py" "$config" -o "$work/build") \
         >"$work/generate.log" 2>&1; then
-        (cd "$work" && "$work/build/greenmeasurer") >"$work/run.log" 2>&1 || status=FAIL
+        if aspect_data=$(PYTHONPATH="$root/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
+            'import sys; from weave import tomllib; f = open(sys.argv[1], "rb"); data = tomllib.load(f); [print(a["name"], int(a.get("thermal", False)), int("read" in a), int("powercap_set" in a)) for a in data.get("aspect", [])]' "$config" 2>"$work/run.log"); then
+            aspect_info=()
+            [[ -n $aspect_data ]] && mapfile -t aspect_info <<<"$aspect_data"
+            if help_output=$("$work/build/greenmeasurer" --help 2>>"$work/run.log"); then
+                available_info=()
+                for entry in "${aspect_info[@]}"; do
+                    read -r aspect _ <<<"$entry"
+                    if grep -Fqx -- "  --$aspect" <<<"$help_output"; then
+                        available_info+=("$entry")
+                    fi
+                done
+                aspect_info=("${available_info[@]}")
+            else
+                status=FAIL
+            fi
+            if [[ ${#aspect_info[@]} -eq 0 ]]; then
+                arguments=(-command true)
+            else
+                arguments=(--aggregate -command true -language Shell -program true -output "$work/results.csv"
+                           -n_times 1 -sleep-secs 0 -time_out_limit 1)
+                thermal=0
+                metric_count=0
+                powercap_selected=0
+                for entry in "${aspect_info[@]}"; do
+                    read -r aspect is_thermal is_metric can_set <<<"$entry"
+                    [[ $is_metric == 0 && $can_set == 0 ]] && continue
+                    if [[ $is_metric == 0 ]]; then
+                        if [[ $powercap_selected == 1 ]]; then
+                            echo "[WARNING] Skipping additional powercap aspect $aspect." >>"$work/generate.log"
+                            continue
+                        fi
+                        powercap_selected=1
+                    fi
+                    arguments+=("--$aspect")
+                    ((metric_count += is_metric))
+                    if [[ $is_thermal == 1 ]]; then
+                        thermal=1
+                        arguments+=(-temperature-control "$aspect" -calib-file "$aspect=$work/${aspect//./_}-temperature.txt")
+                    fi
+                done
+                [[ $metric_count == 0 ]] && arguments+=(--no-metrics)
+                [[ $powercap_selected == 1 ]] && arguments+=(-powercap -1)
+                [[ $thermal == 1 ]] && arguments+=(-variance 5)
+            fi
+            if [[ $status == PASS ]]; then
+                (cd "$work" && "$work/build/greenmeasurer" "${arguments[@]}") >>"$work/run.log" 2>&1 || status=FAIL
+            fi
+        else
+            status=FAIL
+        fi
     else
         status=FAIL
         cp "$work/generate.log" "$work/run.log"
     fi
     if [[ $status == PASS ]]; then
         # A configuration without aspects only executes the command and produces no CSV.
-        has_aspects=$(PYTHONPATH="$root/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-            'import sys; from weave import tomllib; f = open(sys.argv[1], "rb"); print(int(bool(tomllib.load(f).get("aspect", []))))' "$config") || status=FAIL
-        if [[ $status == PASS && $has_aspects == 1 ]]; then
+        if [[ ${#aspect_info[@]} -gt 0 ]]; then
             produced=$(find "$work" -maxdepth 1 \( -name '*.csv' -o -name '*.txt' \) | wc -l)
-            [[ $produced -eq 0 ]] && status=FAIL && echo "no output file produced" >>"$work/run.log"
+            if [[ $produced -eq 0 ]] && ! grep -qF '[WARNING] No active aspects;' "$work/run.log"; then
+                status=FAIL
+                echo "no output file produced" >>"$work/run.log"
+            fi
         fi
     fi
     if [[ $status == PASS ]] && {
@@ -101,9 +146,6 @@ for config in "${ordered[@]}"; do
         FAIL) fail=$((fail + 1)); tail -n 5 "$work/run.log" | sed 's/^/       /' ;;
     esac
     summary+=("$status  $name")
-    # Share the baseline with the following configs.
-    [[ -f "$work/greenmeasurer-test-temperature.txt" ]] &&
-        cp -n "$work/greenmeasurer-test-temperature.txt" "$results/" 2>/dev/null
     [[ $status == FAIL && $stop_on_fail -eq 1 ]] && break
 done
 

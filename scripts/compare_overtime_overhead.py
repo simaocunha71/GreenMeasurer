@@ -24,6 +24,43 @@ def positive_int(value):
     return number
 
 
+def aspect_arguments(model, metrics, calibration_values, variance, controlled):
+    aspects = {aspect["name"]: aspect for aspect in model["aspects"]}
+    if not metrics or len(set(metrics)) != len(metrics):
+        raise ValueError("select at least one distinct aspect")
+    unknown = set(metrics) - set(aspects)
+    if unknown:
+        raise ValueError(f"aspects not declared in the configuration: {sorted(unknown)}")
+    if any(not aspects[name]["metrics"] for name in metrics):
+        raise ValueError("--metrics must contain metric aspects, not powercap control aspects")
+    files = {}
+    for item in calibration_values:
+        name, separator, path = item.partition("=")
+        if not separator or not path or name in files:
+            raise ValueError("--calib-file must be a unique <aspect>=<path>")
+        files[name] = path
+    thermal = {name for name, aspect in aspects.items() if "thermal" in aspect}
+    if len(set(controlled)) != len(controlled) or not set(controlled) <= thermal:
+        raise ValueError("--temperature-control must name distinct declared temperature aspects")
+    if set(files) != set(controlled):
+        raise ValueError("--calib-file must be supplied for each controlled temperature aspect only")
+    if bool(controlled) != (variance is not None):
+        raise ValueError("--variance is required only when temperature control is enabled")
+    for path in files.values():
+        if not Path(path).is_file():
+            raise ValueError(f"calibration file does not exist: {path}")
+    return aspects, files
+
+
+def selection_arguments(metrics, files, variance):
+    arguments = [f"--{name}" for name in metrics]
+    for name, path in files.items():
+        arguments += ["-temperature-control", name, "-calib-file", f"{name}={path}"]
+    if files:
+        arguments += ["-variance", str(variance)]
+    return arguments
+
+
 def run_timed(command):
     with tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as stdout, \
             tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as stderr:
@@ -44,7 +81,13 @@ def run_timed(command):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True,
-                        help="TOML configuration for an over-time measurement")
+                        help="TOML configuration declaring aspects")
+    parser.add_argument("--command", required=True, help="Workload command")
+    parser.add_argument("--metrics", nargs="+", required=True, help="Aspect names to select")
+    parser.add_argument("--interval-ms", type=positive_int, required=True)
+    parser.add_argument("--calib-file", action="append", default=[], metavar="ASPECT=PATH")
+    parser.add_argument("--temperature-control", action="append", default=[], metavar="ASPECT")
+    parser.add_argument("--variance", type=int)
     parser.add_argument("--runs", type=positive_int, default=5, help="Pairs of runs (default: 5)")
     parser.add_argument("--seed", type=int, default=0, help="Seed for randomized order (default: 0)")
     args = parser.parse_args()
@@ -54,18 +97,12 @@ def main():
         config_path = args.config.resolve()
         with config_path.open("rb") as source:
             config = tomllib.load(source)
-        validate(config, config_path)
-        measurement = config["measurement"]
-        if measurement["mode"] != "over-time":
-            raise ValueError("measurement.mode must be 'over-time' for this comparison")
-        if "command" not in measurement:
-            raise ValueError("measurement.command is required")
-        if measurement["powercap"] != [-1]:
-            raise ValueError("measurement.powercap must be -1; "
-                             "the baseline cannot apply a GreenMeasurer power cap")
-        calibration = Path(measurement["calibration_file"])
-        if any("thermal" in device for device in config.get("aspect", [])) and not calibration.is_file():
-            raise ValueError(f"calibration file does not exist: {calibration}")
+        model = validate(config, config_path)
+        if not args.command.strip():
+            raise ValueError("--command must not be empty")
+        if args.variance is not None and not 0 <= args.variance <= 1000:
+            raise ValueError("--variance must be between 0 and 1000")
+        _, files = aspect_arguments(model, args.metrics, args.calib_file, args.variance, args.temperature_control)
     except (OSError, ValueError, UnicodeError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
@@ -73,9 +110,9 @@ def main():
     baseline = []
     measured = []
     rng = random.Random(args.seed)
-    command = measurement["command"]
+    command = args.command
     print(f"Command: {command}\nPairs: {args.runs}; seed: {args.seed}; "
-          f"interval: {measurement.get('interval_ms', 1)} ms")
+          f"interval: {args.interval_ms} ms")
     print("order,pair,mode,workload_ms,wrapper_ms")
     order = 0
     try:
@@ -94,7 +131,12 @@ def main():
                     else:
                         if output.exists():
                             output.unlink()
-                        elapsed = run_timed([str(executable), "-output", str(output), "-n_times", "1"])
+                        elapsed = run_timed(
+                            [str(executable), "--over-time", "-command", command,
+                             "-language", "Shell", "-program", "overhead", "-output", str(output),
+                             "-n_times", "1", "-sleep-secs", "0",
+                             "-time_out_limit", "0", "-interval-ms", str(args.interval_ms),
+                             *selection_arguments(args.metrics, files, args.variance)])
                         runs = read_runs(output)
                         if len(runs) != 1:
                             raise ValueError("expected exactly one over-time run in generated CSV")

@@ -8,12 +8,12 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "compare_standard_overhead.py"
+SCRIPT = ROOT / "scripts" / "compare_aggregate_overhead.py"
 sys.path.insert(0, str(ROOT / "scripts"))
-from compare_standard_overhead import read_measurement, report_summary, run_timed
+from compare_aggregate_overhead import read_measurement, report_summary, run_timed
 
 
-class StandardOverheadTest(unittest.TestCase):
+class AggregateOverheadTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary.name)
@@ -26,13 +26,16 @@ class StandardOverheadTest(unittest.TestCase):
         self.output.write_text("preserved\n", encoding="utf-8")
         self.config = self.directory / "config.toml"
         self.config.write_text(
-            '[measurement]\nmode="standard"\ncommand="sleep 0.03"\n'
-            'calibration_file="unused-baseline.txt"\n'
-            f'output="{self.output}"\n'
-            'variance=100\nsleep_seconds=0\nrepetitions=3\npowercap=[-1, 5]\n'
-            '[[aspect]]\nname="System"\nheader="metric.h"\nlib="metric.c"\n'
-            '[[aspect.metric]]\nname="Cores"\nread="int cores()"\n'
-            '[[aspect.metric]]\nname="Processes"\nread="int processes()"\n',
+            '[[aspect]]\nname="Time.WallClock"\n'
+            f'header="{ROOT / "src/aspects/wall_clock_time.h"}"\n'
+            f'lib="{ROOT / "src/aspects/wall_clock_time.c"}"\n'
+            'measurement_start="int gm_wall_clock_time_start()"\n'
+            'measurement_stop="int gm_wall_clock_time_stop()"\n'
+            'read="double gm_wall_clock_time_read()"\nkind="duration"\nunit="ms"\n'
+            '[[aspect]]\nname="System.Cores"\nheader="metric.h"\nlib="metric.c"\n'
+            'read="int cores()"\n'
+            '[[aspect]]\nname="System.Processes"\nheader="metric.h"\nlib="metric.c"\n'
+            'read="int processes()"\n',
             encoding="utf-8",
         )
 
@@ -41,7 +44,8 @@ class StandardOverheadTest(unittest.TestCase):
 
     def run_script(self, *args):
         return subprocess.run(
-            [sys.executable, str(SCRIPT), "--config", str(self.config), *args],
+            [sys.executable, str(SCRIPT), "--config", str(self.config),
+             "--command", "sleep 0.03", "--time-aspect", "Time.WallClock", *args],
             cwd=ROOT, text=True, capture_output=True, timeout=120,
         )
 
@@ -63,7 +67,7 @@ class StandardOverheadTest(unittest.TestCase):
                 self.assertEqual(row["thermal_wait"], "0")
             full = next(row for row in group if row["metrics_count"] == "2")
             self.assertEqual(full["metrics"], "System.Cores;System.Processes")
-        self.assertIn("powercap=-1", result.stderr)
+        self.assertIn("without powercap control", result.stderr)
         self.assertIn("2 metrics: total median=", result.stderr)
         self.assertIn("Energy overhead is not measured", result.stderr)
         self.assertEqual(self.output.read_text(encoding="utf-8"), "preserved\n")
@@ -89,11 +93,12 @@ class StandardOverheadTest(unittest.TestCase):
                           "20,4,NOT_SUPPORTED\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "could not be read"):
             read_measurement(source, ["System.Cores", "System.Processes"],
-                             {"System.Cores": "System.Cores", "System.Processes": "System.Processes"})
+                             {"System.Cores": "System.Cores", "System.Processes": "System.Processes"},
+                             "Time_ms")
 
     def test_marks_temperature_waits(self):
         elapsed, waited = run_timed([
-            "/bin/sh", "-c", "printf '[INFO] Waiting for temperature (Standard)\\n'",
+            "/bin/sh", "-c", "printf '[INFO] Waiting for temperature (Aggregate)\\n'",
         ])
         self.assertGreater(elapsed, 0)
         self.assertTrue(waited)

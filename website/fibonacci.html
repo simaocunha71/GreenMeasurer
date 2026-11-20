@@ -15,40 +15,34 @@
   <nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="guide.html">Guide</a><a aria-current="page" href="fibonacci.html">Usage example</a><a href="metrics.html">Metrics</a><a href="reference.html">Weaver API</a><a class="nav-github" href="https://github.com/simaocunha71/GreenMeasurer">GitHub ↗</a></nav>
 </div></header>
 <main id="main">
-  <div class="wrap doc-header"><p class="eyebrow">Documentation / 02</p><h1>Fibonacci, four ways</h1><p class="lead">A sequential example: establish a temperature baseline, then measure and calibrate the same Python workload.</p></div>
+  <div class="wrap doc-header"><p class="eyebrow">Documentation / 02</p><h1>Fibonacci, four ways</h1><p class="lead">A sequential example: establish a CPU temperature baseline, then calibrate and measure the same Python workload.</p></div>
   <div class="wrap doc-layout">
     <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#before">Before running</a><a href="#config">Configurations</a><a href="#run">Run the sequence</a><a href="#results">Inspect results</a><a href="#your-program">Adapt the example</a></nav>
     <div class="doc-content">
       <section id="before"><p class="eyebrow">01 / Prepare</p><h2>Check the machine</h2>
-        <p>The example configurations use Intel CPU, Intel GPU and NVIDIA GPU device libraries. Generation requires all declared libraries and their dependencies, including NVML, even if a GPU is unavailable. The Intel CPU must support the configured thermal and powercap operations. Check permissions for sensors, RAPL and power limits. Consult the <a href="https://github.com/simaocunha71/GreenMeasurer#requirements">repository requirements</a> and review the TOMLs before running.</p>
-        <aside class="notice warning"><strong>Plan the run</strong><p>The sequence changes CPU power limits and can take a long time. It overwrites the explicitly configured <code>cores_temperatures.txt</code> baseline, appends to standard and over-time CSVs, and may replace the powercap calibration output. Save any existing results first.</p></aside>
+        <p>The sequence selects Intel CPU, Intel GPU and NVIDIA aspects and therefore needs their libraries and dependencies, including NVML. The weaver skips aspects it cannot build, but the sequence stops if it selects an unavailable flag. The CPU temperature sensor must be readable for calibration; NVIDIA temperature is measured without thermal control. Check hardware and permissions before running.</p>
+        <aside class="notice warning"><strong>Plan the run</strong><p>The sequence changes CPU limits and can take a long time. It overwrites <code>cores_temperatures.txt</code>, appends measurement CSVs and may replace the powercap output. The saved baseline (<code>-1</code>) is not necessarily uncapped.</p></aside>
       </section>
-      <section id="config"><p class="eyebrow">02 / Configure</p><h2>Four separate aspects</h2>
-        <p>The configurations in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/configurations-generated">configurations-generated/</a> explicitly name the same <code>cores_temperatures.txt</code> temperature baseline and declare their own devices and metrics:</p>
-        <ol>
-          <li><strong>Temperature calibration</strong> — <code>fibonacci-python-temperature-calibration.toml</code> waits 60 seconds, then records one thermal reading and a sensors snapshot.</li>
-          <li><strong>Standard</strong> — <code>fibonacci-python-standard.toml</code> measures runs at the configured powercaps.</li>
-          <li><strong>Over-time</strong> — <code>fibonacci-python-overtime.toml</code> samples metrics during repeated runs.</li>
-          <li><strong>Powercap calibration</strong> — <code>fibonacci-python-powercap-calibration.toml</code> measures the saved baseline and the configured range of power limits.</li>
-        </ol>
-        <p id="program">The workload stages run <code>Languages/Python/Fibonacci/fibonacci.py</code> and declare CPU Package, Core and DRAM energy, NVIDIA GPU energy and temperature, and Intel GPU energy. Both GPUs can be measured in the same run. If a GPU cannot initialize, its columns contain <code>NOT_SUPPORTED</code> and the other measurements continue. Individual unavailable readings use the same value. Repetitions, pauses, limits and output names come from the TOMLs; inspect them for the current values.</p>
+      <section id="config"><p class="eyebrow">02 / Configure</p><h2>One aspect configuration</h2>
+        <p><a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/configurations-generated/config.toml">config.toml</a> declares the metric aspects and a separate powercap control aspect. It does not contain mode, workload or calibration paths.</p>
+        <p id="program">The sequence script explicitly calibrates CPU temperature, then selects the Python Fibonacci 42 workload, CPU and GPU aspects, repetitions, pauses, power limits and output paths. Review the script and its hardware requirements before execution.</p>
       </section>
       <section id="run"><p class="eyebrow">03 / Execute</p><h2>Run the sequence</h2>
         <p>From the repository root, with the permissions required by the configured devices:</p>
-        <pre><code>bash scripts/run_fibonacci_sequence.sh</code></pre>
-        <p>The script builds the optional device libraries, generates all four executables first, then runs them in the order above. It stops on failure. By default it creates <code>generated-fibonacci-sequence</code>; pass a different, non-existent directory as the optional argument:</p>
-        <pre><code>bash scripts/run_fibonacci_sequence.sh my-new-sequence</code></pre>
+        <pre><code>bash configurations-generated/run.sh</code></pre>
+        <p>The script builds the optional device libraries and generates one executable for all modes. It runs CPU temperature calibration, powercap calibration, aggregate and over-time in that order. It stops on failure. By default it creates <code>generated-fibonacci-sequence</code>; pass a different, non-existent directory as the optional argument:</p>
+        <pre><code>bash configurations-generated/run.sh my-new-sequence</code></pre>
         <p>The script runs from the repository root, so workload and output paths are relative to that directory. It does not automatically obtain elevated privileges.</p>
       </section>
       <section id="results"><p class="eyebrow">04 / Inspect</p><h2>Read the output</h2>
         <pre><code>cat cores_temperatures.txt
-head -n 5 fibonacci-python-standard.csv
+head -n 5 fibonacci-python-aggregate.csv
 head -n 5 fibonacci-python-overtime.csv
 head -n 5 fibonacci-python-powercap-calibration.csv</code></pre>
-        <p>These are the example paths; use the configured paths if you change the TOMLs. Use fresh CSVs when the metric schema changes. The temperature line represents one reading after the wait, not a time average. Standard counters are differences between the beginning and end of a run; over-time counters are raw samples. The powercap post-processor requires valid CPU Package readings and reports an error if they are unavailable, even though the CSV is written. See <a href="metrics.html#output">the output guide</a> before interpreting energy readings.</p>
+        <p>These are the paths supplied by the script; change its arguments for other paths. Use fresh CSVs when the metric schema changes. The temperature line represents one reading after the wait, not a time average. Aggregate counters are differences between the beginning and end of a run; over-time counters are raw samples. The powercap post-processor requires valid CPU Package readings and reports an error if they are unavailable, even though the CSV is written. See <a href="metrics.html#output">the output guide</a> before interpreting energy readings.</p>
       </section>
       <section id="your-program"><h2>Adapt the experiment</h2>
-        <p>Change the workload command, labels, output paths, device declarations and settings as appropriate for your machine. Generate new executables after editing. Device libraries are optional: you can declare your own readers and hooks instead. See the <a href="guide.html">measurement guide</a> and <a href="reference.html">weaver API</a>.</p>
+        <p>Change aspect declarations in TOML and reweave. Change workload, labels, paths and measurement settings in the invocation or sequence script. Device libraries are optional: you can declare your own readers and hooks instead. See the <a href="guide.html">measurement guide</a> and <a href="reference.html">weaver API</a>.</p>
       </section>
     </div>
   </div>

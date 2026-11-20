@@ -1,35 +1,24 @@
-[measurement]
-mode = "over-time"
-calibration_file = "toy-temperature-baseline.txt"
-command = "sleep 0.3"
-language = "Shell"
-program = "sleep"
-output = "toy.csv"
-interval_ms = 10
-
 [[aspect]]
-name = "Energy"
+name = "Energy.Package"
 lib = "libtoy.a"
 header = "toy.h"
 setup = "int toy_setup()"
 teardown = "void toy_teardown()"
-
-[[aspect.metric]]
-name = "Package"
 read = "unsigned long toy_energy()"
 kind = "counter"
 unit = "uJ"
 
-[[aspect.metric]]
-name = "Temperature"
+[[aspect]]
+name = "Energy.Gauge"
+lib = "libtoy.a"
+header = "toy.h"
+setup = "int toy_setup()"
+teardown = "void toy_teardown()"
 read = "float toy_temperature()"
 unit = "C"
 
 [[aspect]]
-name = "Processes"
+name = "Processes.NumberProcesses"
 lib = "libtoy.a"
 header = "toy.h"
-
-[[aspect.metric]]
-name = "NumberProcesses"
 read = "int toy_processes()"

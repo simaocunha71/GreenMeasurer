@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Weave a GreenMeasurer executable from a TOML file that declares aspects and metrics.
+"""Weave a GreenMeasurer executable from a TOML file that declares aspects.
 
-For every [[aspect]] the weaver generates <Aspect>.c (one sampling thread and one static
-array per metric, filled by the user's own functions) and GreenMeasurer.c (the glue that
-registers the aspects, one command-line flag per metric and the defaults of the TOML).
-Everything is then compiled and linked with the declared libraries.
+Metric aspects generate sampling code; control aspects generate only their hooks.
+Aspects that cannot be built are reported and omitted.
 """
 
 import argparse
@@ -13,6 +11,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 try:
@@ -41,20 +40,13 @@ INTEGER_TYPES = {
     "long long", "unsigned long long", "int8_t", "uint8_t", "int16_t", "uint16_t",
     "int32_t", "uint32_t", "int64_t", "uint64_t", "size_t",
 }
-KINDS = {"counter": "GM_KIND_COUNTER", "gauge": "GM_KIND_GAUGE"}
-MODES = ("over-time", "standard", "temperature-calibration", "powercap-calibration")
-MEASUREMENT_KEYS = {
-    "mode": str, "command": str, "language": str, "program": str, "output": str,
-    "interval_ms": int, "repetitions": int, "sleep_seconds": int, "powercap": (int, list),
-    "variance": int, "calibration_file": str, "powercap_min": int, "powercap_max": int,
-    "timeout_hours": int, "compile_command": str,
-}
-ASPECT_KEYS = {"name", "lib", "header", "link", "setup", "teardown", "metric", "optional",
-               "thermal", "powercap_set", "powercap_restore", "powercap_calibration"}
+KINDS = {"counter": "GM_KIND_COUNTER", "gauge": "GM_KIND_GAUGE", "duration": "GM_KIND_DURATION"}
+ASPECT_KEYS = {"name", "lib", "header", "link", "setup", "teardown", "read", "kind", "unit",
+               "thermal", "powercap_set", "powercap_restore", "powercap_calibration",
+               "measurement_start", "measurement_stop"}
 PROTOTYPE = re.compile(
     r"^\s*(?P<type>[A-Za-z_][A-Za-z0-9_ ]*?)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
     r"\s*\(\s*(?P<params>[A-Za-z0-9_ ]*)\)\s*$")
-METRIC_KEYS = {"name", "read", "kind", "unit"}
 
 
 def fail(message):
@@ -96,117 +88,75 @@ def parse_prototype(text, where, return_type, params):
     return match["name"]
 
 
-def parse_powercaps(value, where):
-    caps = value if isinstance(value, list) else [value]
-    if not caps or len(caps) > 128 or len(set(caps)) != len(caps):
-        fail(f"{where} must hold between 1 and 128 unique values")
-    for cap in caps:
-        if isinstance(cap, bool) or not isinstance(cap, int) or cap == 0 or cap < -1:
-            fail(f"{where}: each value must be -1 (saved baseline) or at least 1 W")
-    return caps
-
-
 def resolve_file(base, value, where):
     if not isinstance(value, str) or not value:
         fail(f"{where} must be a non-empty path")
-    path = (base / value).resolve()
-    if not path.is_file():
-        fail(f"{where} does not refer to an existing file: {path}")
-    return path
+    return (base / value).resolve()
 
 
 def validate(config, config_path):
     """Return a normalised model of the configuration or raise ValueError."""
-    unknown = set(config) - {"measurement", "aspect"}
+    unknown = set(config) - {"aspect"}
     if unknown:
         fail(f"unknown top-level keys: {sorted(unknown)}")
-    measurement = config.get("measurement")
-    if not isinstance(measurement, dict):
-        fail("[measurement] is required")
-    if "aspect" in measurement or "metrics" in measurement:
-        fail("aspects are declared with [[aspect]] tables, not inside [measurement]")
-    specified_measurement = set(measurement)
-    for key, value in measurement.items():
-        expected = MEASUREMENT_KEYS.get(key)
-        if expected is None:
-            fail(f"unknown key measurement.{key}")
-        if not isinstance(value, expected) or isinstance(value, bool):
-            fail(f"measurement.{key} has an invalid type")
-    if measurement.get("mode") not in MODES:
-        fail(f"measurement.mode must be one of {MODES}")
-    if not measurement.get("calibration_file", "").strip():
-        fail("measurement.calibration_file is required and must be a non-empty path")
-    for key, low, high in (("interval_ms", 1, 4294967), ("repetitions", 1, 1000000),
-                           ("sleep_seconds", 0, 86400), ("timeout_hours", 1, 1000)):
-        if key in measurement and not low <= measurement[key] <= high:
-            fail(f"measurement.{key} must be between {low} and {high}")
-    if "compile_command" in measurement:
-        if measurement["mode"] != "powercap-calibration":
-            fail("measurement.compile_command is only valid in powercap-calibration mode")
-        if not measurement["compile_command"].strip() or "\0" in measurement["compile_command"]:
-            fail("measurement.compile_command must be a non-empty command without NUL characters")
-    if measurement["mode"] == "powercap-calibration":
-        if "powercap" in measurement:
-            fail("measurement.powercap is not valid in powercap-calibration mode; use "
-                 "powercap_min and powercap_max")
-        if "interval_ms" in measurement:
-            fail("measurement.interval_ms is not valid in powercap-calibration mode")
-        for key in ("powercap_min", "powercap_max"):
-            if key not in measurement or not 1 <= measurement[key] <= 2147483647:
-                fail(f"measurement.{key} must be between 1 and 2147483647 in "
-                     "powercap-calibration mode")
-        if measurement["powercap_min"] > measurement["powercap_max"]:
-            fail("measurement.powercap_min must not exceed measurement.powercap_max")
-        if measurement["powercap_max"] - measurement["powercap_min"] + 1 >= 128:
-            fail("the powercap range must contain fewer than 128 values")
-    elif "powercap_min" in measurement or "powercap_max" in measurement:
-        fail("measurement.powercap_min and powercap_max are only valid in "
-             "powercap-calibration mode")
-    measurement["powercap"] = parse_powercaps(measurement.get("powercap", -1), "measurement.powercap")
-    if not 0 <= measurement.get("variance", 5) <= 1000:
-        fail("measurement.variance must be between 0 and 1000")
-    for key in ("language", "program"):
-        if any(c in measurement.get(key, "") for c in ',\r\n"'):
-            fail(f"measurement.{key} cannot contain CSV delimiters or newlines")
-
     base = config_path.parent
-    aspects, seen = [], set()
-    for index, raw in enumerate(config.get("aspect", [])):
+    aspects, seen, symbols, lifecycle, reader_locks = [], set(), set(), {}, {}
+    entries = config.get("aspect", [])
+    if not isinstance(entries, list):
+        fail("aspects must be declared with [[aspect]] tables")
+    if len(entries) > 64:
+        fail("at most 64 aspects are supported")
+    for index, raw in enumerate(entries):
         where = f"aspect[{index}]"
+        if not isinstance(raw, dict):
+            fail(f"{where} must be a table")
         unknown = set(raw) - ASPECT_KEYS
         if unknown:
             fail(f"{where} has unknown keys: {sorted(unknown)}")
         name = raw.get("name")
-        if not isinstance(name, str) or not IDENTIFIER.match(name):
-            fail(f"{where}.name must be a C identifier")
+        if not isinstance(name, str) or not all(IDENTIFIER.fullmatch(part) for part in name.split(".")):
+            fail(f"{where}.name must consist of identifiers separated by dots")
+        if name in {"help", "aggregate"}:
+            fail(f"{where}.name conflicts with a built-in command-line flag")
         if name in seen:
             fail(f"duplicate aspect name {name!r}")
         seen.add(name)
-        optional = raw.get("optional", False)
-        if not isinstance(optional, bool):
-            fail(f"{where}.optional must be a boolean")
-        aspect = {"name": name, "sources": [], "include_dirs": [], "link": [],
-                  "optional": optional}
+        symbol = name.replace(".", "_")
+        if symbol in symbols:
+            fail(f"{where}.name collides with another generated C symbol")
+        symbols.add(symbol)
+        aspect = {"name": name, "symbol": symbol, "sources": [], "include_dirs": [], "link": []}
         if "header" not in raw:
             fail(f"{where}.header is required")
         header = resolve_file(base, raw["header"], f"{where}.header")
         aspect["header"] = header
+        if header not in reader_locks:
+            reader_locks[header] = f"gm_reader_lock_{len(reader_locks)}"
+        aspect["reader_lock"] = reader_locks[header]
         aspect["include_dirs"].append(header.parent)
         if "lib" in raw:
             lib = resolve_file(base, raw["lib"], f"{where}.lib")
             if lib.suffix not in (".a", ".so", ".o", ".c"):
                 fail(f"{where}.lib must be a .a, .so, .o or .c file")
             aspect["lib"] = lib
-        for flag in raw.get("link", []):
+        link_flags = raw.get("link", [])
+        if not isinstance(link_flags, list):
+            fail(f"{where}.link must be an array")
+        for flag in link_flags:
             if not isinstance(flag, str) or not LINK_FLAG.match(flag):
                 fail(f"{where}.link entries must look like \"-lname\" or \"-L/dir\"")
             aspect["link"].append(flag)
         for hook in ("setup", "teardown"):
             if hook in raw:
                 aspect[hook] = parse_hook(raw[hook], f"{where}.{hook}")
-        if "thermal" in raw:
-            c_type, function = parse_signature(raw["thermal"], f"{where}.thermal")
-            aspect["thermal"] = (c_type, function)
+        if ("measurement_start" in raw) != ("measurement_stop" in raw):
+            fail(f"{where}: measurement_start and measurement_stop must be declared together")
+        for hook in ("measurement_start", "measurement_stop"):
+            if hook in raw:
+                aspect[hook] = parse_hook(raw[hook], f"{where}.{hook}")
+        thermal = raw.get("thermal", False)
+        if not isinstance(thermal, bool):
+            fail(f"{where}.thermal must be a boolean")
         if ("powercap_set" in raw) != ("powercap_restore" in raw):
             fail(f"{where}: powercap_set and powercap_restore must be declared together")
         if "powercap_set" in raw:
@@ -219,45 +169,40 @@ def validate(config, config_path):
             if not isinstance(function, str) or not IDENTIFIER.match(function):
                 fail(f"{where}.powercap_calibration must be a C function name")
             aspect["powercap_calibration"] = function
-        metrics, names = [], set()
-        for m_index, metric in enumerate(raw.get("metric", [])):
-            m_where = f"{where}.metric[{m_index}]"
-            unknown = set(metric) - METRIC_KEYS
-            if unknown:
-                fail(f"{m_where} has unknown keys: {sorted(unknown)}")
-            m_name = metric.get("name")
-            if not isinstance(m_name, str) or not IDENTIFIER.match(m_name):
-                fail(f"{m_where}.name must be a C identifier")
-            if m_name in names:
-                fail(f"duplicate metric {m_name!r} in aspect {name!r}")
-            names.add(m_name)
-            kind = metric.get("kind", "gauge")
-            if kind not in KINDS:
-                fail(f"{m_where}.kind must be one of {sorted(KINDS)}")
-            unit = metric.get("unit", "")
+        has_powercap = "powercap_set" in aspect or "powercap_calibration" in aspect
+        if "read" not in raw and has_powercap:
+            if any(key in raw for key in ("kind", "unit", "thermal", "measurement_start",
+                                          "measurement_stop")):
+                fail(f"{where}: powercap control aspects cannot declare metric fields")
+            aspect["metrics"] = []
+        else:
+            if has_powercap:
+                fail(f"{where}: powercap hooks must be declared in a separate control aspect")
+            kind = raw.get("kind", "gauge")
+            if not isinstance(kind, str) or kind not in KINDS:
+                fail(f"{where}.kind must be one of {sorted(KINDS)}")
+            if kind == "duration" and "measurement_start" not in aspect:
+                fail(f"{where}.kind = 'duration' requires measurement_start and measurement_stop")
+            unit = raw.get("unit", "")
             if not isinstance(unit, str) or not UNIT.match(unit):
-                fail(f"{m_where}.unit contains unsupported characters")
-            c_type, function = parse_signature(metric.get("read"), f"{m_where}.read")
-            metrics.append({"name": m_name, "kind": kind, "unit": unit,
-                            "type": c_type, "function": function,
-                            "integer": c_type in INTEGER_TYPES})
-        if not metrics:
-            fail(f"{where} must declare at least one [[aspect.metric]]")
-        aspect["metrics"] = metrics
+                fail(f"{where}.unit contains unsupported characters")
+            c_type, function = parse_signature(raw.get("read"), f"{where}.read")
+            if thermal:
+                if kind != "gauge":
+                    fail(f"{where}.thermal requires kind = 'gauge'")
+                aspect["thermal"] = (c_type, function)
+            aspect["metrics"] = [{"name": symbol, "kind": kind, "unit": unit,
+                                  "type": c_type, "function": function,
+                                  "integer": c_type in INTEGER_TYPES}]
+        if "setup" in aspect:
+            setup = aspect["setup"]
+            teardown = aspect.get("teardown")
+            if setup in lifecycle and lifecycle[setup] != teardown:
+                fail(f"{where} uses the same setup with a different teardown")
+            lifecycle[setup] = teardown
+            aspect["lifecycle"] = setup[1]
         aspects.append(aspect)
-    if measurement["mode"] == "powercap-calibration" and not any(
-            "powercap_calibration" in aspect for aspect in aspects):
-        fail("powercap-calibration mode requires an aspect declaring powercap_calibration")
-    if measurement["mode"] == "temperature-calibration" and not any(
-            "thermal" in aspect for aspect in aspects):
-        fail("temperature-calibration mode requires an aspect declaring thermal")
-    if not aspects:
-        if not measurement.get("command", "").strip() or "\0" in measurement["command"]:
-            fail("measurement.command must be non-empty and contain no NUL when no aspects are declared")
-        unused = specified_measurement - {"mode", "calibration_file", "command"}
-        if unused:
-            fail(f"measurement settings require at least one aspect: {sorted(unused)}")
-    return {"measurement": measurement, "aspects": aspects}
+    return {"aspects": aspects}
 
 
 def c_string(value):
@@ -271,10 +216,37 @@ def c_string(value):
 
 def generate_aspect(aspect, source_name):
     name, metrics = aspect["name"], aspect["metrics"]
+    if not metrics:
+        lines = [
+            f"/* Generated by scripts/weave.py from {source_name}; do not edit. */",
+            '#include "gm_aspect.h"', f"#include {c_string(aspect['header'].name)}", "",
+        ]
+        for hook in ("setup", "teardown"):
+            if hook in aspect:
+                kind, function = aspect[hook]
+                body = f"return {function}() != 0;" if hook == "setup" and kind == "int" \
+                    else f"{function}(); return 0;" if hook == "setup" else f"{function}();"
+                signature = "int gm_setup(void)" if hook == "setup" else "void gm_teardown(void)"
+                lines += [f"static {signature} {{ {body} }}", ""]
+        lines += [
+            "static const GmAspect gm_aspect = {",
+            f"    {c_string(name)}, 0, NULL,",
+            "    %s, %s, %s," % (
+                "gm_setup" if "setup" in aspect else "NULL",
+                "gm_teardown" if "teardown" in aspect else "NULL",
+                c_string(aspect["lifecycle"]) if "lifecycle" in aspect else "NULL"),
+            "    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,",
+            "    %s, %s, %s" % (aspect.get("powercap_set", "NULL"),
+                                 aspect.get("powercap_restore", "NULL"),
+                                 aspect.get("powercap_calibration", "NULL")),
+            "};", "", f"const GmAspect *gm_aspect_{aspect['symbol']}(void) {{ return &gm_aspect; }}", "",
+        ]
+        return "\n".join(lines)
     lines = [
         f"/* Generated by scripts/weave.py from {source_name}; do not edit. */",
         "#include <stdint.h>", "#include <stddef.h>", '#include "gm_aspect.h"',
         f"#include {c_string(aspect['header'].name)}", "",
+        f"extern pthread_mutex_t {aspect['reader_lock']};", "",
         "static GmSampler gm_sampler;", "static pthread_t gm_thread;",
         "static int gm_thread_running;", "static unsigned char gm_selected[%d];" % len(metrics),
         "static size_t gm_count;", "static int gm_overflow;",
@@ -285,7 +257,13 @@ def generate_aspect(aspect, source_name):
     lines.append("")
     for number, metric in enumerate(metrics):
         lines += [
-            f"static double gm_read_{number}(void) {{ return (double){metric['function']}(); }}",
+            f"static {metric['type']} gm_read_value_{number}(void) {{",
+            f"    pthread_mutex_lock(&{aspect['reader_lock']});",
+            f"    {metric['type']} value = {metric['function']}();",
+            f"    pthread_mutex_unlock(&{aspect['reader_lock']});",
+            "    return value;",
+            "}",
+            f"static double gm_read_{number}(void) {{ return (double)gm_read_value_{number}(); }}",
             f"static double gm_sample_{number}(size_t row) "
             f"{{ return (double)gm_samples_{metric['name']}[row]; }}",
         ]
@@ -303,7 +281,7 @@ def generate_aspect(aspect, source_name):
               "        }", "        gm_timestamps[gm_count] = gm_sampler_elapsed_ms(&gm_sampler);"]
     for number, metric in enumerate(metrics):
         lines.append(f"        if (gm_selected[{number}]) "
-                     f"gm_samples_{metric['name']}[gm_count] = {metric['function']}();")
+                     f"gm_samples_{metric['name']}[gm_count] = gm_read_value_{number}();")
     lines += ["        gm_count++;", "        if (last) break;", "        gm_sampler_wait(&gm_sampler);",
               "    }", "    return NULL;", "}", "",
               "static int gm_start(const unsigned char *selected, unsigned interval_ms,",
@@ -328,37 +306,52 @@ def generate_aspect(aspect, source_name):
                 else f"{function}(); return 0;" if hook == "setup" else f"{function}();"
             signature = "int gm_setup(void)" if hook == "setup" else "void gm_teardown(void)"
             lines += [f"static {signature} {{ {body} }}", ""]
+    for hook in ("measurement_start", "measurement_stop"):
+        if hook in aspect:
+            kind, function = aspect[hook]
+            body = f"int result = {function}();" if kind == "int" else f"{function}(); int result = 0;"
+            lines += [f"static int gm_{hook}(void) {{",
+                      f"    pthread_mutex_lock(&{aspect['reader_lock']});",
+                      f"    {body}",
+                      f"    pthread_mutex_unlock(&{aspect['reader_lock']});",
+                      "    return result;", "}", ""]
     if "thermal" in aspect:
-        lines += [f"static double gm_thermal(void) {{ return (double){aspect['thermal'][1]}(); }}", ""]
+        lines += ["static double gm_thermal(void) { return gm_read_0(); }", ""]
     if "powercap_set" in aspect:
         lines += [f"static int gm_powercap_set(int watts) {{ return {aspect['powercap_set']}(watts); }}",
                   f"static int gm_powercap_restore(void) {{ return {aspect['powercap_restore']}(); }}", ""]
     lines += [f"static const GmAspect gm_aspect = {{", f"    {c_string(name)}, {len(metrics)}, gm_metrics,",
               "    %s," % ("gm_setup" if "setup" in aspect else "NULL"),
               "    %s," % ("gm_teardown" if "teardown" in aspect else "NULL"),
+              "    %s," % (c_string(aspect["lifecycle"]) if "lifecycle" in aspect else "NULL"),
+              "    %s, %s," % ("gm_measurement_start" if "measurement_start" in aspect else "NULL",
+                               "gm_measurement_stop" if "measurement_stop" in aspect else "NULL"),
               "    gm_start, gm_stop, gm_get_count, gm_get_timestamp, gm_get_overflow,",
               "    %s," % ("gm_thermal" if "thermal" in aspect else "NULL"),
               "    %s," % ("gm_powercap_set" if "powercap_set" in aspect else "NULL"),
               "    %s," % ("gm_powercap_restore" if "powercap_set" in aspect else "NULL"),
-              "    %s," % aspect.get("powercap_calibration", "NULL"),
-              "    %d" % int(aspect["optional"]),
-              "};", "", f"const GmAspect *gm_aspect_{name}(void) {{ return &gm_aspect; }}", ""]
+              "    %s" % aspect.get("powercap_calibration", "NULL"),
+              "};", "", f"const GmAspect *gm_aspect_{aspect['symbol']}(void) {{ return &gm_aspect; }}", ""]
     return "\n".join(lines)
 
 
 def generate_main(model, source_name):
-    aspects, measurement = model["aspects"], model["measurement"]
+    aspects = model["aspects"]
     if not aspects:
         return "\n".join([
             f"/* Generated by scripts/weave.py from {source_name}; do not edit. */",
-            "#include <stdio.h>", "#include <stdlib.h>", "#include <sys/wait.h>", "",
+            "#include <stdio.h>", "#include <stdlib.h>", "#include <string.h>",
+            "#include <sys/wait.h>", "",
             "int main(int argc, char **argv) {",
-            "    (void)argv;",
-            "    if (argc != 1) {",
-            '        fprintf(stderr, "[ERROR] This executable does not accept arguments.\\n");',
+            '    if (argc == 2 && (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h"))) {',
+            '        printf("Usage: %s -command <cmd>\\n", argv[0]);',
+            "        return 0;",
+            "    }",
+            '    if (argc != 3 || strcmp(argv[1], "-command") || !argv[2][0]) {',
+            '        fprintf(stderr, "[ERROR] A command is required: %s -command <cmd>\\n", argv[0]);',
             "        return 1;",
             "    }",
-            f"    int status = system({c_string(measurement['command'])});",
+            "    int status = system(argv[2]);",
             "    if (status == -1) {",
             '        perror("[ERROR] Failed to execute command");',
             "        return 1;",
@@ -374,70 +367,31 @@ def generate_main(model, source_name):
         ])
     lines = [f"/* Generated by scripts/weave.py from {source_name}; do not edit. */",
              "#include <stdio.h>", '#include "gm_aspect.h"', ""]
-    lines += [f"const GmAspect *gm_aspect_{d['name']}(void);" for d in aspects]
-    lines += ["", "/* One flag per metric; the metrics declared in the TOML are on by default. */",
+    lines += [f"pthread_mutex_t {lock} = PTHREAD_MUTEX_INITIALIZER;"
+              for lock in dict.fromkeys(d["reader_lock"] for d in aspects)]
+    lines.append("")
+    lines += [f"const GmAspect *gm_aspect_{d['symbol']}(void);" for d in aspects]
+    lines += ["", "/* One flag per aspect. */",
               "static const GmFlag gm_flags[] = {"]
     flag_count = 0
     for d_index, aspect in enumerate(aspects):
-        for m_index, metric in enumerate(aspect["metrics"]):
-            lines.append(f"    {{{c_string('--' + aspect['name'] + '.' + metric['name'])}, "
-                         f"{d_index}, {m_index}, 1}},")
-            flag_count += 1
-    if not flag_count:
-        lines.append('    {"", 0, 0, 0}')
-    lines += ["};", "", "static const int gm_powercaps[] = {%s};" %
-              ", ".join(str(cap) for cap in measurement["powercap"]), "",
-              "static const GmConfig gm_defaults = {",
-              f"    {c_string(measurement['mode'])}, "
-              f"{c_string(measurement['command']) if 'command' in measurement else 'NULL'},",
-              f"    {c_string(measurement.get('language', 'Unknown'))}, "
-              f"{c_string(measurement.get('program', 'program'))},",
-              f"    {c_string(measurement.get('output', 'measurements.csv'))}, "
-              f"{measurement.get('interval_ms', 1)}u, {measurement.get('repetitions', 1)}u, "
-              f"{measurement.get('sleep_seconds', 0)}u,",
-              f"    {measurement.get('variance', 5)}u, "
-              f"{c_string(measurement['calibration_file'])},",
-              f"    gm_powercaps, {len(measurement['powercap'])},",
-              f"    {measurement.get('timeout_hours', 0)}u, "
-              f"{c_string(measurement['compile_command']) if 'compile_command' in measurement else 'NULL'}",
-              "};", "", "int main(int argc, char **argv) {",
+        lines.append(f"    {{{c_string('--' + aspect['name'])}, {d_index}, 0}},")
+        flag_count += 1
+    lines += ["};", "", "int main(int argc, char **argv) {",
               f"    static GmAspect aspects[{max(len(aspects), 1)}];"]
-    lines += [f"    aspects[{i}] = *gm_aspect_{d['name']}();" for i, d in enumerate(aspects)]
-    if measurement["mode"] == "powercap-calibration":
-        powercap_range = f'{measurement["powercap_min"]}-{measurement["powercap_max"]}'
-        output = measurement.get("output", "powercap_calibration.csv")
-        lines += [
-            "    if (argc != 1) {",
-            '        fprintf(stderr, "[ERROR] This configured powercap-calibration executable '
-            'does not accept overrides.\\n");',
-            "        return 1;",
-            "    }",
-            "    char *calibration_args[] = {",
-            "        argv[0], \"--powercap-calibration\", \"-range\", "
-            f"{c_string(powercap_range)}, \"-output\", {c_string(output)}, NULL",
-            "    };",
-            f"    return gm_main((int)(sizeof(calibration_args) / sizeof(calibration_args[0])) - 1, "
-            f"calibration_args, &gm_defaults, aspects, {len(aspects)}, gm_flags, {flag_count});",
-            "}", "",
-        ]
-    else:
-        lines += [f"    return gm_main(argc, argv, &gm_defaults, aspects, {len(aspects)}, "
-                  f"gm_flags, {flag_count});", "}", ""]
+    lines += [f"    aspects[{i}] = *gm_aspect_{d['symbol']}();" for i, d in enumerate(aspects)]
+    lines += [f"    return gm_main(argc, argv, aspects, {len(aspects)}, "
+              f"gm_flags, {flag_count});", "}", ""]
     return "\n".join(lines)
 
 
-def weave(config_path, out_dir, max_samples, build=True):
-    if tomllib is None:
-        raise ValueError("Python 3.11+ or the 'tomli' package is required for TOML parsing")
-    config_path = config_path.resolve()
-    with config_path.open("rb") as source:
-        model = validate(tomllib.load(source), config_path)
+def build_command(model, config_path, out_dir, max_samples):
     out_dir.mkdir(parents=True, exist_ok=True)
     sources = [out_dir / "GreenMeasurer.c"]
     sources[0].write_text(generate_main(model, config_path.name))
     includes, objects, link = [INCLUDE_DIR], [], []
     for aspect in model["aspects"]:
-        path = out_dir / f"{aspect['name']}.c"
+        path = out_dir / f"{aspect['symbol']}.c"
         path.write_text(generate_aspect(aspect, config_path.name))
         sources.append(path)
         includes += aspect["include_dirs"]
@@ -454,8 +408,75 @@ def weave(config_path, out_dir, max_samples, build=True):
     command += [f"-I{path}" for path in dict.fromkeys(includes)]
     command += [str(path) for path in sources]
     if model["aspects"]:
-        command += [str(RUNTIME_SOURCE)] + objects + link + ["-lm"]
+        command += [str(RUNTIME_SOURCE)] + list(dict.fromkeys(objects)) + link + ["-lm"]
     command += ["-o", str(executable)]
+    return executable, command
+
+
+def weave(config_path, out_dir, max_samples, build=True):
+    if tomllib is None:
+        raise ValueError("Python 3.11+ or the 'tomli' package is required for TOML parsing")
+    config_path = config_path.resolve()
+    with config_path.open("rb") as source:
+        model = validate(tomllib.load(source), config_path)
+
+    available = []
+    for aspect in model["aspects"]:
+        missing = [str(aspect[key]) for key in ("header", "lib")
+                   if key in aspect and not aspect[key].is_file()]
+        if missing:
+            print(f"[WARNING] Skipping aspect '{aspect['name']}': missing file(s): "
+                  f"{', '.join(missing)}", file=sys.stderr)
+        else:
+            available.append(aspect)
+
+    if build and available:
+        with tempfile.TemporaryDirectory(prefix="greenmeasurer-weave-") as directory:
+            scratch = Path(directory)
+            _, command = build_command({"aspects": available}, config_path, scratch, max_samples)
+            attempt = subprocess.run(command, capture_output=True, text=True)
+            if attempt.returncode < 0:
+                raise subprocess.CalledProcessError(attempt.returncode, command, stderr=attempt.stderr)
+            if attempt.returncode != 0:
+                stub = scratch / "runtime-check.c"
+                stub.write_text("int main(void) { return 0; }\n")
+                baseline = [os.environ.get("CC", "gcc"), "-O2", "-Wall", "-pthread",
+                            "-D_GNU_SOURCE", f"-I{INCLUDE_DIR}", str(stub),
+                            str(RUNTIME_SOURCE), "-lm", "-o", str(scratch / "runtime-check")]
+                check = subprocess.run(baseline, capture_output=True, text=True)
+                if check.returncode:
+                    print(check.stderr, file=sys.stderr, end="")
+                    raise subprocess.CalledProcessError(check.returncode, baseline)
+
+                accepted = []
+                pending = available
+                failures = {}
+                while pending:
+                    deferred = []
+                    for aspect in pending:
+                        names = {item["name"] for item in accepted}
+                        names.add(aspect["name"])
+                        candidates = [item for item in available if item["name"] in names]
+                        _, trial = build_command({"aspects": candidates}, config_path, scratch, max_samples)
+                        result = subprocess.run(trial, capture_output=True, text=True)
+                        if result.returncode < 0:
+                            raise subprocess.CalledProcessError(result.returncode, trial, stderr=result.stderr)
+                        if result.returncode:
+                            failures[aspect["name"]] = result.stderr
+                            deferred.append(aspect)
+                        else:
+                            accepted.append(aspect)
+                    if len(deferred) == len(pending):
+                        break
+                    pending = deferred
+                for aspect in pending:
+                    print(f"[WARNING] Skipping aspect '{aspect['name']}': compilation or linking failed.",
+                          file=sys.stderr)
+                    print(failures[aspect["name"]], file=sys.stderr, end="")
+                accepted_names = {aspect["name"] for aspect in accepted}
+                available = [aspect for aspect in available if aspect["name"] in accepted_names]
+
+    executable, command = build_command({"aspects": available}, config_path, out_dir, max_samples)
     if build:
         subprocess.run(command, check=True)
     return executable, command
@@ -481,7 +502,9 @@ def main():
     except (OSError, ValueError, UnicodeError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as error:
+        if error.stderr:
+            print(error.stderr, file=sys.stderr, end="")
         print("Error: compilation failed", file=sys.stderr)
         return 1
     if args.no_build:

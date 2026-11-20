@@ -12,12 +12,12 @@ PROCESSOR = ROOT / "Utils" / "processPowercapCalibrationCSV.py"
 
 @unittest.skipUnless(importlib.util.find_spec("pandas"), "pandas is not installed")
 class PowercapReportTest(unittest.TestCase):
-    def run_report(self, csv):
+    def run_report(self, csv, *args):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "measurements.csv"
             path.write_text(csv, encoding="utf-8")
             return subprocess.run(
-                [sys.executable, str(PROCESSOR), str(path)],
+                [sys.executable, str(PROCESSOR), str(path), *args],
                 text=True, capture_output=True,
             )
 
@@ -48,6 +48,13 @@ class PowercapReportTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("saved baseline", result.stdout)
+
+    def test_accepts_an_explicit_duration_aspect_column(self):
+        result = self.run_report(
+            "Powercap,Time.WallClock_ms,cpu.Package_J\n-1,100,2\n15,120,1.8\n",
+            "--time-column", "Time.WallClock_ms")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("0.8333", result.stdout)
 
 
 if __name__ == "__main__":

@@ -24,23 +24,29 @@ void toy_teardown(void) { log_event("teardown"); }
 unsigned long toy_energy(void) { return energy += 10; }
 
 float toy_temperature(void) {
-    return getenv("TOY_FAIL_TEMPERATURE") ? -1.0f : 40.5f + (float)(calls++ % 3);
+    if (getenv("TOY_FAIL_TEMPERATURE") || (getenv("TOY_FAIL_TEMPERATURE_AFTER_FIRST") && calls > 0))
+        return -1.0f;
+    return 40.5f + (float)(calls++ % 3);
 }
 
 int toy_processes(void) { return 3; }
 
-double toy_thermal(void) { return 40.0; }
+double toy_thermal(void) {
+    static int cpu_calls;
+    if (getenv("TOY_CPU_COOLS") && cpu_calls++ < 2) return 42.0;
+    return 40.0;
+}
 
 int toy_cap_set(int watts) {
     char event[32];
     snprintf(event, sizeof(event), "set:%d", watts);
     log_event(event);
-    return 0;
+    return getenv("TOY_FAIL_CAP_SET") ? -1 : 0;
 }
 
 int toy_cap_restore(void) {
     log_event("restore");
-    return 0;
+    return getenv("TOY_FAIL_CAP_RESTORE") ? -1 : 0;
 }
 
 /* Same contract as intel_cpu_calibrate_powercap: -1, then min..max, through the engine's runTesting. */

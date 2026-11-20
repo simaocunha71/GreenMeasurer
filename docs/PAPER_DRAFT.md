@@ -9,7 +9,7 @@
 
 ## Abstract
 
-GreenMeasurer is a Linux framework for measuring the energy consumption and execution time of software without modifying the target program. It combines a C measurement executable, hardware-specific energy backends, shell scripts and workload Makefiles. The executable provides standard repeated measurements and time-series energy sampling, as well as temperature and power-cap calibration workflows. A shared CPU/GPU backend interface and runtime plugin discovery separate measurement orchestration from hardware-specific counter access. The framework records energy, execution time, temperatures and memory-use data in CSV files, while reporting unsupported metrics explicitly rather than substituting unrelated values. This draft contains historical workflow examples; consult the README for current implementation details.
+GreenMeasurer is a Linux framework for measuring the energy consumption and execution time of software without modifying the target program. It combines a C measurement executable, hardware-specific energy backends, shell scripts and workload Makefiles. The executable provides aggregate repeated measurements and time-series energy sampling, as well as temperature and power-cap calibration workflows. A shared CPU/GPU backend interface and runtime plugin discovery separate measurement orchestration from hardware-specific counter access. The framework records energy, execution time, temperatures and memory-use data in CSV files, while reporting unsupported metrics explicitly rather than substituting unrelated values. This draft contains historical workflow examples with updated mode terminology, not migrated commands; consult the README for current implementation details.
 
 **Index Terms—** software energy measurement, energy efficiency, RAPL, hardware telemetry, power capping, Linux.
 
@@ -24,7 +24,7 @@ An architectural requirement is that hardware support must not be encoded in the
 The current work comprises:
 
 1. A shared C API for CPU and GPU energy backends, with runtime plugin discovery.
-2. Standard and over-time measurement modes, and separate temperature and power-cap calibration modes.
+2. Aggregate and over-time measurement modes, and separate temperature and power-cap calibration modes.
 3. Explicit handling of unavailable counters, failed samples and unsupported metrics.
 4. A fake-plugin test suite for discovery, validation, priority selection and graceful degradation.
 5. Documentation of the current system and the experimental evidence still needed for a scientific evaluation.
@@ -43,14 +43,14 @@ GreenMeasurer's positioning relative to them rests on three properties:
 2. **Ease of extension.** Hardware support is added by dropping a self-contained backend directory (CPU or GPU) into the source tree. The core, the Makefile and the CSV schema adapt automatically, with no vendor-specific branch in `main.c`.
 3. **Graceful degradation.** CPU and GPU backends are selected independently at runtime. A missing or unsupported backend is reported as `NOT_SUPPORTED` rather than aborting the run or silently substituting an estimate.
 
-Further capabilities are a built-in temperature-based stabilisation step (the run waits until temperatures are close to a calibrated baseline), standard and time-series (over-time) modes, and optional CPU power capping, which has been used in prior studies [cite]. All measurements are hardware-domain measurements (package, core, DRAM, GPU), not per-process attributions, and they include activity outside the target command.
+Further capabilities are a built-in temperature-based stabilisation step (the run waits until temperatures are close to a calibrated baseline), aggregate and time-series (over-time) modes, and optional CPU power capping, which has been used in prior studies [cite]. All measurements are hardware-domain measurements (package, core, DRAM, GPU), not per-process attributions, and they include activity outside the target command.
 
 Additional advantages, each with its justification:
 
 - **Testable hardware support.** The plugin interface allows fake backends, and `make -C src test` uses them to check priority selection, undetected, invalid and unbuilt backends, the absence of a GPU or of any backend, an invalid backend directory, and the abort on power-cap failure. *Justification:* correct fallback behaviour is verified by tests without needing every hardware combination (these tests check orchestration, not counter accuracy). Tools that read counters directly from their own code cannot be tested this way.
 - **Self-describing, always-consistent output.** Each backend declares its metrics (name, unit, kind and scope), and the CSV header is generated from the selected backends. `--csv-header` and `--over-time-csv-header` print the columns for a machine without running a workload. *Justification:* the output cannot drift from what the hardware provides, and a new metric needs no change to the core. A missing reading is `NOT_SUPPORTED`, never zero, so downstream analysis cannot mistake absent data for a measured value.
 - **Controlled experimental conditions.** The temperature calibration and variance threshold delay a run until the CPU is near an idle baseline, and the scripts disable Wi-Fi during runs and restore it afterwards. *Justification:* temperature and background network activity are known sources of variation in energy measurements, and handling them in the tool makes experiments easier to repeat. Whether this reduces variance must be shown experimentally (see the evaluation plan).
-- **Batch experiments across languages.** Workloads are directories with a Makefile exposing `compile`, `standard` and `overtime`, and `scripts/measure.sh` runs them for several languages and collects the results in one CSV. *Justification:* adding a language or program is a new directory, which supports comparing implementations of the same algorithm under identical conditions.
+- **Batch experiments across languages.** Workloads are directories with a Makefile exposing `compile`, `aggregate` and `overtime`, and `scripts/measure.sh` runs them for several languages and collects the results in one CSV. *Justification:* adding a language or program is a new directory, which supports comparing implementations of the same algorithm under identical conditions.
 - **Independent CPU and GPU selection, with explicit diagnostics.** At startup the tool reports selected backends and plugin errors, and warns when a CPU or GPU backend is missing. Verbose mode shows every backend's state (`selected`, `available`, `not detected`, `not built`, `load failed`, `invalid`) and its diagnostic hint. *Justification:* users can investigate missing metrics without always seeing irrelevant backends.
 - **Small dependency footprint.** The core is C with `dlopen`; optional dependencies (powercap/raplcap, NVML) only affect the backend that needs them, and a missing one skips that backend rather than failing the build. *Justification:* the tool builds on machines that lack some libraries, which supports the portability goal.
 
@@ -174,7 +174,7 @@ Energy-counter access through MSRs commonly requires root privileges and the `ms
 
 ```sh
 sudo modprobe msr
-sudo ./src/main --standard ...
+sudo ./src/main --aggregate ...
 ```
 
 The scripts may perform privileged system setup, such as disabling Wi-Fi, and restore changed settings on completion. Without root, the framework can still run workloads and collect accessible telemetry, but energy counters and power capping may be unavailable. A missing metric is reported as `NOT_SUPPORTED`.
@@ -195,7 +195,7 @@ To add a backend, a contributor creates a directory under the appropriate CPU or
 
 GreenMeasurer provides two calibration workflows.
 
-**Temperature calibration (`--temperature-calibration`).** The framework waits for an idle period, reads available CPU temperatures and writes the baseline file configured with `calibration_file` (or `-calib-file`). Standard and over-time modes use this baseline and the configured variance threshold to avoid running under temperatures that are too far above the reference. All measurement and calibration modes require a readable CPU temperature before starting the workload. This calibration controls one source of experimental variation; it does not eliminate all system noise.
+**Temperature calibration (`--temperature-calibration`).** The framework waits for an idle period, reads available CPU temperatures and writes the baseline file configured with `calibration_file` (or `-calib-file`). Aggregate and over-time modes use this baseline and the configured variance threshold to avoid running under temperatures that are too far above the reference. All measurement and calibration modes require a readable CPU temperature before starting the workload. This calibration controls one source of experimental variation; it does not eliminate all system noise.
 
 ```sh
 sudo ./src/main --temperature-calibration \
@@ -245,7 +245,7 @@ Language,Program,Powercap,Timestamp_ms,CPU_Memory_KB,Cores,Workload_Processes,Sy
 The example shows one possible selection; exact columns vary by hardware and
 backend. Window energy fields are counter readings in joules; a backend without
 a counter reader reports `NOT_SUPPORTED`.
-Process-scoped peak metrics are polled on standard
+Process-scoped peak metrics are polled on aggregate
 runs, while process-scoped values in over-time mode are sampled at each tick.
 Unsupported counters or sensors are emitted as `NOT_SUPPORTED`. Short sampling
 windows also reduce the chance of multiple counter wraps occurring between
@@ -261,7 +261,7 @@ The normal experiment pipeline is:
 4. Calibrate CPU temperature or reuse a previously generated baseline.
 5. Discover and select the available CPU and GPU plugins.
 6. Initialize the selected backends and apply power capping if requested and supported.
-7. Execute the workload in standard or over-time mode.
+7. Execute the workload in aggregate or over-time mode.
 8. Record available energy, timing, memory and temperature data in CSV.
 9. Release backend resources and restore system settings managed by the wrapper.
 
@@ -277,7 +277,7 @@ The selected backend metrics follow as `<category>.<name>_<unit>` columns.
 `Time_ms` is execution duration in milliseconds, `CPU_Memory_KB` is maximum RSS in KiB
 reported by `wait4()` (`ru_maxrss`) for that execution, not a simultaneous process-tree sum,
 and each metric follows its
-backend-declared sampling semantics. Standard-mode peak metrics are polled every
+backend-declared sampling semantics. Aggregate-mode peak metrics are polled every
 50 ms, so shorter-lived values may be missed. Package energy is a
 hardware-domain measurement and must not be interpreted as process-attributed
 energy. Package and subdomain values should not be blindly summed because
@@ -299,12 +299,12 @@ They exercise priority selection, detection failure diagnostics, invalid descrip
 
 This section defines reproducible demonstrations of the current executable. Smoke tests establish that workflows run and produce output; they are not a substitute for controlled accuracy or performance evaluation. Experiments should report the CPU/GPU model, kernel and driver versions, privilege level, selected-backend table, workload/input, repetitions, power cap, sampling interval and raw CSV files.
 
-### A. Standard Measurements
+### A. Aggregate Measurements
 
-The standard mode executes a command repeatedly and writes one result row per run. A minimal smoke test is:
+The aggregate mode executes a command repeatedly and writes one result row per run. A minimal smoke test is:
 
 ```sh
-sudo ./src/main --standard \
+sudo ./src/main --aggregate \
   -command "sleep 1" \
   -language Shell \
   -program smoke-test \
@@ -337,17 +337,17 @@ sudo ./src/main --over-time \
 
 The CSV should contain monotonically increasing timestamps and energy counter readings when the selected backend exposes valid counters. Scheduler delays may cause jitter, and hardware counters can wrap or reset. Validate the output by checking the header, row count, timestamps and unsupported fields before plotting it.
 
-The repository's `scripts/merda.sh` is a convenience smoke-test script that invokes the executable directly for temperature calibration, standard mode, over-time mode and (when run as root) power-cap calibration. Its simple workload and settings are for functionality checks only. The output should not be presented as a scientific benchmark result. Preserve the generated CSVs and full logs when conducting a formal evaluation.
+The repository's `scripts/merda.sh` is a convenience smoke-test script that invokes the executable directly for temperature calibration, aggregate mode, over-time mode and (when run as root) power-cap calibration. Its simple workload and settings are for functionality checks only. The output should not be presented as a scientific benchmark result. Preserve the generated CSVs and full logs when conducting a formal evaluation.
 
 ### C. Evaluation Plan: Comparison with CodeCarbon and EnergiBridge
 
-**Workload.** A recursive Fibonacci implementation in Python (`Languages/Python/Fibonacci`, run with `make standard` and `make overtime` for over-time sampling). It is deterministic, CPU-bound and needs no external dependencies. Choose the input (default 35) so that a run lasts long enough (several seconds) for the counters to be meaningful, and keep it identical across tools. The C version (`Languages/C/Fibonacci`) can be added as a second language to show language independence.
+**Workload.** A recursive Fibonacci implementation in Python (`Languages/Python/Fibonacci`, run with `make aggregate` and `make overtime` for over-time sampling). It is deterministic, CPU-bound and needs no external dependencies. Choose the input (default 35) so that a run lasts long enough (several seconds) for the counters to be meaningful, and keep it identical across tools. The C version (`Languages/C/Fibonacci`) can be added as a second language to show language independence.
 
 **Tools under comparison.** GreenMeasurer, EnergiBridge and CodeCarbon, all on the same machine, with the same workload, input and number of repetitions (e.g. 30). CodeCarbon must wrap the Python call (`EmissionsTracker`), while GreenMeasurer and EnergiBridge execute the command externally. Record the version of every tool.
 
 **Experiments.**
 
-1. *Standard mode (total energy per run).* Report mean, standard deviation and coefficient of variation of energy (J) and time (ms) per tool, plus the relative difference between tools. Run in a fixed order or randomised order, with idle periods between runs, and with the same system state (Wi-Fi off, no background load). Test the statistical differences (e.g. Shapiro–Wilk, then Mann–Whitney U or t-test, with effect size).
+1. *Aggregate mode (total energy per run).* Report mean, standard deviation and coefficient of variation of energy (J) and time (ms) per tool, plus the relative difference between tools. Run in a fixed order or randomised order, with idle periods between runs, and with the same system state (Wi-Fi off, no background load). Test the statistical differences (e.g. Shapiro–Wilk, then Mann–Whitney U or t-test, with effect size).
 2. *Over-time mode (energy profile).* Plot counter readings against `Timestamp_ms` for GreenMeasurer and compare their differences with experiment 1, accounting for counter wrap or reset. Interval-average power can be estimated from successive readings and timestamps, with timing uncertainty from sequential backend reads.
 3. *Tool overhead.* Compare the energy and time of the workload run with each tool against a run without any tool, and the energy of an idle period of the same length.
 4. *Usability and extensibility.* Compare the steps and lines of configuration needed to measure the same workload, and the effort to add a new backend (number of files and lines changed in GreenMeasurer, with no change to `main.c`). Present the result in a feature table (language independence, source change needed, CPU/GPU support, over-time mode, root requirement, behaviour when a counter is missing).
@@ -357,7 +357,7 @@ The repository's `scripts/merda.sh` is a convenience smoke-test script that invo
 
 ## V. Conclusions and Future Work
 
-GreenMeasurer provides a command-oriented workflow for collecting software execution telemetry without modifying the target program. The current implementation combines standard repeated measurements, over-time energy sampling, temperature calibration, optional CPU power-cap calibration and dynamically loaded hardware backends. Separating the core from backend implementations is intended to make hardware support extensible while keeping the measurement orchestrator vendor-neutral.
+GreenMeasurer provides a command-oriented workflow for collecting software execution telemetry without modifying the target program. The current implementation combines aggregate repeated measurements, over-time energy sampling, temperature calibration, optional CPU power-cap calibration and dynamically loaded hardware backends. Separating the core from backend implementations is intended to make hardware support extensible while keeping the measurement orchestrator vendor-neutral.
 
 Several limitations must be considered when interpreting measurements. Hardware energy counters often describe system domains rather than the target process; access to MSRs and power controls can require root; sensor exposure varies by machine; and a counter's resolution and wrap behavior constrain sampling. The NVIDIA plugin has not been built or validated in the development environment described in the repository history. The API also lacks an explicit ABI version, so core and plugins should be built from compatible source.
 
@@ -379,13 +379,13 @@ All modes accept `-command` (alias `-run_cmd`) with the command to run through `
 
 | Option | Unit / type | Modes | Meaning |
 |---|---|---|---|
-| `-language` | text | standard, over-time, power-cap calibration | Label written to the `Language` column; does not change how the command runs (default `C` in standard mode) |
-| `-program` | text | same | Label written to the `Program` column (default `Target` in standard mode) |
-| `-n_times` | count | standard (default 1), power-cap calibration (default 3) | Number of measured runs (per power limit in calibration) |
-| `-variance` | °C | all measurement modes | Maximum temperature above the calibrated baseline at which a run may start; otherwise the tool waits, checking each second (defaults: 0 standard, 5 over-time and calibration). A readable CPU temperature is required |
-| `-time_out_limit` | hours | standard, power-cap calibration | Time limit for the initial check run; on expiry a `TimeOut` row is recorded (default 1) |
+| `-language` | text | aggregate, over-time, power-cap calibration | Label written to the `Language` column; does not change how the command runs (default `C` in aggregate mode) |
+| `-program` | text | same | Label written to the `Program` column (default `Target` in aggregate mode) |
+| `-n_times` | count | aggregate (default 1), power-cap calibration (default 3) | Number of measured runs (per power limit in calibration) |
+| `-variance` | °C | all measurement modes | Maximum temperature above the calibrated baseline at which a run may start; otherwise the tool waits, checking each second (defaults: 0 aggregate, 5 over-time and calibration). A readable CPU temperature is required |
+| `-time_out_limit` | hours | aggregate, power-cap calibration | Time limit for the initial check run; on expiry a `TimeOut` row is recorded (default 1) |
 | `-interval-ms` | ms | over-time | Pause between sampling cycles (default 1) |
-| `-powercap` | W, or `-1` | standard, over-time | Package power limit (Intel only); `-1` applies the saved per-machine baseline (default); otherwise at least 1 |
+| `-powercap` | W, or `-1` | aggregate, over-time | Package power limit (Intel only); `-1` applies the saved per-machine baseline (default); otherwise at least 1 |
 | `-sleep_time`, `-sleep-secs` | s | all | Idle time used to settle the machine when a temperature baseline has to be created (default 5; default 10 as `-secs_to_sleep` in power-cap calibration) |
 | `-calib-file` | path | all | Baseline-temperature file; the path must be supplied in the TOML or as a command-line option, and is created by calibration if missing |
 | `-output`, `-measurements-file` | path | all | Output CSV (defaults `measurements.csv`, `measurements_ot.csv`, `powercap_calibration.csv`) |
@@ -406,9 +406,9 @@ measurement startup. Load only trusted plugins.
 |---|---|---|---|---|
 | `Language`, `Program` | text | core | options | Labels |
 | `Powercap` | W | core | option | Cap used, or `-1` |
-| `Time_ms` | ms | core, standard | wall clock | Duration of the run |
+| `Time_ms` | ms | core, aggregate | wall clock | Duration of the run |
 | `Timestamp_ms` | ms | core, over-time | monotonic clock | Elapsed time at the start of each sample's backend reads |
-| `CPU_Memory_KB` | KiB | core, standard | `wait4()` / `ru_maxrss` | Maximum RSS reported for the measured run, not a simultaneous process-tree sum |
+| `CPU_Memory_KB` | KiB | core, aggregate | `wait4()` / `ru_maxrss` | Maximum RSS reported for the measured run, not a simultaneous process-tree sum |
 | `cpu.Package_J` | J | window | Intel | Energy of the CPU package |
 | `cpu.Core_J` | J | window | Intel | Energy of the cores (part of the package) |
 | `cpu.DRAM_J` | J | window | Intel | Energy of the memory |

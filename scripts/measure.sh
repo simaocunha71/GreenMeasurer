@@ -5,7 +5,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 
 usage() {
     echo "Usage: $0 generate <new-directory> <config.toml> [config.toml ...]" >&2
-    echo "       $0 run <directory>" >&2
+    echo "       $0 run <directory> -- <greenmeasurer arguments...>" >&2
 }
 
 if [[ $# -lt 2 ]]; then
@@ -26,25 +26,27 @@ case "$1" in
             python3 "$root/scripts/weave.py" "$config" -o "$directory/$name"
         done
         printf '%s\n' "$index" > "$directory/.complete"
-        echo "[INFO] Generation finished. Run the batch separately with: $0 run $directory"
+        echo "[INFO] Generation finished. Run the batch separately with explicit GreenMeasurer arguments."
         ;;
     run)
-        if [[ $# -ne 2 || ! -d "$2" ]]; then usage; exit 1; fi
-        if [[ ! -f "$2/.complete" ]]; then
-            echo "[ERROR] The batch was not completely generated: $2" >&2
+        if [[ $# -lt 4 || ! -d "$2" || "$3" != "--" ]]; then usage; exit 1; fi
+        directory=$2
+        shift 3
+        if [[ ! -f "$directory/.complete" ]]; then
+            echo "[ERROR] The batch was not completely generated: $directory" >&2
             exit 1
         fi
-        if ! read -r count < "$2/.complete"; then
-            echo "[ERROR] Cannot read batch manifest in $2." >&2
+        if ! read -r count < "$directory/.complete"; then
+            echo "[ERROR] Cannot read batch manifest in $directory." >&2
             exit 1
         fi
         if [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
-            echo "[ERROR] Invalid batch manifest in $2." >&2
+            echo "[ERROR] Invalid batch manifest in $directory." >&2
             exit 1
         fi
         for ((index = 1; index <= count; index++)); do
             printf -v name 'run-%04d' "$index"
-            executable="$2/$name/greenmeasurer"
+            executable="$directory/$name/greenmeasurer"
             if [[ ! -x "$executable" ]]; then
                 echo "[ERROR] No compiled executable at $executable." >&2
                 exit 1
@@ -52,7 +54,7 @@ case "$1" in
         done
         for ((index = 1; index <= count; index++)); do
             printf -v name 'run-%04d' "$index"
-            "$2/$name/greenmeasurer"
+            "$directory/$name/greenmeasurer" "$@"
         done
         ;;
     *)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare standard-mode wall times with progressively more selected metrics."""
+"""Compare aggregate-mode wall times with progressively more selected metrics."""
 
 import argparse
 import csv
@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 
-from compare_overtime_overhead import positive_int
+from compare_overtime_overhead import aspect_arguments, positive_int, selection_arguments
 from weave import tomllib, validate, weave
 
 
@@ -34,13 +34,13 @@ def run_timed(command):
     return elapsed_ms, waited
 
 
-def read_measurement(path, metrics, metric_columns):
+def read_measurement(path, metrics, metric_columns, time_column):
     with path.open(newline="", encoding="utf-8") as source:
         reader = csv.DictReader(source, skipinitialspace=True)
         header = reader.fieldnames or []
         rows = list(reader)
-    if len(rows) != 1 or "Time_ms" not in header:
-        raise ValueError("expected one standard measurement with a Time_ms column")
+    if len(rows) != 1 or time_column not in header:
+        raise ValueError(f"expected one aggregate measurement with a {time_column} column")
     row = rows[0]
     for metric in metrics:
         column = metric_columns[metric]
@@ -50,15 +50,16 @@ def read_measurement(path, metrics, metric_columns):
         if row[column] is None or row[column].strip() in ("", "NOT_SUPPORTED"):
             raise ValueError(f"selected metric '{metric}' could not be read")
     try:
-        elapsed = float(row["Time_ms"])
+        elapsed = float(row[time_column])
     except (TypeError, ValueError) as error:
-        raise ValueError("invalid standard Time_ms") from error
+        raise ValueError(f"invalid aggregate {time_column}") from error
     if not math.isfinite(elapsed) or elapsed < 0:
-        raise ValueError("standard Time_ms must be finite and non-negative")
+        raise ValueError(f"aggregate {time_column} must be finite and non-negative")
     return elapsed, tuple(header)
 
 
-def collect_records(executable, output, metrics, command, metric_columns, runs, seed):
+def collect_records(executable, output, metrics, command, metric_columns, runs, seed, files, variance,
+                    time_aspect):
     rng = random.Random(seed)
     headers = {}
     records = []
@@ -74,9 +75,12 @@ def collect_records(executable, output, metrics, command, metric_columns, runs, 
                 if output.exists():
                     output.unlink()
                 total_ms, waited = run_timed(
-                    [str(executable), "-output", str(output), "-n_times", "1",
-                     "-powercap", "-1", *[f"--{metric}" for metric in selected]])
-                workload_ms, header = read_measurement(output, selected, metric_columns)
+                    [str(executable), "--aggregate", "-command", command,
+                     "-language", "Shell", "-program", "overhead", "-output", str(output),
+                     "-n_times", "1", "-sleep-secs", "0",
+                     "-time_out_limit", "0", *selection_arguments([*selected, time_aspect], files, variance)])
+                workload_ms, header = read_measurement(output, selected, metric_columns,
+                                                       metric_columns[time_aspect])
                 if count in headers and headers[count] != header:
                     raise ValueError(f"CSV schema changed between runs for {count} metrics")
                 headers[count] = header
@@ -111,20 +115,25 @@ def report_summary(records, metric_count):
               f"workload median={workload_median:.6f}, "
               f"workload difference={100 * (workload_median - baseline_median) / baseline_median:.2f}%",
               file=sys.stderr)
-    print("Baseline workload_ms measures the shell invocation; standard workload_ms is Time_ms. "
+    print("Baseline workload_ms measures the shell invocation; aggregate workload_ms uses the selected duration. "
           "Timing boundaries differ. Energy overhead is not measured.", file=sys.stderr)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True,
-                        help="Base standard-mode TOML configuration")
+                        help="TOML configuration declaring aspects")
+    parser.add_argument("--command", required=True, help="Workload command")
     parser.add_argument("--metrics", nargs="+", required=True,
                         help="Ordered metric names; each successive run adds one")
+    parser.add_argument("--time-aspect", required=True, help="Declared millisecond duration aspect")
     parser.add_argument("--runs", type=positive_int, default=10,
                         help="Randomized rounds (default: 10)")
     parser.add_argument("--seed", type=int, default=0,
                         help="Randomization seed (default: 0)")
+    parser.add_argument("--calib-file", action="append", default=[], metavar="ASPECT=PATH")
+    parser.add_argument("--temperature-control", action="append", default=[], metavar="ASPECT")
+    parser.add_argument("--variance", type=int)
     args = parser.parse_args()
     if tomllib is None:
         parser.error("Python 3.11+ or the 'tomli' package is required for TOML parsing")
@@ -136,15 +145,20 @@ def main():
         with config_path.open("rb") as source:
             base = tomllib.load(source)
         model = validate(base, config_path)
-        measurement = base["measurement"]
-        if measurement["mode"] != "standard" or "command" not in measurement:
-            raise ValueError("a standard configuration with measurement.command is required")
-        calibration = Path(measurement["calibration_file"])
-        if any("thermal" in device for device in model["aspects"]) and not calibration.is_file():
-            raise ValueError(f"calibration file does not exist: {calibration}")
+        if not args.command.strip():
+            raise ValueError("--command must not be empty")
+        if args.variance is not None and not 0 <= args.variance <= 1000:
+            raise ValueError("--variance must be between 0 and 1000")
+        if args.time_aspect in args.metrics:
+            raise ValueError("--time-aspect is measured separately and must not also appear in --metrics")
+        aspects, files = aspect_arguments(model, [*args.metrics, args.time_aspect], args.calib_file,
+                                         args.variance, args.temperature_control)
+        duration = aspects[args.time_aspect]["metrics"][0]
+        if duration["kind"] != "duration" or duration["unit"] != "ms":
+            raise ValueError("--time-aspect must be a duration measured in milliseconds")
         metric_columns = {
-            f'{device["name"]}.{metric["name"]}':
-                f'{device["name"]}.{metric["name"]}' +
+            device["name"]:
+                device["name"] +
                 (f'_{metric["unit"]}' if metric["unit"] else "")
             for device in model["aspects"] for metric in device["metrics"]
         }
@@ -152,14 +166,15 @@ def main():
             if metric not in metric_columns:
                 raise ValueError(f"metric '{metric}' is not declared in the configuration")
 
-        print("Using one repetition and powercap=-1 for every measured run. "
+        print("Using one repetition without powercap control for every measured run. "
               "Existing system power limits may still apply.", file=sys.stderr)
         print(f"Rounds: {args.runs}; seed: {args.seed}", file=sys.stderr)
-        with tempfile.TemporaryDirectory(prefix="greenmeasurer-standard-overhead-") as directory:
+        with tempfile.TemporaryDirectory(prefix="greenmeasurer-aggregate-overhead-") as directory:
             root = Path(directory)
             executable, _ = weave(config_path, root / "build", 1000000)
             records = collect_records(executable, root / "result.csv", args.metrics,
-                                      measurement["command"], metric_columns, args.runs, args.seed)
+                                      args.command, metric_columns, args.runs, args.seed,
+                                      files, args.variance, args.time_aspect)
         report_summary(records, len(args.metrics))
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError, csv.Error) as error:
         print(f"Error: {error}", file=sys.stderr)

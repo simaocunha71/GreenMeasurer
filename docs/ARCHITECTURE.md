@@ -3,7 +3,10 @@
 > **Historical document:** This describes the previous engine and its removed
 > plugin interface. Its architecture, configuration examples and commands do
 > not describe the current implementation. See [WEAVER.md](WEAVER.md) and the
-> [README](../README.md) for current usage.
+> [README](../README.md) for current usage. Mode terminology was renamed to
+> aggregate, but the historical commands have not been migrated.
+> The archived PDF and PNG exports have not been regenerated and retain their
+> original labels; the editable diagrams use the updated terminology.
 
 This document describes the architecture and engineering decisions of GreenMeasurer in enough detail to serve as the technical basis of a scientific paper. It covers the design goals, the plugin-based backend API, measurement semantics, build system, diagnostics, testing, limitations and threats to validity.
 
@@ -244,13 +247,13 @@ Previously, when no GPU sensor existed, the CPU temperature was copied into the 
 - `detect()` for the integrated GPU backend returns 1 if either the PP1 energy counter or a GPU temperature sensor is accessible.
 
 ### 6.5 Memory semantics
-The standard CSV reports `CPU_Memory_KB`, the maximum resident set size in KiB
+The aggregate CSV reports `CPU_Memory_KB`, the maximum resident set size in KiB
 reported by `wait4()` (`ru_maxrss`) for each measured run. This value is not a
 sum of simultaneous RSS across the workload's process tree.
 
 A backend may declare a process-scoped metric such as `VRAM` with unit `MiB`.
 The NVIDIA backend queries NVML process lists for the workload process and its
-descendants and sums their allocated memory. The standard mode polls peak
+descendants and sums their allocated memory. The aggregate mode polls peak
 metrics every 50 ms during execution; over-time mode records the observed
 process-scoped value at each sample. Very short-lived allocations may be
 missed. If the driver, permissions or GPU backend cannot provide per-process
@@ -261,7 +264,7 @@ separate VRAM through the current backend.
 
 ### 6.6 Dynamic CSV schema
 
-The standard CSV starts with `Language,Program,Powercap,Time_ms,CPU_Memory_KB`;
+The aggregate CSV starts with `Language,Program,Powercap,Time_ms,CPU_Memory_KB`;
 over-time uses `Timestamp_ms` instead, the monotonic elapsed time in milliseconds at the start
 of each sample's backend readings. These common
 metadata fields are followed by columns declared by the selected plugins, in
@@ -281,7 +284,7 @@ default 1 millisecond); a final partial window is sampled on workload
 completion. Samples are buffered and dumped after completion. Times vary with
 metric overhead and scheduling; the interval does not synchronize polling with
 hardware updates.
-Gauge and process-scoped metrics are recorded at each tick. Standard-mode metric behavior is declared by each backend: window metrics
+Gauge and process-scoped metrics are recorded at each tick. Aggregate-mode metric behavior is declared by each backend: window metrics
 use start/stop samples, gauges are read after the workload, and peak metrics are
 polled during execution.
 
@@ -411,6 +414,6 @@ On a Lenovo ThinkPad T14 Gen 4 (Intel CPU with integrated GPU, no NVIDIA GPU):
 ### Reproducibility checklist
 - Build: `cd src && make`
 - Tests: `cd src && make test`
-- Run: `sudo bash scripts/measure.sh --standard all`
+- Run: `sudo bash scripts/measure.sh --aggregate all`
 - Backend override: `GREENMEASURER_BACKEND_DIR=/path/to/platform/linux ./main ...`
 - Record: CPU model, kernel version, driver versions, whether run as root, and the backend table printed at startup.

@@ -1,7 +1,7 @@
 #ifndef GM_DEVICES_INTEL_CPU_H
 #define GM_DEVICES_INTEL_CPU_H
 
-/* Intel CPU metrics and RAPL power capping. Metric readers take no arguments and return a
+/* Intel CPU metrics. Metric readers take no arguments and return a
  * negative value when the quantity is unavailable. Call intel_cpu_begin() before reading and
  * intel_cpu_end() afterwards. */
 
@@ -53,36 +53,14 @@
 #define SAPPHIRERAPIDS_X            143
 #define EMERALDRAPIDS_X             207
 
-/* Non-zero when this is not a supported Intel CPU, or when neither RAPL nor temperature work. */
+/* Non-zero when this is not a supported Intel CPU. Unavailable MSR readings return negative. */
 int intel_cpu_begin(void);
-/* Restores any changed power limit, then releases the MSR device and lm-sensors. */
+/* Releases the MSR device. */
 void intel_cpu_end(void);
 
 double intel_cpu_get_package(void);      /* cumulative joules (RAPL package) */
 double intel_cpu_get_core(void);         /* cumulative joules (RAPL PP0) */
 double intel_cpu_get_dram(void);         /* cumulative joules (RAPL DRAM) */
-double intel_cpu_get_temperature(void);  /* Celsius, mean of the coretemp "Core N" inputs */
-
-/* Applies a package power limit: -1 restores this machine's saved baseline, 0 does nothing and a
- * positive value is a limit in watts. Returns 0 on success. The first call on a machine saves the
- * current limits as the baseline in /var/lib/greenmeasurer. */
-int intel_cpu_set_powercap(int watts);
-/* Restores the baseline limits and releases the powercap context. Returns 0 on success. */
-int intel_cpu_destroy_powercap(void);
-
-/* Implemented by the engine; measures the workload ntimes at the given powercap and writes a CSV
- * (header and rows) to measurements_file. Returns 0 on success. */
-extern int runTesting(int ntimes, int core, const char *command, const char *language,
-                      const char *program, const char *measurements_file, int powercap,
-                      int time_out_limit, float temp_threshold, int variance, int memory);
-
-/* Runs runTesting() for powercap -1 and then min_powercap..max_powercap watts in 1 W steps, and
- * merges the per-powercap CSVs into calib_csv_file (default "powercap_calibration.csv"). If
- * process_script exists, it is run with python3 on the merged CSV. Returns 0 on success. */
-int intel_cpu_calibrate_powercap(int ntimes, int core, const char *command, const char *language,
-                                 const char *program, const char *calib_csv_file,
-                                 const char *process_script, int min_powercap, int max_powercap,
-                                 int time_out_limit, float temp_threshold, int variance, int memory);
 
 const char *intel_cpu_diagnose(void);
 

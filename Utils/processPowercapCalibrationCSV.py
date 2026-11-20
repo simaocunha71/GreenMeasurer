@@ -1,6 +1,6 @@
 import pandas as pd
 import math
-import sys
+import argparse
 from typing import Any, Literal
 
 def remove_package_outliers_iqr(group, package_column):
@@ -71,7 +71,7 @@ def classify_gps_category(
 
     return 'Neutral (Greenup=1)'
 
-def process_csv(filename):
+def process_csv(filename, time_column='Time_ms'):
     data = pd.read_csv(filename)
     package_columns = [
         column for column in data.columns
@@ -80,6 +80,8 @@ def process_csv(filename):
     if not package_columns:
         raise ValueError("CSV does not contain a CPU Package energy metric.")
     package_column = package_columns[0]
+    if time_column not in data.columns:
+        raise ValueError(f"CSV does not contain the duration column '{time_column}'.")
     results = {}
     grouped = data.groupby('Powercap')
 
@@ -89,13 +91,13 @@ def process_csv(filename):
 
     for powercap, group in grouped:
         group = group.copy()
-        for column in (package_column, 'Time_ms'):
+        for column in (package_column, time_column):
             group[column] = pd.to_numeric(group[column], errors='coerce')
             if not group[column].map(lambda value: math.isfinite(value) and value > 0).all():
                 raise ValueError(f"Powercap {powercap}: {column} must contain finite positive measurements.")
         filtered_group = remove_package_outliers_iqr(group, package_column)
         average_package = filtered_group[package_column].mean()
-        average_time = filtered_group['Time_ms'].mean()
+        average_time = filtered_group[time_column].mean()
         results[powercap] = {'Package': average_package, 'Time': average_time}
 
     baseline = results.get(-1)
@@ -159,10 +161,11 @@ def process_csv(filename):
     print(f"{'=' * sum(col_widths)}\n")
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python processPowercapCalibrationCSV.py <filename>")
-        sys.exit(1)
-    process_csv(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("filename")
+    parser.add_argument("--time-column", default="Time_ms")
+    args = parser.parse_args()
+    process_csv(args.filename, args.time_column)
 
 if __name__ == "__main__":
     main()

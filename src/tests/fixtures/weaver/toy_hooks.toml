@@ -1,23 +1,23 @@
-[measurement]
-mode = "over-time"
-calibration_file = "toy-temperature-baseline.txt"
-command = "sleep 0.2"
-language = "Shell"
-program = "sleep"
-output = "hooks.csv"
-interval_ms = 10
-
 [[aspect]]
-name = "Cpu"
+name = "Cpu.Package"
 lib = "libtoy.a"
 header = "toy.h"
-thermal = "double toy_thermal()"
+read = "unsigned long toy_energy()"
+kind = "counter"
+unit = "uJ"
+
+[[aspect]]
+name = "Cpu.Powercap"
+lib = "libtoy.a"
+header = "toy.h"
 powercap_set = "int toy_cap_set(int)"
 powercap_restore = "int toy_cap_restore()"
 powercap_calibration = "toy_calibrate"
 
-[[aspect.metric]]
-name = "Package"
-read = "unsigned long toy_energy()"
-kind = "counter"
-unit = "uJ"
+[[aspect]]
+name = "Cpu.Temperature"
+lib = "libtoy.a"
+header = "toy.h"
+read = "double toy_thermal()"
+unit = "C"
+thermal = true

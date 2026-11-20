@@ -89,15 +89,12 @@ class OvertimeScriptsTest(unittest.TestCase):
         output.write_text("preserved\n", encoding="utf-8")
         config = self.directory / "config.toml"
         config.write_text(
-            '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
-            'calibration_file="unused-baseline.txt"\n'
-            f'output="{output}"\n'
-            'variance=100\nsleep_seconds=0\ninterval_ms=5\nrepetitions=2\n'
-            '[[aspect]]\nname="Toy"\nheader="metric.h"\nlib="metric.c"\n'
-            '[[aspect.metric]]\nname="Value"\nread="int metric()"\n', encoding="utf-8",
+            '[[aspect]]\nname="Toy.Value"\nheader="metric.h"\nlib="metric.c"\n'
+            'read="int metric()"\n', encoding="utf-8",
         )
         result = self.run_script(
-            COMPARE, "--config", config, "--runs", "2",
+            COMPARE, "--config", config, "--command", "sleep 0.03", "--metrics", "Toy.Value",
+            "--interval-ms", "5", "--runs", "2",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count(",baseline,"), 2)
@@ -111,58 +108,78 @@ class OvertimeScriptsTest(unittest.TestCase):
         self.assertIn("does not measure energy overhead", result.stdout)
         self.assertEqual(output.read_text(encoding="utf-8"), "preserved\n")
 
-        config.write_text(config.read_text(encoding="utf-8").replace("sleep 0.03", "exit 4"),
-                          encoding="utf-8")
         failure = self.run_script(
-            COMPARE, "--config", config, "--runs", "1",
+            COMPARE, "--config", config, "--command", "exit 4", "--metrics", "Toy.Value",
+            "--interval-ms", "5", "--runs", "1",
         )
         self.assertNotEqual(failure.returncode, 0)
         self.assertIn("status", failure.stderr)
 
     def test_compare_requires_valid_overtime_configuration(self):
         config = self.directory / "config.toml"
-        calibration = self.directory / "calib.txt"
-        calibration.write_text("0\n", encoding="utf-8")
         config.write_text(
-            '[measurement]\nmode="standard"\ncommand="true"\n'
-            f'calibration_file="{calibration}"\n', encoding="utf-8",
+            '[measurement]\nmode="aggregate"\n', encoding="utf-8",
         )
-        result = self.run_script(COMPARE, "--config", config)
+        result = self.run_script(COMPARE, "--config", config, "--command", "true",
+                                 "--metrics", "Demo.Value", "--interval-ms", "5")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("measurement.mode must be 'over-time'", result.stderr)
+        self.assertIn("unknown top-level keys", result.stderr)
         result = self.run_script(COMPARE, "--command", "true")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--config", result.stderr)
         config.write_text(
-            '[measurement]\nmode="over-time"\ncommand="true"\npowercap=5\n'
-            f'calibration_file="{calibration}"\n'
-            '[[aspect]]\nname="Demo"\nheader="metric.h"\n'
-            '[[aspect.metric]]\nname="Value"\nread="int metric()"\n', encoding="utf-8",
+            '[[aspect]]\nname="Demo.Value"\nheader="metric.h"\n'
+            'read="int metric()"\n', encoding="utf-8",
         )
         (self.directory / "metric.h").write_text("int metric(void);\n", encoding="utf-8")
-        result = self.run_script(COMPARE, "--config", config)
+        result = self.run_script(COMPARE, "--config", config, "--command", "true",
+                                 "--metrics", "Missing", "--interval-ms", "5")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("powercap must be -1", result.stderr)
+        self.assertIn("Missing", result.stderr)
 
     def test_compare_builds_source_metric_using_config_relative_paths(self):
-        calibration = self.directory / "calib.txt"
-        calibration.write_text("0\n", encoding="utf-8")
         (self.directory / "metric.h").write_text("int metric(void);\n", encoding="utf-8")
         (self.directory / "metric.c").write_text(
             '#include "metric.h"\nint metric(void) { return 42; }\n', encoding="utf-8",
         )
         config = self.directory / "config.toml"
         config.write_text(
-            '[measurement]\nmode="over-time"\ncommand="sleep 0.03"\n'
-            f'calibration_file="{calibration}"\n'
-            'variance=100\nsleep_seconds=0\ninterval_ms=5\n'
-            '[[aspect]]\nname="Demo"\nheader="metric.h"\nlib="metric.c"\n'
-            '[[aspect.metric]]\nname="Value"\nread="int metric()"\nunit="count"\n',
+            '[[aspect]]\nname="Demo.Value"\nheader="metric.h"\nlib="metric.c"\n'
+            'read="int metric()"\nunit="count"\n',
             encoding="utf-8",
         )
-        result = self.run_script(COMPARE, "--config", config, "--runs", "1")
+        result = self.run_script(COMPARE, "--config", config, "--command", "sleep 0.03",
+                                 "--metrics", "Demo.Value", "--interval-ms", "5", "--runs", "1")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count(",overtime,"), 1)
+
+    def test_comparisons_control_an_unmeasured_temperature(self):
+        fixture = ROOT / "src/tests/fixtures/weaver"
+        config = self.directory / "thermal.toml"
+        common = f'header="{fixture / "toy.h"}"\nlib="{fixture / "toy.c"}"\n'
+        config.write_text(
+            '[[aspect]]\nname="Time.WallClock"\n'
+            f'header="{ROOT / "src/aspects/wall_clock_time.h"}"\n'
+            f'lib="{ROOT / "src/aspects/wall_clock_time.c"}"\n'
+            'measurement_start="int gm_wall_clock_time_start()"\n'
+            'measurement_stop="int gm_wall_clock_time_stop()"\n'
+            'read="double gm_wall_clock_time_read()"\nkind="duration"\nunit="ms"\n'
+            '[[aspect]]\nname="CPU.Temperature"\n' + common +
+            'read="double toy_thermal()"\nthermal=true\n'
+            '[[aspect]]\nname="GPU.Temperature"\n' + common +
+            'read="float toy_temperature()"\nthermal=true\n', encoding="utf-8")
+        baseline = self.directory / "cpu.txt"
+        baseline.write_text("Average temperature: 40.0 C\n", encoding="utf-8")
+        for script, extra in ((COMPARE, ["--interval-ms", "5"]),
+                              (ROOT / "scripts/compare_aggregate_overhead.py",
+                               ["--time-aspect", "Time.WallClock"])):
+            with self.subTest(script=script):
+                result = self.run_script(
+                    script, "--config", config, "--command", "sleep 0.02",
+                    "--metrics", "GPU.Temperature", "--runs", "1",
+                    "--temperature-control", "CPU.Temperature",
+                    "--calib-file", f"CPU.Temperature={baseline}", "--variance", "5", *extra)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

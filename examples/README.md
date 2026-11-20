@@ -1,89 +1,55 @@
-# Fibonacci configuration examples
+# Aspect configuration examples
 
-These examples show how to declare existing device functions as metrics in TOML.
-Each folder contains the four modes below. The measurement modes run Python
-Fibonacci with argument `30` once:
+Each `config.toml` declares available aspects, not a mode or workload. A metric
+aspect declares one metric; a powercap control aspect declares hooks without a
+metric. Select the mode, command, options and aspect flags when invoking the
+executable.
 
-- `standard.toml`: one CSV row per run; counters are differences between
-  readings and gauges are the final readings.
-- `overtime.toml`: periodically samples each selected aspect and writes
-  aligned CSV rows. Counters are raw readings.
-- `powercap-calibration.toml`: measures the saved powercap baseline and a
-  short range of CPU power limits.
-- `temperature-calibration.toml`: waits one second and records a temperature
-  baseline. It does not run Fibonacci or measure the other metrics.
+- `intel/config.toml`: Intel CPU and GPU readers and Intel powercap control.
+- `nvidia/config.toml`: NVIDIA GPU readers.
+- `system/config.toml`: system readers and wall-clock time.
+- `config.toml`: all device and system readers together and Intel powercap control.
 
-Choose the configuration set that matches your experiment:
+The NVIDIA and system examples do not depend on Intel libraries. To combine
+their aspects with Intel powercap or temperature control, use the combined
+configuration or declare those aspects explicitly in your own TOML.
 
-- `intel/`: Intel CPU and Intel GPU readers.
-- `nvidia/`: NVIDIA GPU readers.
-- `system/`: system readers.
-- The TOMLs directly in `examples/`: all four devices together, including both
-  GPUs in the same run.
-
-The Intel CPU and Intel GPU are separate aspects because each declares its own
-header, library and setup, and over-time mode uses a sampling thread per
-selected aspect. In `nvidia/` and `system/`, powercap calibration adds an
-Intel CPU aspect for its thermal and powercap hooks and Package energy. Their
-temperature-calibration TOMLs use only the Intel CPU: this mode records a CPU
-baseline and does not read the NVIDIA or system metrics.
-
-## Requirements and running
-
-From the repository root, build the available device libraries and generate an
-executable:
+For example:
 
 ```sh
 make -C src
-python3 scripts/weave.py examples/system/standard.toml -o generated-example-system
-./generated-example-system/greenmeasurer
+python3 scripts/weave.py examples/system/config.toml -o generated-example-system
+./generated-example-system/greenmeasurer --aggregate \
+  -command "python3 Languages/Python/Fibonacci/fibonacci.py 30" \
+  -language Python -program fibonacci-30 -output example-system.csv \
+  -n_times 1 -sleep-secs 0 -time_out_limit 0 --Time.WallClock --System.Cores
 ```
 
-Replace the TOML path and output directory with the desired example.
-Generation does not run the workload. Run the executable from the repository
-root, with the permissions required to access the devices. TOML header and
-library paths are relative to the TOML; workload and output paths are relative
-to the directory from which the executable is run.
+Generate again after changing a TOML. Header and library paths are relative to
+that TOML; workload, output and calibration paths are relative to the runtime
+working directory. Use `--help` to list the generated aspect flags.
+`Time.WallClock` is an explicitly selected `CLOCK_MONOTONIC` duration aspect;
+other examples do not implicitly measure execution time.
 
-To build and run all example TOMLs with a per-configuration summary, use
-`bash scripts/test_examples.sh`. Results and logs are kept in separate
-directories. See [the scripts guide](../scripts/README.md#check-all-examples)
-for status meanings and powercap precautions.
+Temperature aspects can be measured without thermal control. To control a
+measurement, pass `-temperature-control ASPECT` and `-calib-file ASPECT=PATH` for
+each controlled sensor, plus `-variance`. The explicit calibration mode
+overwrites the named file, and a missing baseline is calibrated automatically
+during measurement. Choose a suitable stabilization time for real experiments.
 
-All declared libraries must be built and linkable. Intel CPU configurations
-require the CPU library's dependencies; NVIDIA configurations require NVML
-development and runtime libraries. Standard and over-time examples in
-`system/` need neither Intel nor NVIDIA libraries. This remains true for
-aspects marked `optional = true`: that setting allows a run to continue after
-an aspect's setup fails, but does not remove build dependencies. On machines
-without a declared library, remove its entire `[[aspect]]` block and its
-`[[aspect.metric]]` blocks before generating.
+The weaver skips aspects whose headers or libraries are missing or whose code
+cannot be built, with diagnostics. Use `--help` to list the resulting flags.
+A failed setup emits a warning and removes the aspect from the run, including
+its CSV column; unavailable readings from initialized aspects are
+`NOT_SUPPORTED`. An unavailable controlled temperature disables its thermal
+control and repetition pauses, with a warning; other temperatures are still
+controlled. Explicit calibration requires available sensors. Intel and NVIDIA
+readings require suitable hardware, dependencies and permissions.
 
-The CPU example requires a supported Intel CPU. Readings also depend on
-hardware, drivers and permissions. Failed readings and metrics of optional
-aspects that fail setup appear as `NOT_SUPPORTED` in the CSV. The Intel GPU
-temperature reader currently selects the first hwmon sensor labelled `GPU`;
-verify its source on systems with multiple GPUs. NVIDIA VRAM uses the workload
-process tree's root PID. Workload-scoped gauges can be unavailable after a
-short program exits, especially in standard mode.
-
-**Powercap calibration changes CPU limits.** The range `5..5` W is only an
-example, not a recommendation: set limits appropriate for the machine before
-running, and ensure the required permissions and dependencies are available.
-Each powercap example uses the baseline file produced by the temperature
-example in the same folder; run that temperature example first for the
-configured one-second wait, or the runtime will create a missing baseline
-immediately. One second is for demonstration, not a validated stabilization
-period. Calibration overwrites the baseline file, and powercap calibration may
-replace its output. Standard and over-time append to their CSVs; use fresh
-output files when changing metrics.
-
-## Adapting a configuration
-
-Change `command`, `language`, `program`, `output` and the mode settings for
-your experiment. Keep only the aspect and metric declarations you need, or
-add your own compatible reader functions. Each metric has a name, a
-no-argument `read` signature, a `counter` or `gauge` kind, and an optional
-unit. Generate a new executable after editing the TOML.
-
-See [the weaver guide](../docs/WEAVER.md) for all settings and aspect hooks.
+**Powercap changes CPU limits.** Choose limits appropriate for the machine;
+example values are not recommendations. Select the declared control aspect
+explicitly (for example `--IntelCPU.Powercap`) for powercap calibration. Intel
+energy readers, temperature reader and powercap control use separate libraries.
+Omitting temperature or powercap removes the respective dependencies. For an aggregate-mode smoke test of all
+TOMLs, see [test_examples.sh](../scripts/README.md#check-all-examples). See the
+[weaver guide](../docs/WEAVER.md) for all modes, fields and options.

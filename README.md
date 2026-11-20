@@ -1,10 +1,11 @@
 # GreenMeasurer
 
 GreenMeasurer generates a Linux measurement executable from a TOML configuration.
-The configuration explicitly declares the aspects, metrics, and functions to use;
-no metrics are selected automatically. When aspects are declared, the generator links
-their source files or libraries with a runtime that executes the workload and writes CSV
-results. Without aspects, the generated executable only runs the command with `system()`.
+The configuration declares metric aspects and control aspects with their C functions;
+no aspects are selected automatically. The generator attempts to link each declared
+aspect with a runtime that executes the workload and writes CSV results; aspects
+that cannot be built are skipped with a warning. Without active aspects, it runs
+the command once with `system()`.
 
 | Authors | Contacts |
 |---------|----------|
@@ -15,8 +16,8 @@ results. Without aspects, the generated executable only runs the command with `s
 
 - Python 3.11 or Python 3 with `tomli`
 - A C compiler, `make`, and POSIX threads
-- Any headers, libraries, hardware access, and permissions required by the
-  aspects declared in the configuration
+- Headers, libraries, hardware access, and permissions required by the
+  aspects you want to use
 
 Optional example device libraries live in [src/devices](src/devices). Build
 the ones whose dependencies are installed with:
@@ -25,38 +26,57 @@ the ones whose dependencies are installed with:
 make -C src
 ```
 
-The Intel CPU example needs the powercap, raplcap, and libsensors development
-files; the NVIDIA example needs NVML headers and its runtime library. Missing
-optional development headers cause the affected library to be skipped.
+The Intel CPU temperature aspect needs the libsensors development files; its
+energy readers do not. The separate Intel powercap aspect needs powercap and
+raplcap development files. Configurations without those aspects do not need
+their dependencies. The NVIDIA example needs NVML headers and its runtime
+library. Missing optional headers cause the affected library to be skipped.
 
 ## Generate and run
 
-For example, after building the device libraries and checking that the host
-supports the configured Intel devices:
+For example, after building the system device library:
 
 ```sh
-python3 scripts/weave.py configurations-generated/fibonacci-python-standard.toml
-./configurations-generated/generated-fibonacci-python-standard/greenmeasurer
+python3 scripts/weave.py examples/system/config.toml -o generated-system
+./generated-system/greenmeasurer --aggregate \
+  -command "python3 Languages/Python/Fibonacci/fibonacci.py 30" \
+  -language Python -program fibonacci-30 -output system.csv \
+  -n_times 1 -sleep-secs 0 -time_out_limit 0 --Time.WallClock --System.Cores
 ```
 
 Generation does not run the workload. Hardware access may require additional
 permissions; a powercap run can change system power limits. The output CSV and
 calibration paths are relative to the executable's working directory. Header and
 library paths are relative to the TOML file. The output CSV may be overwritten.
+If an aspect cannot be built, the weaver reports why and omits its flag; use
+`--help` to see which aspects were incorporated.
 
-Measurement executables accept `--help` for available options. With no metric
-flags they use the metrics declared in the TOML; pass specific `--Aspect.Metric`
-flags to select a subset, or `--no-metrics` to run without collecting metrics.
-Thermal control and powercap hooks are independent of metric selection.
-Configured powercap-calibration executables do not accept command-line overrides.
+Measurement executables accept `--help` for available options. Select each
+aspect explicitly using its flag, or use `--no-metrics`. With no active
+aspects, use `-command <cmd>` to run once without a CSV or timeout. When a
+selected aspect fails setup, the runtime warns and continues without it; if no
+aspects remain, it runs the command once. Explicit calibration still fails if
+its required aspect is unavailable. The mode and all measurement options are
+passed at runtime. Temperature metrics and thermal
+control are independent: use `-temperature-control ASPECT` with that aspect's
+`-calib-file` and `-variance` to control a measurement. An unavailable controlled
+temperature disables its thermal control and repetition pauses with a warning;
+other available controlled temperatures remain active. Select a powercap control
+aspect such as `--IntelCPU.Powercap` explicitly to apply powercap limits; it is
+independent of metric selection and produces no metric column. `-powercap` is
+required only when a powercap control aspect is selected.
+
+Execution time is also an explicit aspect. The example declares
+`Time.WallClock` and selects it above; without that flag its duration column is
+not written. Over-time output always retains `Timestamp_ms` as its sampling axis.
 
 See [docs/WEAVER.md](docs/WEAVER.md) for the configuration format, modes,
-calibration, and CSV semantics. Example configurations are in
-[configurations-generated](configurations-generated). They are hardware-specific:
-adapt them to the host and available libraries. For shorter, adaptable examples
+calibration, and CSV semantics. The Fibonacci configuration is in
+[configurations-generated](configurations-generated). It is hardware-specific:
+adapt it to the host and available libraries. For shorter, adaptable examples
 by device or with all included readers together, see [examples](examples).
 
-To run the four Fibonacci configurations sequentially, see the
+To run the Fibonacci modes sequentially, see the
 [Fibonacci sequence](scripts/README.md#fibonacci-sequence).
 
 ## Tests and utilities

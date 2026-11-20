@@ -1,0 +1,52 @@
+# Declare available aspects once; select the mode and execution options at runtime.
+
+[[aspect]]
+name = "Time.WallClock"
+header = "../../src/aspects/wall_clock_time.h"
+lib = "../../src/aspects/wall_clock_time.c"
+measurement_start = "int gm_wall_clock_time_start()"
+measurement_stop = "int gm_wall_clock_time_stop()"
+read = "double gm_wall_clock_time_read()"
+kind = "duration"
+unit = "ms"
+
+[[aspect]]
+name = "System.Cores"
+lib = "../../src/devices/libgm_system.a"
+header = "../../src/devices/linux/system.h"
+read = "double system_get_core_count()"
+kind = "gauge"
+unit = "cores"
+
+[[aspect]]
+name = "System.CoreFrequency"
+lib = "../../src/devices/libgm_system.a"
+header = "../../src/devices/linux/system.h"
+read = "double system_get_core_frequency_mhz()"
+kind = "gauge"
+unit = "MHz"
+
+[[aspect]]
+name = "System.RunningProcesses"
+lib = "../../src/devices/libgm_system.a"
+header = "../../src/devices/linux/system.h"
+read = "double system_get_running_processes()"
+kind = "gauge"
+unit = "processes"
+
+[[aspect]]
+name = "System.WorkloadProcesses"
+lib = "../../src/devices/libgm_system.a"
+header = "../../src/devices/linux/system.h"
+read = "double system_get_workload_processes()"
+kind = "gauge"
+unit = "processes"
+
+[[aspect]]
+name = "System.WorkloadMemory"
+lib = "../../src/devices/libgm_system.a"
+header = "../../src/devices/linux/system.h"
+read = "double system_get_workload_memory_kb()"
+kind = "gauge"
+unit = "KiB"
+

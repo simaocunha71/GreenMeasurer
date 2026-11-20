@@ -2,6 +2,8 @@
 
 int intel_cpu_begin(void) { return 0; }
 void intel_cpu_end(void) {}
+int intel_cpu_temperature_begin(void) { return 0; }
+void intel_cpu_temperature_end(void) {}
 double intel_cpu_get_package(void) {
     static int n;
     return getenv("MOCK_CPU_PACKAGE_UNAVAILABLE") ? -1.0 : ++n;
@@ -11,6 +13,7 @@ double intel_cpu_get_dram(void) { static int n; return ++n; }
 double intel_cpu_get_temperature(void) { return 40.0; }
 int intel_cpu_set_powercap(int watts) { (void)watts; return 0; }
 int intel_cpu_destroy_powercap(void) { return 0; }
+void intel_cpu_powercap_end(void) {}
 
 int runTesting(int, int, const char *, const char *, const char *, const char *, int, int,
                float, int, int);
