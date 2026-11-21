@@ -47,7 +47,7 @@ def read_measurement(path, metrics, metric_columns, time_column):
         if column not in header:
             raise ValueError(f"selected metric '{metric}' is absent from the CSV; "
                              "check hardware support and permissions")
-        if row[column] is None or row[column].strip() in ("", "NOT_SUPPORTED"):
+        if row[column] is None or row[column].strip() in ("", "ERROR"):
             raise ValueError(f"selected metric '{metric}' could not be read")
     try:
         elapsed = float(row[time_column])
@@ -75,10 +75,10 @@ def collect_records(executable, output, metrics, command, metric_columns, runs, 
                 if output.exists():
                     output.unlink()
                 total_ms, waited = run_timed(
-                    [str(executable), "--aggregate", "-command", command,
-                     "-language", "Shell", "-program", "overhead", "-output", str(output),
+                    [str(executable), "-command", command,
+                     "-program", "overhead", "-output", str(output),
                      "-n_times", "1", "-sleep-secs", "0",
-                     "-time_out_limit", "0", *selection_arguments([*selected, time_aspect], files, variance)])
+                     "-timeout-hours", "0", *selection_arguments([*selected, time_aspect], files, variance)])
                 workload_ms, header = read_measurement(output, selected, metric_columns,
                                                        metric_columns[time_aspect])
                 if count in headers and headers[count] != header:
@@ -121,12 +121,13 @@ def report_summary(records, metric_count):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True,
-                        help="TOML configuration declaring aspects")
+    parser.add_argument("--config", type=Path, nargs="+", required=True,
+                        help="TOML aspect files declaring aggregate aspects")
     parser.add_argument("--command", required=True, help="Workload command")
     parser.add_argument("--metrics", nargs="+", required=True,
                         help="Ordered metric names; each successive run adds one")
-    parser.add_argument("--time-aspect", required=True, help="Declared millisecond duration aspect")
+    parser.add_argument("--time-aspect", required=True,
+                        help="Declared millisecond duration metric")
     parser.add_argument("--runs", type=positive_int, default=10,
                         help="Randomized rounds (default: 10)")
     parser.add_argument("--seed", type=int, default=0,
@@ -141,24 +142,28 @@ def main():
         parser.error("--metrics must not contain duplicates")
 
     try:
-        config_path = args.config.resolve()
-        with config_path.open("rb") as source:
-            base = tomllib.load(source)
-        model = validate(base, config_path)
+        config_paths = [path.resolve() for path in args.config]
+        configs = []
+        for config_path in config_paths:
+            with config_path.open("rb") as source:
+                configs.append((tomllib.load(source), config_path))
+        model = validate(configs)
+        if model["aspects"] and model["mode"] != "aggregate":
+            raise ValueError("the configuration must declare mode = \"aggregate\"")
         if not args.command.strip():
             raise ValueError("--command must not be empty")
         if args.variance is not None and not 0 <= args.variance <= 1000:
             raise ValueError("--variance must be between 0 and 1000")
         if args.time_aspect in args.metrics:
             raise ValueError("--time-aspect is measured separately and must not also appear in --metrics")
-        aspects, files = aspect_arguments(model, [*args.metrics, args.time_aspect], args.calib_file,
-                                         args.variance, args.temperature_control)
-        duration = aspects[args.time_aspect]["metrics"][0]
+        declared, files = aspect_arguments(model, [*args.metrics, args.time_aspect], args.calib_file,
+                                          args.variance, args.temperature_control)
+        _, duration = declared[args.time_aspect]
         if duration["kind"] != "duration" or duration["unit"] != "ms":
             raise ValueError("--time-aspect must be a duration measured in milliseconds")
         metric_columns = {
-            device["name"]:
-                device["name"] +
+            metric["name"]:
+                metric["name"] +
                 (f'_{metric["unit"]}' if metric["unit"] else "")
             for device in model["aspects"] for metric in device["metrics"]
         }
@@ -171,7 +176,7 @@ def main():
         print(f"Rounds: {args.runs}; seed: {args.seed}", file=sys.stderr)
         with tempfile.TemporaryDirectory(prefix="greenmeasurer-aggregate-overhead-") as directory:
             root = Path(directory)
-            executable, _ = weave(config_path, root / "build", 1000000)
+            executable, _ = weave(config_paths, root / "build", 1000000)
             records = collect_records(executable, root / "result.csv", args.metrics,
                                       args.command, metric_columns, args.runs, args.seed,
                                       files, args.variance, args.time_aspect)

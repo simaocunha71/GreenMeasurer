@@ -9,7 +9,9 @@ void nvidia_end(void);
 
 double nvidia_get_energy(void);       /* cumulative joules */
 double nvidia_get_power(void);        /* watts */
-double nvidia_get_temperature(void);  /* Celsius */
+double nvidia_get_temperature(void);
+/* Stabilizes for the requested seconds and returns the baseline temperature. */
+double nvidia_calibrate_temperature(unsigned sleep_seconds);  /* Celsius */
 double nvidia_get_utilization(void);  /* GPU utilization, percent */
 double nvidia_get_vram(void);         /* GPU memory (MiB) used by the workload process tree root */
 

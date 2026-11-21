@@ -1,0 +1,42 @@
+[measurement]
+aspect = "NvidiaGPU"
+mode = "over-time"
+setup = "int nvidia_begin()"
+teardown = "void nvidia_end()"
+
+[device]
+lib = "../../src/devices/libgm_nvidia_gpu.a"
+header = "../../src/devices/linux/gpu/nvidia/nvidia_gpu.h"
+link = ["-lnvidia-ml"]
+
+[[metric]]
+name = "NvidiaGPU.Energy"
+measurement = "double nvidia_get_energy()"
+kind = "counter"
+unit = "J"
+
+[[metric]]
+name = "NvidiaGPU.Power"
+measurement = "double nvidia_get_power()"
+kind = "gauge"
+unit = "W"
+
+[[metric]]
+name = "NvidiaGPU.Temperature"
+measurement = "double nvidia_get_temperature()"
+kind = "gauge"
+unit = "C"
+thermal = true
+calibration = "double nvidia_calibrate_temperature(unsigned)"
+
+[[metric]]
+name = "NvidiaGPU.Utilization"
+measurement = "double nvidia_get_utilization()"
+kind = "gauge"
+unit = "%"
+
+[[metric]]
+name = "NvidiaGPU.VRAM"
+measurement = "double nvidia_get_vram()"
+kind = "gauge"
+unit = "MiB"

@@ -1,0 +1,11 @@
+[measurement]
+aspect = "IntelCPU.Powercap"
+teardown = "void intel_cpu_powercap_end()"
+powercap_set = "int intel_cpu_set_powercap(int)"
+powercap_restore = "int intel_cpu_destroy_powercap()"
+powercap_calibration = "intel_cpu_calibrate_powercap"
+
+[device]
+lib = "../../src/devices/libgm_intel_cpu_powercap.a"
+header = "../../src/devices/linux/cpu/intel/intel_cpu_powercap.h"
+link = ["-L/usr/local/lib", "-lraplcap-powercap", "-lpowercap"]

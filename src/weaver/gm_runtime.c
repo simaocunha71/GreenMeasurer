@@ -16,7 +16,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define GM_UNAVAILABLE "NOT_SUPPORTED"
+#define GM_UNAVAILABLE "ERROR"
 #define GM_MAX_DEVICES 64
 #define GM_MAX_METRICS_PER_DEVICE 64
 
@@ -266,7 +266,7 @@ static int read_temperature(size_t aspect, double *temperature) {
 
 static void disable_temperature(size_t aspect) {
     fprintf(stderr, "[WARNING] Temperature aspect '%s' is unavailable; thermal control for it "
-            "and pauses between repetitions are disabled.\n", ctx_devices[aspect].name);
+            "is disabled.\n", ctx_devices[aspect].name);
     thermal_disabled[aspect] = 1;
     temperature_unavailable = 1;
 }
@@ -301,17 +301,13 @@ static int same_calibration_file(const char *a, const char *b) {
             first.st_dev == second.st_dev && first.st_ino == second.st_ino);
 }
 
-/* Stores the current reading in the selected aspect's calibration file. */
+/* Asks the device library to stabilize and read the sensor; stores the result in the
+   selected aspect's calibration file. */
 static int calibrate_temperature(size_t aspect, const char *path, unsigned sleep_seconds) {
     printf("[INFO] Sleeping %u seconds to stabilize and calibrate %s...\n",
            sleep_seconds, ctx_devices[aspect].name);
-    if (sleep_seconds && sleep(sleep_seconds) != 0) {
-        fprintf(stderr, "[ERROR] Temperature calibration interrupted during stabilization.\n");
-        return -1;
-    }
-
-    double mean;
-    if (read_temperature(aspect, &mean) != 0) return 1;
+    double mean = ctx_devices[aspect].thermal_calibrate(sleep_seconds);
+    if (!isfinite(mean) || mean <= 0.0) return 1;
     FILE *snapshot = fopen(path, "w");
     if (!snapshot) {
         perror("[ERROR] Failed to open calibration file");
@@ -412,14 +408,14 @@ static void write_value(FILE *fp, const GmMetric *metric, double value) {
 }
 
 static void write_header(FILE *fp, const char *time_column, const GmAspect *aspects, size_t count) {
-    fputs("Language,Program,Powercap", fp);
+    fputs("Program,Powercap", fp);
     if (time_column) fprintf(fp, ",%s", time_column);
     for (size_t d = 0; d < count; d++) {
         if (!device_active[d]) continue;
         for (size_t m = 0; m < aspects[d].metric_count; m++) {
             if (!selected_mask[d][m]) continue;
             const GmMetric *metric = &aspects[d].metrics[m];
-            fprintf(fp, ",%s", aspects[d].name);
+            fprintf(fp, ",%s", metric->name);
             if (metric->unit && *metric->unit) fprintf(fp, "_%s", metric->unit);
         }
     }
@@ -469,24 +465,32 @@ static FILE *open_output(const char *path, const char *time_column,
 
 /* Every aspect samples on its own thread, so rows are aligned on a common time grid:
    an aspect contributes its latest sample whose time is within half an interval of the
-   row. The final row, at the workload exit time, takes the last sample of each aspect. */
-static int dump_over_time(const char *path, const char *language, const char *program,
+   row. The final row, at the workload exit time, takes the last sample of each aspect.
+   Counters report the consumption of each interval: the reading taken at that instant
+   minus the reading of the previous row, starting from the execution's first sample.
+   Summing a run's rows therefore yields aggregate mode's end - start for that run.
+   Gauges and durations report the raw sample. */
+static int dump_over_time(const char *path, const char *program,
                           int powercap, const GmAspect *aspects, size_t count,
                           unsigned interval_ms, double workload_ms) {
     FILE *fp = open_output(path, "Timestamp_ms", aspects, count);
     if (!fp) return -1;
     size_t next[GM_MAX_DEVICES] = {0};
+    static double previous_counter[GM_MAX_DEVICES][GM_MAX_METRICS_PER_DEVICE];
     double total = workload_ms;
     for (size_t d = 0; d < count; d++) {
         size_t n = device_active[d] && !device_unavailable[d] ? aspects[d].count() : 0;
         if (n && aspects[d].timestamp(n - 1) > total) total = aspects[d].timestamp(n - 1);
+        for (size_t m = 0; n && m < aspects[d].metric_count; m++)
+            if (selected_mask[d][m] && aspects[d].metrics[m].kind == GM_KIND_COUNTER)
+                previous_counter[d][m] = aspects[d].metrics[m].sample(0);
     }
     double step = (double)interval_ms;
     for (size_t k = 1;; k++) {
         double t = (double)k * step;
         int final_row = t >= total;
         if (final_row) t = total;
-        fprintf(fp, "%s,%s,%d,%.6f", language, program, powercap, t);
+        fprintf(fp, "%s,%d,%.6f", program, powercap, t);
         for (size_t d = 0; d < count; d++) {
             if (!device_active[d]) continue;
             size_t n = device_unavailable[d] ? 0 : aspects[d].count();
@@ -495,8 +499,17 @@ static int dump_over_time(const char *path, const char *language, const char *pr
             for (size_t m = 0; m < aspects[d].metric_count; m++) {
                 if (!selected_mask[d][m]) continue;
                 fputc(',', fp);
-                if (next[d] == 0) fputs(GM_UNAVAILABLE, fp);
-                else write_value(fp, &aspects[d].metrics[m], aspects[d].metrics[m].sample(next[d] - 1));
+                if (next[d] == 0) {
+                    fputs(GM_UNAVAILABLE, fp);
+                    continue;
+                }
+                double value = aspects[d].metrics[m].sample(next[d] - 1);
+                if (aspects[d].metrics[m].kind == GM_KIND_COUNTER) {
+                    double start = previous_counter[d][m];
+                    previous_counter[d][m] = value;
+                    value = start < 0.0 || value < 0.0 || value < start ? -1.0 : value - start;
+                }
+                write_value(fp, &aspects[d].metrics[m], value);
             }
         }
         fputc('\n', fp);
@@ -534,7 +547,7 @@ static int run_over_time_once(const char *command, const char *output, int power
         fprintf(stderr, "[ERROR] The workload failed (status %d); no CSV was written.\n", status);
         return 1;
     }
-    result = dump_over_time(output, ctx_config->language, ctx_config->program, powercap,
+    result = dump_over_time(output, ctx_config->program, powercap,
                             ctx_devices, ctx_count, ctx_config->interval_ms, workload_ms) == 0 ? 0 : 1;
     return result;
 }
@@ -548,7 +561,7 @@ static double summarize(const GmMetric *metric, double start_value, double end_v
 }
 
 /* Runs the workload once and appends one row to fp. */
-static int measure_aggregate(const char *command, FILE *fp, const char *language,
+static int measure_aggregate(const char *command, FILE *fp,
                             const char *program, int powercap, unsigned timeout_s) {
     static double start_values[GM_MAX_DEVICES][GM_MAX_METRICS_PER_DEVICE];
     static double end_values[GM_MAX_DEVICES][GM_MAX_METRICS_PER_DEVICE];
@@ -575,7 +588,7 @@ static int measure_aggregate(const char *command, FILE *fp, const char *language
         fprintf(stderr, "[ERROR] The workload failed (status %d).\n", status);
         return 1;
     }
-    fprintf(fp, "%s,%s,%d", language, program, powercap);
+    fprintf(fp, "%s,%d", program, powercap);
     for (size_t d = 0; d < ctx_count; d++) {
         for (size_t m = 0; device_active[d] && m < ctx_devices[d].metric_count; m++) {
             if (!selected_mask[d][m]) continue;
@@ -591,7 +604,7 @@ static int measure_aggregate(const char *command, FILE *fp, const char *language
 
 /* Called by the aspect libraries' powercap calibration: measures the workload ntimes in
    aggregate mode at the given powercap and appends the rows to measurements_file. */
-int runTesting(int ntimes, int core, const char *command, const char *language,
+int runTesting(int ntimes, int core, const char *command,
                const char *program, const char *measurements_file, int powercap,
                int time_out_limit, float temp_threshold, int variance, int memory) {
     (void)core;
@@ -615,10 +628,8 @@ int runTesting(int ntimes, int core, const char *command, const char *language,
     int result = 0;
     for (int i = 0; i < ntimes && result == 0; i++) {
         if (wait_for_temperature(variance < 0 ? 0 : (unsigned)variance) != 0 ||
-            measure_aggregate(command, fp, language, program, powercap, timeout_s) != 0)
+            measure_aggregate(command, fp, program, powercap, timeout_s) != 0)
             result = -1;
-        if (result == 0 && i + 1 < ntimes && ctx_config->sleep_seconds && !temperature_unavailable)
-            sleep(ctx_config->sleep_seconds);
     }
     if (fclose(fp) != 0) result = -1;
     return result;
@@ -633,9 +644,6 @@ static int run_over_time(const char *command, const char *output) {
         for (unsigned run = 0; run < ctx_config->repetitions && result == 0; run++) {
             if (wait_for_temperature(ctx_config->variance) != 0) result = 1;
             if (result == 0) result = run_over_time_once(command, output, powercap);
-            if (result == 0 && run + 1 < ctx_config->repetitions && ctx_config->sleep_seconds &&
-                !temperature_unavailable)
-                sleep(ctx_config->sleep_seconds);
         }
         if (release_powercap() != 0) result = 1;
         if (result == 0 && c + 1 < ctx_config->powercap_count && !temperature_unavailable) sleep(1);
@@ -655,12 +663,9 @@ static int run_aggregate(const char *command, const char *output) {
         }
         for (unsigned run = 0; run < ctx_config->repetitions && result == 0; run++) {
             if (wait_for_temperature(ctx_config->variance) != 0 ||
-                measure_aggregate(command, fp, ctx_config->language, ctx_config->program,
+                measure_aggregate(command, fp, ctx_config->program,
                                  powercap, ctx_timeout_s) != 0)
                 result = 1;
-            if (result == 0 && run + 1 < ctx_config->repetitions && ctx_config->sleep_seconds &&
-                !temperature_unavailable)
-                sleep(ctx_config->sleep_seconds);
         }
         if (release_powercap() != 0) result = 1;
     }
@@ -671,7 +676,7 @@ static int run_aggregate(const char *command, const char *output) {
 /* Summarizes a sweep when exactly one selected millisecond duration is available. */
 static void run_powercap_processor(const char *csv) {
 #ifdef GM_PROCESSOR
-    const GmAspect *duration = NULL;
+    const GmMetric *duration = NULL;
     for (size_t d = 0; d < ctx_count; d++) {
         if (!device_active[d] || device_unavailable[d]) continue;
         for (size_t m = 0; m < ctx_devices[d].metric_count; m++) {
@@ -682,7 +687,7 @@ static void run_powercap_processor(const char *csv) {
                 printf("[INFO] Powercap summary skipped: select one duration in milliseconds.\n");
                 return;
             }
-            duration = &ctx_devices[d];
+            duration = metric;
         }
     }
     char header[8192] = "";
@@ -701,15 +706,25 @@ static void run_powercap_processor(const char *csv) {
         fprintf(stderr, "[WARNING] Unable to allocate the duration column name.\n");
         return;
     }
+    size_t csv_length = strlen(csv);
+    if (csv_length > 4 && !strcmp(csv + csv_length - 4, ".csv")) csv_length -= 4;
+    char *optimal_file = NULL;
+    if (asprintf(&optimal_file, "%.*s-optimal-powercap.txt", (int)csv_length, csv) < 0) {
+        fprintf(stderr, "[WARNING] Unable to allocate the optimal powercap file name.\n");
+        free(time_column);
+        return;
+    }
     printf("[INFO] Processing calibration CSV via: python3 %s\n", GM_PROCESSOR);
     pid_t child = fork();
     if (child == 0) {
-        execlp("python3", "python3", GM_PROCESSOR, csv, "--time-column", time_column, (char *)NULL);
+        execlp("python3", "python3", GM_PROCESSOR, csv, "--time-column", time_column,
+               "--optimal-file", optimal_file, (char *)NULL);
         _exit(127);
     }
     if (child < 0) {
         perror("[WARNING] Unable to start calibration post-processing");
         free(time_column);
+        free(optimal_file);
         return;
     }
     int status;
@@ -718,6 +733,7 @@ static void run_powercap_processor(const char *csv) {
     if (waited < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
         fprintf(stderr, "[WARNING] Calibration post-processing script exited with error.\n");
     free(time_column);
+    free(optimal_file);
 #else
     printf("[INFO] Powercap sweep saved to %s.\n", csv);
 #endif
@@ -730,7 +746,7 @@ static int run_powercap_calibration(const char *command, const char *csv, int mi
         return 1;
     }
     int result = ctx_devices[calibration_dev].powercap_calibrate(
-        (int)ctx_config->repetitions, 0, command, ctx_config->language, ctx_config->program, csv,
+        (int)ctx_config->repetitions, 0, command, ctx_config->program, csv,
         NULL, min_powercap, max_powercap, (int)timeout_s, (float)baseline,
         (int)ctx_config->variance, 0);
     if (result != 0) {
@@ -743,21 +759,22 @@ static int run_powercap_calibration(const char *command, const char *csv, int mi
 
 /* ---------------------------------------------------------------- arguments */
 
-static void show_help(const char *bin, const GmFlag *flags, size_t flag_count) {
-    printf("Usage: %s -command <cmd>\n"
-           "       %s --aggregate|--over-time -command <cmd> -language <lang> -program <name>\n"
+static void show_help(const char *bin, const char *mode, const GmFlag *flags, size_t flag_count) {
+    printf("This executable was woven for %s measurements.\n"
+           "Usage: %s -command <cmd> [-n_times <N>]\n"
+           "       %s -command <cmd> -program <name>\n"
            "          -output <csv> -n_times <N> -sleep-secs <s> [-powercap <W[,W...]>]\n"
-           "          -time_out_limit <hours> (--no-metrics|metric flags) [powercap aspect flag] [-interval-ms <ms>]\n"
-           "          [-temperature-control <aspect> -calib-file <aspect>=<path> ... -variance <C>]\n"
-           "       %s --temperature-calibration -sleep-secs <s> <temperature aspect flags>\n"
-           "          -calib-file <aspect>=<path> ...\n"
+           "          -timeout-hours <hours> (--no-metrics|metric flags) [powercap aspect flag] [-interval-ms <ms>]\n"
+           "          [-temperature-control <metric> -calib-file <metric>=<path> ... -variance <C>]\n"
+           "       %s --temperature-calibration -sleep-secs <s> <temperature metric flags>\n"
+           "          -calib-file <metric>=<path> ...\n"
            "       %s --powercap-calibration -range <min>-<max> -command <cmd>\n"
-           "          -language <lang> -program <name> -output <csv> -n_times <N>\n"
-           "          -sleep-secs <s> -time_out_limit <hours> (--no-metrics|metric flags) <powercap aspect flag>\n"
-           "          [-compile_cmd <cmd>] [-temperature-control <aspect> -calib-file <aspect>=<path> ... -variance <C>]\n\n"
+           "          -program <name> -output <csv> -n_times <N>\n"
+           "          -sleep-secs <s> -timeout-hours <hours> (--no-metrics|metric flags) <powercap aspect flag>\n"
+           "          [-compile_cmd <cmd>] [-temperature-control <metric> -calib-file <metric>=<path> ... -variance <C>]\n\n"
            "-powercap is required when a powercap control aspect is selected.\n"
-           "Aspect flags (select explicitly):\n",
-           bin, bin, bin, bin);
+           "Metric flags (select explicitly):\n",
+           mode, bin, bin, bin, bin);
     for (size_t i = 0; i < flag_count; i++) printf("  %s\n", flags[i].flag);
 }
 
@@ -808,24 +825,31 @@ static int parse_range(const char *text, int *minimum, int *maximum) {
 
 typedef enum { ACTION_MEASURE, ACTION_TEMPERATURE, ACTION_POWERCAP } Action;
 
-static int run_plain_command(const char *command) {
-    int status = system(command);
-    if (status == -1) {
-        perror("[ERROR] Failed to execute command");
-        return 1;
+static int run_plain_command(const char *command, unsigned repetitions) {
+    for (unsigned run = 0; run < repetitions; run++) {
+        int status = system(command);
+        if (status == -1) {
+            perror("[ERROR] Failed to execute command");
+            return 1;
+        }
+        if (WIFEXITED(status)) {
+            int code = WEXITSTATUS(status);
+            if (code != 0) {
+                fprintf(stderr, "[ERROR] Command exited with status %d.\n", code);
+                return code;
+            }
+        } else {
+            fprintf(stderr, "[ERROR] Command terminated abnormally.\n");
+            return 1;
+        }
     }
-    if (WIFEXITED(status)) {
-        int code = WEXITSTATUS(status);
-        if (code != 0) fprintf(stderr, "[ERROR] Command exited with status %d.\n", code);
-        return code;
-    }
-    fprintf(stderr, "[ERROR] Command terminated abnormally.\n");
-    return 1;
+    return 0;
 }
 
 int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
-            const GmFlag *flags, size_t flag_count) {
+            const GmFlag *flags, size_t flag_count, const char *mode) {
     GmConfig config = {0};
+    config.mode = mode;
     const char *command = NULL, *output = NULL, *compile_command = NULL;
     const char *calibration_files[GM_MAX_DEVICES] = {0};
     int metric_flags_given = 0, no_metrics = 0, min_powercap = -1, max_powercap = -1;
@@ -852,17 +876,16 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
         const char *arg = argv[i];
         int has_value = i + 1 < argc;
         if (!strcmp(arg, "--help") || !strcmp(arg, "-h")) {
-            show_help(argv[0], flags, flag_count);
+            show_help(argv[0], mode, flags, flag_count);
             return 0;
-        } else if (!strcmp(arg, "--over-time") || !strcmp(arg, "--aggregate") ||
-                   !strcmp(arg, "--temperature-calibration") || !strcmp(arg, "--powercap-calibration")) {
+        } else if (!strcmp(arg, "--temperature-calibration") ||
+                   !strcmp(arg, "--powercap-calibration")) {
             if (mode_given++) {
-                fprintf(stderr, "[ERROR] Select exactly one mode.\n");
+                fprintf(stderr, "[ERROR] Select at most one calibration mode.\n");
                 return 1;
             }
             if (!strcmp(arg, "--temperature-calibration")) action = ACTION_TEMPERATURE;
-            else if (!strcmp(arg, "--powercap-calibration")) action = ACTION_POWERCAP;
-            else config.mode = arg + 2;
+            else action = ACTION_POWERCAP;
         } else if (!strcmp(arg, "--no-metrics")) {
             no_metrics = 1;
             metric_flags_given = 1;
@@ -870,16 +893,17 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
         else if ((!strcmp(arg, "-command") || !strcmp(arg, "-run_cmd")) && has_value)
             command = argv[++i];
         else if (!strcmp(arg, "-compile_cmd") && has_value) compile_command = argv[++i];
-        else if (!strcmp(arg, "-language") && has_value) config.language = argv[++i];
         else if (!strcmp(arg, "-program") && has_value) config.program = argv[++i];
         else if (!strcmp(arg, "-output") && has_value) {
             output = argv[++i];
         } else if (!strcmp(arg, "-temperature-control") && has_value) {
             const char *name = argv[++i];
             size_t d = 0;
-            while (d < device_count && strcmp(aspects[d].name, name)) d++;
-            if (d == device_count || !aspects[d].thermal || thermal_control[d]) {
-                fprintf(stderr, "[ERROR] -temperature-control requires a unique temperature aspect name.\n");
+            while (d < device_count &&
+                   !(aspects[d].thermal && aspects[d].thermal_metric >= 0 &&
+                     !strcmp(aspects[d].metrics[aspects[d].thermal_metric].name, name))) d++;
+            if (d == device_count || thermal_control[d]) {
+                fprintf(stderr, "[ERROR] -temperature-control requires a unique temperature metric name.\n");
                 return 1;
             }
             thermal_control[d] = 1;
@@ -887,10 +911,12 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
             const char *value = argv[++i], *equal = strchr(value, '=');
             size_t d = 0;
             while (equal && d < device_count &&
-                   (strlen(aspects[d].name) != (size_t)(equal - value) ||
-                    strncmp(aspects[d].name, value, (size_t)(equal - value)))) d++;
-            if (!equal || !equal[1] || d == device_count || !aspects[d].thermal || calibration_files[d]) {
-                fprintf(stderr, "[ERROR] -calib-file requires a unique temperature aspect and path: <aspect>=<path>.\n");
+                   !(aspects[d].thermal && aspects[d].thermal_metric >= 0 &&
+                     strlen(aspects[d].metrics[aspects[d].thermal_metric].name) == (size_t)(equal - value) &&
+                     !strncmp(aspects[d].metrics[aspects[d].thermal_metric].name, value,
+                              (size_t)(equal - value)))) d++;
+            if (!equal || !equal[1] || d == device_count || calibration_files[d]) {
+                fprintf(stderr, "[ERROR] -calib-file requires a unique temperature metric and path: <metric>=<path>.\n");
                 return 1;
             }
             calibration_files[d] = equal + 1;
@@ -926,9 +952,9 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
                 return 1;
             }
             variance_given = 1;
-        } else if (!strcmp(arg, "-time_out_limit") && has_value) {
+        } else if ((!strcmp(arg, "-timeout-hours") || !strcmp(arg, "-time_out_limit")) && has_value) {
             if (parse_unsigned(argv[++i], 0, 1000u, &timeout_hours) != 0) {
-                fprintf(stderr, "[ERROR] -time_out_limit must be between 0 and 1000 hours.\n");
+                fprintf(stderr, "[ERROR] -timeout-hours must be between 0 and 1000 hours.\n");
                 return 1;
             }
             timeout_given = 1;
@@ -963,10 +989,10 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
             }
         }
     }
-    if (argc == 3 && command && *command && !mode_given)
-        return run_plain_command(command);
-    if (!mode_given || !metric_flags_given) {
-        fprintf(stderr, "[ERROR] Select a mode and at least one metric (or --no-metrics).\n");
+    if ((argc == 3 || (argc == 5 && repetitions_given)) && command && *command && !mode_given)
+        return run_plain_command(command, repetitions_given ? config.repetitions : 1);
+    if (!metric_flags_given) {
+        fprintf(stderr, "[ERROR] Select at least one metric (or --no-metrics).\n");
         return 1;
     }
 
@@ -984,9 +1010,11 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
         }
         if ((action == ACTION_TEMPERATURE && device_active[d] && aspects[d].thermal) ||
             (action != ACTION_TEMPERATURE && thermal_control[d])) {
+            const char *thermal_name = aspects[d].thermal_metric >= 0 ?
+                aspects[d].metrics[aspects[d].thermal_metric].name : aspects[d].name;
             if (!calibration_files[d]) {
-                fprintf(stderr, "[ERROR] Temperature aspect '%s' requires -calib-file %s=<path>.\n",
-                        aspects[d].name, aspects[d].name);
+                fprintf(stderr, "[ERROR] Temperature metric '%s' requires -calib-file %s=<path>.\n",
+                        thermal_name, thermal_name);
                 return 1;
             }
             if (output && same_calibration_file(calibration_files[d], output)) {
@@ -1029,7 +1057,7 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
         }
     }
     if (!sleep_given || (action != ACTION_TEMPERATURE &&
-        (!repetitions_given || !timeout_given || !config.language || !*config.language ||
+        (!repetitions_given || !timeout_given ||
          !config.program || !*config.program || !output || !*output))) {
         fprintf(stderr, "[ERROR] Missing required execution options; see --help.\n");
         return 1;
@@ -1060,7 +1088,7 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
     if ((compile_command && !*compile_command) ||
         (action != ACTION_POWERCAP && (range_given || compile_command)) ||
         (action == ACTION_POWERCAP && (powercap_given || interval_given)) ||
-        (action == ACTION_TEMPERATURE && (command || output || config.language || config.program ||
+        (action == ACTION_TEMPERATURE && (command || output || config.program ||
           repetitions_given || timeout_given || powercap_given || interval_given || variance_given || controlled_count)) ||
         (action != ACTION_TEMPERATURE && !controlled_count && variance_given) ||
         (action == ACTION_MEASURE && !strcmp(config.mode, "aggregate") && interval_given)) {
@@ -1068,8 +1096,8 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
         return 1;
     }
     if (action != ACTION_TEMPERATURE &&
-        (strpbrk(config.language, ",\r\n\"") || strpbrk(config.program, ",\r\n\""))) {
-        fprintf(stderr, "[ERROR] Language and program cannot contain CSV delimiters or newlines.\n");
+        strpbrk(config.program, ",\r\n\"")) {
+        fprintf(stderr, "[ERROR] The program label cannot contain CSV delimiters or newlines.\n");
         return 1;
     }
     if (action != ACTION_TEMPERATURE && (!command || !*command)) {
@@ -1180,6 +1208,6 @@ int gm_main(int argc, char **argv, const GmAspect *aspects, size_t device_count,
     }
     sigprocmask(SIG_SETMASK, &old_mask, NULL);
     if (old_sigint != SIG_ERR) signal(SIGINT, old_sigint);
-    if (run_plain) return run_plain_command(command);
+    if (run_plain) return run_plain_command(command, 1);
     return result;
 }

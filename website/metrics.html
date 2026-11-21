@@ -20,15 +20,23 @@
     <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#declaration">Declaring metrics</a><a href="#cpu">Intel CPU</a><a href="#gpu">GPUs</a><a href="#system">System</a><a href="#output">Reading results</a></nav>
     <div class="doc-content">
       <section id="declaration"><span id="reading"></span><p class="eyebrow">01 / Declare</p><h2>Readers, not a fixed catalogue</h2>
-        <p>Each metric <code>[[aspect]]</code> represents one metric. Its name, numeric no-argument reader, kind and unit determine its flag and CSV column. A separate powercap control aspect has no reader or metric column. A <code>counter</code> is cumulative; a <code>gauge</code> is instantaneous.</p>
-        <pre><code>[[aspect]]
-name = "IntelCPU.Package"
-header = "../../src/devices/linux/cpu/intel/intel_cpu.h"
+        <p>Each <code>[[metric]]</code> entry of an aspect represents one metric. Its name, numeric no-argument <code>measurement</code> function, kind and unit determine its flag and CSV column. A separate powercap control aspect has no metrics or columns. A <code>counter</code> is cumulative; a <code>gauge</code> is instantaneous.</p>
+        <pre><code>[measurement]
+aspect = "IntelCPU"
+mode = "aggregate"
+setup = "int intel_cpu_begin()"
+teardown = "void intel_cpu_end()"
+
+[device]
 lib = "../../src/devices/libgm_intel_cpu.a"
-read = "double intel_cpu_get_package()"
+header = "../../src/devices/linux/cpu/intel/intel_cpu.h"
+
+[[metric]]
+name = "IntelCPU.Package"
+measurement = "double intel_cpu_get_package()"
 kind = "counter"
 unit = "J"</code></pre>
-        <p>Provide the setup and link flags needed by the library, then select <code>--IntelCPU.Package</code> at runtime. Temperature aspects must set <code>thermal = true</code>. See the <a href="reference.html#definitions">declaration reference</a>.</p>
+        <p>Provide the setup and link flags needed by the library, then select <code>--IntelCPU.Package</code> at runtime. Temperature metrics must set <code>thermal = true</code>. See the <a href="reference.html#definitions">declaration reference</a>.</p>
       </section>
       <section id="cpu"><p class="eyebrow">02 / Optional library</p><h2>Intel CPU</h2>
         <p>Intel CPU readers expose cumulative energy for package, core and DRAM domains, as well as mean current core temperature. The temperature reader and powercap control use separate libraries; only temperature requires <code>libsensors</code>. Energy domains can overlap and are not measurements of a single process.</p>
@@ -63,7 +71,7 @@ unit = "J"</code></pre>
       </section>
       <section id="output"><p class="eyebrow">05 / Interpret</p><h2>Read the CSV</h2>
         <p>Each row starts with <code>Language</code>, <code>Program</code> and <code>Powercap</code>, followed by selected metrics. <code>Timestamp_ms</code> is always present in over-time as the sample axis. Execution duration is a separate, optional metric such as <code>Time.WallClock_ms</code>.</p>
-        <p>Aggregate counter values are end minus start, while over-time counter values are raw readings. Counters may wrap or reset. A negative reading means unavailable and is written as <code>NOT_SUPPORTED</code>; device initialization and available columns can vary by machine. Appending to a CSV with a different selected schema or mode is rejected.</p>
+        <p>Aggregate counter values are end minus start, while over-time counter values are raw readings. Counters may wrap or reset. A negative reading means unavailable and is written as <code>ERROR</code>; device initialization and available columns can vary by machine. Appending to a CSV with a different selected schema or mode is rejected.</p>
         <div class="page-links"><a href="guide.html#modes">Measurement modes →</a><a href="reference.html">Weaver API →</a></div>
       </section>
     </div>

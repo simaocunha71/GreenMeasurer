@@ -1,0 +1,18 @@
+[measurement]
+aspect = "IntelCPU.Temperature"
+mode = "over-time"
+setup = "int intel_cpu_temperature_begin()"
+teardown = "void intel_cpu_temperature_end()"
+
+[device]
+lib = "../../src/devices/libgm_intel_cpu_temperature.a"
+header = "../../src/devices/linux/cpu/intel/intel_cpu_temperature.h"
+link = ["-lsensors"]
+
+[[metric]]
+name = "IntelCPU.Temperature"
+measurement = "double intel_cpu_get_temperature()"
+kind = "gauge"
+unit = "C"
+thermal = true
+calibration = "double intel_cpu_calibrate_temperature(unsigned)"

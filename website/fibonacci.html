@@ -24,14 +24,14 @@
         <aside class="notice warning"><strong>Plan the run</strong><p>The sequence changes CPU limits and can take a long time. It overwrites <code>cores_temperatures.txt</code>, appends measurement CSVs and may replace the powercap output. The saved baseline (<code>-1</code>) is not necessarily uncapped.</p></aside>
       </section>
       <section id="config"><p class="eyebrow">02 / Configure</p><h2>One aspect configuration</h2>
-        <p><a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/configurations-generated/config.toml">config.toml</a> declares the metric aspects and a separate powercap control aspect. It does not contain mode, workload or calibration paths.</p>
+        <p>The aspect files in <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/examples">examples/aggregate and examples/over-time</a> declare the metric aspects (with their mode) and a separate powercap control aspect. They do not contain workload or calibration paths.</p>
         <p id="program">The sequence script explicitly calibrates CPU temperature, then selects the Python Fibonacci 42 workload, CPU and GPU aspects, repetitions, pauses, power limits and output paths. Review the script and its hardware requirements before execution.</p>
       </section>
       <section id="run"><p class="eyebrow">03 / Execute</p><h2>Run the sequence</h2>
         <p>From the repository root, with the permissions required by the configured devices:</p>
-        <pre><code>bash configurations-generated/run.sh</code></pre>
+        <pre><code>bash configurations-paper/run.sh</code></pre>
         <p>The script builds the optional device libraries and generates one executable for all modes. It runs CPU temperature calibration, powercap calibration, aggregate and over-time in that order. It stops on failure. By default it creates <code>generated-fibonacci-sequence</code>; pass a different, non-existent directory as the optional argument:</p>
-        <pre><code>bash configurations-generated/run.sh my-new-sequence</code></pre>
+        <pre><code>bash configurations-paper/run.sh my-new-sequence</code></pre>
         <p>The script runs from the repository root, so workload and output paths are relative to that directory. It does not automatically obtain elevated privileges.</p>
       </section>
       <section id="results"><p class="eyebrow">04 / Inspect</p><h2>Read the output</h2>

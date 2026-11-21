@@ -1,0 +1,9 @@
+[measurement]
+aspect = "Cpu.Powercap"
+powercap_set = "int toy_cap_set(int)"
+powercap_restore = "int toy_cap_restore()"
+powercap_calibration = "toy_calibrate"
+
+[device]
+lib = "libtoy.a"
+header = "toy.h"

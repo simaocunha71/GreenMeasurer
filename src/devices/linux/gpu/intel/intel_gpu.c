@@ -1,4 +1,6 @@
 #include "intel_gpu.h"
+
+#include <unistd.h>
 #include "msr.h"
 #include <dirent.h>
 #include <limits.h>
@@ -102,3 +104,9 @@ int intel_gpu_begin(void) {
 void intel_gpu_end(void) { rapl_msr_close(&msr); }
 
 double intel_gpu_get_energy(void) { return rapl_msr_energy(&msr, &pp1); }
+
+/* Stabilizes for the requested number of seconds and reads the baseline temperature. */
+double intel_gpu_calibrate_temperature(unsigned sleep_seconds) {
+    if (sleep_seconds) sleep(sleep_seconds);
+    return intel_gpu_get_temperature();
+}

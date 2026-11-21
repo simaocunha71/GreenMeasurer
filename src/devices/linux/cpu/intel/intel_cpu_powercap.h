@@ -8,7 +8,7 @@ int intel_cpu_set_powercap(int watts);
 int intel_cpu_destroy_powercap(void);
 void intel_cpu_powercap_end(void);
 
-int intel_cpu_calibrate_powercap(int ntimes, int core, const char *command, const char *language,
+int intel_cpu_calibrate_powercap(int ntimes, int core, const char *command,
                                  const char *program, const char *calib_csv_file,
                                  const char *process_script, int min_powercap, int max_powercap,
                                  int time_out_limit, float temp_threshold, int variance, int memory);

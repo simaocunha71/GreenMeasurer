@@ -13,6 +13,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WEAVER = ROOT / "scripts" / "weave.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "weaver"
+TOY_FIXTURES = ("toy-energy.toml", "toy-processes.toml")
+HOOKS_FIXTURES = ("toy-hooks-cpu.toml", "toy-hooks-powercap.toml")
+
+
+def mock_example_config(source_path, mock_source):
+    """Rewrite an examples aspect TOML to use the mock device library."""
+    lines = []
+    for line in source_path.read_text().splitlines():
+        if line.startswith("lib = "):
+            if "wall_clock_time.c" in line:
+                lines.append(f'lib = "{ROOT / "src/aspects/wall_clock_time.c"}"')
+            elif any(lib in line for lib in ("libgm_intel_cpu.a", "libgm_intel_cpu_powercap.a",
+                                             "libgm_intel_cpu_temperature.a")):
+                lines.append(f'lib = "{mock_source}"')
+            continue
+        if line.startswith("header = "):
+            path = line.split('"')[1]
+            line = f'header = "{(source_path.parent / path).resolve()}"'
+        if line.startswith("link = "):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
 
 
 class WeaverTest(unittest.TestCase):
@@ -20,21 +42,35 @@ class WeaverTest(unittest.TestCase):
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory()
         cls.directory = Path(cls.temporary.name)
-        for name in ("toy.c", "toy.h", "toy.toml", "toy_hooks.toml"):
+        for name in ("toy.c", "toy.h", *TOY_FIXTURES, *HOOKS_FIXTURES):
             shutil.copy(FIXTURES / name, cls.directory / name)
+        for name in (*TOY_FIXTURES, *HOOKS_FIXTURES):
+            aggregate = (FIXTURES / name).read_text().replace(
+                'mode = "over-time"', 'mode = "aggregate"')
+            (cls.directory / f"agg-{name}").write_text(aggregate)
         subprocess.run(["gcc", "-c", "toy.c", "-o", "toy.o"], cwd=cls.directory, check=True)
         subprocess.run(["ar", "rcs", "libtoy.a", "toy.o"], cwd=cls.directory, check=True)
-        cls.executable = cls.weave(cls.directory / "toy.toml", cls.directory / "build")
-        cls.hooks = cls.weave(cls.directory / "toy_hooks.toml", cls.directory / "hooks")
+        cls.executable = cls.weave(
+            [cls.directory / name for name in TOY_FIXTURES], cls.directory / "build")
+        cls.aggregate = cls.weave(
+            [cls.directory / f"agg-{name}" for name in TOY_FIXTURES],
+            cls.directory / "build-aggregate")
+        cls.hooks = cls.weave(
+            [cls.directory / name for name in HOOKS_FIXTURES], cls.directory / "hooks")
+        cls.hooks_aggregate = cls.weave(
+            [cls.directory / f"agg-{name}" for name in HOOKS_FIXTURES],
+            cls.directory / "hooks-aggregate")
 
     @classmethod
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
     @classmethod
-    def weave(cls, config, out_dir, *extra):
+    def weave(cls, configs, out_dir, *extra):
+        if isinstance(configs, (str, Path)):
+            configs = [configs]
         result = subprocess.run(
-            [sys.executable, str(WEAVER), str(config), "-o", str(out_dir), *extra],
+            [sys.executable, str(WEAVER), *map(str, configs), "-o", str(out_dir), *extra],
             text=True, capture_output=True, timeout=120)
         if result.returncode != 0:
             raise AssertionError(result.stderr)
@@ -46,20 +82,26 @@ class WeaverTest(unittest.TestCase):
         log = self.directory / "toy.log"
         log.unlink(missing_ok=True)
         env = {**os.environ, "TOY_LOG": str(log), **environment}
-        binary = executable or self.executable
         modes = ("--aggregate", "--over-time", "--temperature-calibration", "--powercap-calibration")
         mode = next((arg for arg in arguments if arg in modes), "--over-time")
+        # Measurement modes are woven into the executable; only calibration flags remain.
+        arguments = [arg for arg in arguments if arg not in ("--aggregate", "--over-time")]
+        binary = executable
+        if binary is None:
+            binary = self.aggregate if mode == "--aggregate" else self.executable
         chosen = [arg for arg in arguments if arg.startswith("--") and arg not in modes]
         supplied_chosen = bool(chosen)
+        hooks_binaries = (self.hooks, self.hooks_aggregate)
         if not chosen:
             chosen = (["--Cpu.Temperature"] if mode == "--temperature-calibration" else
-                      ["--Cpu.Package", "--Cpu.Temperature", "--Cpu.Powercap"] if binary == self.hooks else
+                      ["--Cpu.Package", "--Cpu.Temperature", "--Cpu.Powercap"] if binary in hooks_binaries else
                       ["--Energy.Package", "--Energy.Gauge", "--Processes.NumberProcesses"])
-        defaults = [] if any(arg in modes for arg in arguments) else [mode]
+        defaults = [arg for arg in [mode] if arg in ("--temperature-calibration", "--powercap-calibration")
+                    and arg not in arguments]
         defaults += ["-sleep-secs", "0"]
         if mode != "--temperature-calibration":
-            defaults += ["-command", "sleep 0.3", "-language", "Shell", "-program", "sleep",
-                         "-output", str(output), "-n_times", "1", "-time_out_limit", "0"]
+            defaults += ["-command", "sleep 0.3", "-program", "sleep",
+                         "-output", str(output), "-n_times", "1", "-timeout-hours", "0"]
             if mode != "--powercap-calibration":
                 defaults += ["-powercap", "-1"]
             if mode == "--over-time":
@@ -81,17 +123,18 @@ class WeaverTest(unittest.TestCase):
 
     def test_default_output_directory_uses_generated_prefix(self):
         result = subprocess.run(
-            [sys.executable, str(WEAVER), str(self.directory / "toy.toml")],
+            [sys.executable, str(WEAVER), str(self.directory / "toy-energy.toml"),
+             str(self.directory / "toy-processes.toml")],
             text=True, capture_output=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue((self.directory / "generated-toy" / "greenmeasurer").is_file())
+        self.assertTrue((self.directory / "generated-toy-energy" / "greenmeasurer").is_file())
 
     def test_without_aspects_runs_system_without_measurements(self):
         config = self.directory / "plain.toml"
         config.write_text("")
         executable = self.weave(config, self.directory / "plain")
         generated = (self.directory / "plain" / "GreenMeasurer.c").read_text()
-        self.assertIn("system(argv[2])", generated)
+        self.assertIn("system(command)", generated)
         compile_command = subprocess.run(
             [sys.executable, str(WEAVER), str(config), "--no-build",
              "-o", str(self.directory / "plain-source")],
@@ -104,6 +147,14 @@ class WeaverTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "executed")
         self.assertFalse((self.directory / "measurements.csv").exists())
+        result = subprocess.run([str(executable), "-command", "printf x", "-n_times", "3"],
+                                cwd=self.directory, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "xxx")
+        result = subprocess.run([str(executable), "-command", "true", "-n_times", "0"],
+                                cwd=self.directory, text=True, capture_output=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("A command is required", result.stderr)
         result = subprocess.run([str(executable)], cwd=self.directory,
                                 text=True, capture_output=True, timeout=30)
         self.assertNotEqual(result.returncode, 0)
@@ -117,12 +168,15 @@ class WeaverTest(unittest.TestCase):
         result, rows, events = self.run_engine("-command", "sleep 0.3")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(list(rows[0]), [
-            "Language", "Program", "Powercap", "Timestamp_ms", "Energy.Package_uJ",
+            "Program", "Powercap", "Timestamp_ms", "Energy.Package_uJ",
             "Energy.Gauge_C", "Processes.NumberProcesses"])
         self.assertGreater(len(rows), 10)
         self.assertEqual({row["Processes.NumberProcesses"] for row in rows}, {"3"})
+        # Counters report the consumption of each interval; the toy counter grows 10 per
+        # read, so every delta is a multiple of 10 and the deltas sum to the run's total.
         energy = [int(row["Energy.Package_uJ"]) for row in rows]
-        self.assertEqual(energy, sorted(energy))
+        self.assertTrue(all(value >= 0 and value % 10 == 0 for value in energy))
+        self.assertIn(10, energy)
         stamps = [float(row["Timestamp_ms"]) for row in rows]
         self.assertEqual(stamps, sorted(stamps))
         self.assertGreater(stamps[0], 0)
@@ -137,7 +191,7 @@ class WeaverTest(unittest.TestCase):
     def test_aggregate_reads_at_run_boundaries_without_threads(self):
         result, rows, _ = self.run_engine("--aggregate", "-n_times", "2", "-command", "sleep 0.2")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(list(rows[0])[3], "Energy.Package_uJ")
+        self.assertEqual(list(rows[0])[2], "Energy.Package_uJ")
         self.assertEqual(len(rows), 2)
         # The toy temperature advances on every read, so one final read per run.
         self.assertEqual([row["Energy.Gauge_C"] for row in rows], ["40.5", "41.5"])
@@ -165,7 +219,7 @@ class WeaverTest(unittest.TestCase):
     def test_metric_flags_select_what_is_measured(self):
         result, rows, events = self.run_engine("--Processes.NumberProcesses", "-command", "true")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(list(rows[0])[4:], ["Processes.NumberProcesses"])
+        self.assertEqual(list(rows[0])[3:], ["Processes.NumberProcesses"])
         self.assertEqual(events, [])
 
     def test_runs_without_metrics(self):
@@ -181,6 +235,12 @@ class WeaverTest(unittest.TestCase):
         self.assertIn("status 7", result.stderr)
         marker = self.directory / "plain-runs.txt"
         marker.unlink(missing_ok=True)
+        result = subprocess.run(
+            [str(self.executable), "-command", f"echo run >> {marker}", "-n_times", "2"],
+            text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(marker.read_text().splitlines(), ["run", "run"])
+        marker.unlink()
         result, rows, events = self.run_engine(
             "--aggregate", "--Energy.Package", "-n_times", "3",
             "-command", f"echo run >> {marker}", TOY_FAIL_SETUP="1")
@@ -201,14 +261,17 @@ class WeaverTest(unittest.TestCase):
 
     def test_powercap_setup_failure_omits_control_but_calibration_fails(self):
         config = self.directory / "failed-control.toml"
-        config.write_text((FIXTURES / "toy.toml").read_text() +
-                          '\n[[aspect]]\nname = "Cpu.Powercap"\nlib = "libtoy.a"\n'
-                          'header = "toy.h"\nsetup = "int toy_setup()"\n'
-                          'teardown = "void toy_teardown()"\n'
-                          'powercap_set = "int toy_cap_set(int)"\n'
-                          'powercap_restore = "int toy_cap_restore()"\n'
-                          'powercap_calibration = "toy_calibrate"\n')
-        executable = self.weave(config, self.directory / "failed-control")
+        config.write_text(
+            '[measurement]\naspect = "Cpu.Powercap"\nsetup = "int toy_setup()"\n'
+            'teardown = "void toy_teardown()"\n'
+            'powercap_set = "int toy_cap_set(int)"\n'
+            'powercap_restore = "int toy_cap_restore()"\n'
+            'powercap_calibration = "toy_calibrate"\n\n'
+            '[device]\nlib = "libtoy.a"\nheader = "toy.h"\n')
+        executable = self.weave(
+            [self.directory / "agg-toy-energy.toml",
+             self.directory / "agg-toy-processes.toml", config],
+            self.directory / "failed-control")
         result, rows, events = self.run_engine(
             "--aggregate", "--Processes.NumberProcesses", "--Cpu.Powercap", "-powercap", "5",
             "-command", "true", executable=executable, TOY_FAIL_SETUP="1")
@@ -231,8 +294,7 @@ class WeaverTest(unittest.TestCase):
                 result, rows, events = self.run_engine(
                     mode, "-command", "sleep 0.1", TOY_FAIL_SETUP="1")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("Setup of aspect 'Energy.Package' failed", result.stderr)
-                self.assertIn("Setup of aspect 'Energy.Gauge' failed", result.stderr)
+                self.assertIn("Setup of aspect 'Energy' failed", result.stderr)
                 self.assertTrue(rows)
                 self.assertTrue(all("Energy.Package_uJ" not in row and
                                     "Energy.Gauge_C" not in row and
@@ -246,8 +308,8 @@ class WeaverTest(unittest.TestCase):
                     mode, "-command", "sleep 0.1", TOY_FAIL_TEMPERATURE="1")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(rows)
-                self.assertTrue(all(row["Energy.Gauge_C"] == "NOT_SUPPORTED" and
-                                    row["Energy.Package_uJ"] != "NOT_SUPPORTED" and
+                self.assertTrue(all(row["Energy.Gauge_C"] == "ERROR" and
+                                    row["Energy.Package_uJ"] != "ERROR" and
                                     row["Processes.NumberProcesses"] == "3" for row in rows))
 
     def test_fibonacci_config_runs_all_modes_and_reports_unavailable_values(self):
@@ -256,25 +318,18 @@ class WeaverTest(unittest.TestCase):
         mock_source = FIXTURES / "fibonacci_devices.c"
         expected = ["IntelCPU.Package_J", "IntelCPU.Core_J", "IntelCPU.DRAM_J",
                     "IntelGPU.Energy_J", "NvidiaGPU.Energy_J", "NvidiaGPU.Temperature_C"]
-        source = (ROOT / "configurations-generated" / "config.toml").read_text()
-        lines = []
-        for line in source.splitlines():
-            if line.startswith("lib = "):
-                if "wall_clock_time.c" in line:
-                    lines.append(f'lib = "{ROOT / "src/aspects/wall_clock_time.c"}"')
-                elif any(lib in line for lib in ("libgm_intel_cpu.a", "libgm_intel_cpu_powercap.a",
-                                                 "libgm_intel_cpu_temperature.a")):
-                    lines.append(f'lib = "{mock_source}"')
-                continue
-            if line.startswith("header = "):
-                path = line.split('"')[1]
-                line = f'header = "{(ROOT / "configurations-generated" / path).resolve()}"'
-            if line.startswith("link = "):
-                continue
-            lines.append(line)
-        config = self.directory / "fibonacci.toml"
-        config.write_text("\n".join(lines) + "\n")
-        executable = self.weave(config, self.directory / "fibonacci")
+        ordered = ("intel-cpu.toml", "intel-gpu.toml", "nvidia-gpu.toml",
+                   "intel-cpu-powercap.toml", "intel-cpu-temperature.toml", "time.toml")
+        executables = {}
+        for folder in ("aggregate", "over-time"):
+            configs = []
+            for filename in ordered:
+                source_path = ROOT / "examples" / folder / filename
+                config = self.directory / f"fibonacci-{folder}-{filename}"
+                config.write_text(mock_example_config(source_path, mock_source) + "\n")
+                configs.append(config)
+            executables[folder] = self.weave(configs, self.directory / f"fibonacci-{folder}")
+        executable = executables["aggregate"]
         output = self.directory / "fibonacci-result.csv"
         for aspect, temperature in (("IntelCPU.Temperature", "40.0"),
                                     ("NvidiaGPU.Temperature", "55.0")):
@@ -294,12 +349,12 @@ class WeaverTest(unittest.TestCase):
             for extra_env, unavailable in cases:
                 with self.subTest(mode=mode, unavailable=unavailable):
                     output.unlink(missing_ok=True)
+                    executable = executables["over-time" if mode == "overtime" else "aggregate"]
                     arguments = [
-                        "--aggregate" if mode == "aggregate" else
-                        "--over-time" if mode == "overtime" else "--powercap-calibration",
-                        "-command", "true", "-language", "Shell", "-program", "true",
+                        *(["--powercap-calibration"] if mode == "powercap-calibration" else []),
+                        "-command", "true", "-program", "true",
                         "-output", str(output), "-n_times", "1", "-sleep-secs", "0",
-                        "-time_out_limit", "0",
+                        "-timeout-hours", "0",
                         "--IntelCPU.Package", "--IntelCPU.Core", "--IntelCPU.DRAM", "--IntelCPU.Powercap",
                         "--IntelGPU.Energy", "--NvidiaGPU.Energy", "--NvidiaGPU.Temperature",
                         "-temperature-control", "NvidiaGPU.Temperature",
@@ -317,9 +372,9 @@ class WeaverTest(unittest.TestCase):
                     self.assertTrue(rows)
                     columns = [column for column in expected
                                if not (unavailable == "IntelGPU.Energy_J" and column == unavailable)]
-                    self.assertEqual(list(rows[0])[4 if mode == "overtime" else 3:], columns)
+                    self.assertEqual(list(rows[0])[3 if mode == "overtime" else 2:], columns)
                     for column in columns:
-                        self.assertEqual(rows[-1][column] == "NOT_SUPPORTED", column == unavailable)
+                        self.assertEqual(rows[-1][column] == "ERROR", column == unavailable)
             for variable in ("MOCK_NVIDIA_GPU_UNAVAILABLE", "MOCK_NVIDIA_TEMPERATURE_UNAVAILABLE"):
                 with self.subTest(mode=mode, unavailable=variable):
                     output.unlink(missing_ok=True)
@@ -334,7 +389,7 @@ class WeaverTest(unittest.TestCase):
                     if variable == "MOCK_NVIDIA_GPU_UNAVAILABLE":
                         self.assertNotIn("NvidiaGPU.Temperature_C", rows[-1])
                     else:
-                        self.assertEqual(rows[-1]["NvidiaGPU.Temperature_C"], "NOT_SUPPORTED")
+                        self.assertEqual(rows[-1]["NvidiaGPU.Temperature_C"], "ERROR")
 
     def test_examples_generate_and_run_all_declared_metrics(self):
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -353,64 +408,84 @@ class WeaverTest(unittest.TestCase):
             "System.Cores_cores", "System.CoreFrequency_MHz", "System.RunningProcesses_processes",
             "System.WorkloadProcesses_processes", "System.WorkloadMemory_KiB",
         ]
-        groups = {"combined": intel + nvidia + system, "intel": intel,
-                  "nvidia": nvidia, "system": ["Time.WallClock_ms"] + system}
-        for group, metrics in groups.items():
-            folder = ROOT / "examples"
-            if group != "combined":
-                folder /= group
-            source_path = folder / "config.toml"
-            with source_path.open("rb") as source:
-                declarations = tomllib.load(source)["aspect"]
+        groups = {
+            "combined": (intel + nvidia + system,
+                         ("intel-cpu.toml", "intel-cpu-temperature.toml", "intel-gpu.toml",
+                          "nvidia-gpu.toml", "system.toml", "intel-cpu-powercap.toml")),
+            "intel": (intel, ("intel-cpu.toml", "intel-cpu-temperature.toml", "intel-gpu.toml",
+                              "intel-cpu-powercap.toml")),
+            "nvidia": (nvidia, ("nvidia-gpu.toml",)),
+            "system": (["Time.WallClock_ms"] + system, ("time.toml", "system.toml")),
+        }
+        for group, (metrics, files) in groups.items():
+            declared_metrics = []
+            controls = []
+            for filename in files:
+                with (ROOT / "examples" / "aggregate" / filename).open("rb") as source:
+                    data = tomllib.load(source)
+                if "powercap_calibration" in data["measurement"]:
+                    controls.append(data["measurement"]["aspect"])
+                declared_metrics += data.get("metric", [])
             if group in ("nvidia", "system"):
-                self.assertFalse(any(aspect["name"].startswith("Intel") for aspect in declarations))
-            lines = []
-            injected = False
-            for line in source_path.read_text().splitlines():
-                if line.startswith("lib = "):
-                    if "wall_clock_time.c" in line:
-                        lines.append(f'lib = "{ROOT / "src/aspects/wall_clock_time.c"}"')
-                    elif not injected:
-                        lines.append(f'lib = "{mock_source}"')
-                        injected = True
-                    continue
-                if line.startswith("header = "):
-                    path = line.split('"')[1]
-                    line = f'header = "{(folder / path).resolve()}"'
-                if line.startswith("link = "):
-                    continue
-                lines.append(line)
-            config = self.directory / f"example-{group}.toml"
-            config.write_text("\n".join(lines) + "\n")
-            executable = self.weave(config, self.directory / f"example-{group}")
-            thermal = [aspect for aspect in declarations if aspect.get("thermal")]
-            controls = [aspect for aspect in declarations if "powercap_calibration" in aspect]
+                self.assertFalse(any(metric["name"].startswith("Intel")
+                                     for metric in declared_metrics))
+            executables = {}
+            for folder in ("aggregate", "over-time"):
+                configs = []
+                injected = False
+                for filename in files:
+                    source_path = ROOT / "examples" / folder / filename
+                    lines = []
+                    for line in source_path.read_text().splitlines():
+                        if line.startswith("lib = "):
+                            if "wall_clock_time.c" in line:
+                                lines.append(f'lib = "{ROOT / "src/aspects/wall_clock_time.c"}"')
+                            elif not injected:
+                                lines.append(f'lib = "{mock_source}"')
+                                injected = True
+                            continue
+                        if line.startswith("header = "):
+                            path = line.split('"')[1]
+                            line = f'header = "{(source_path.parent / path).resolve()}"'
+                        if line.startswith("link = "):
+                            continue
+                        lines.append(line)
+                    config = self.directory / f"example-{group}-{folder}-{filename}"
+                    config.write_text("\n".join(lines) + "\n")
+                    configs.append(config)
+                executables[folder] = self.weave(configs,
+                                                 self.directory / f"example-{group}-{folder}")
+            thermal_metrics = [metric["name"] for metric in declared_metrics
+                               if metric.get("thermal")]
             modes = ["aggregate", "overtime"]
-            if thermal:
+            if thermal_metrics:
                 modes.append("temperature-calibration")
             if controls:
                 modes.append("powercap-calibration")
             for mode in modes:
                 with self.subTest(group=group, mode=mode):
+                    executable = executables["over-time" if mode == "overtime" else "aggregate"]
                     output = self.directory / f"example-{group}-{mode}.csv"
-                    arguments = ["--" + ({"overtime": "over-time", "aggregate": "aggregate"}.get(mode, mode)),
-                                 "-sleep-secs", "0"]
-                    selected = thermal if mode == "temperature-calibration" else declarations
+                    arguments = (["--" + mode]
+                                 if mode in ("temperature-calibration", "powercap-calibration")
+                                 else []) + ["-sleep-secs", "0"]
+                    selected = (thermal_metrics if mode == "temperature-calibration" else
+                                [metric["name"] for metric in declared_metrics] + controls)
                     baselines = []
-                    for aspect in selected:
-                        arguments.append("--" + aspect["name"])
-                        if aspect.get("thermal"):
-                            baseline = self.directory / f'{group}-{mode}-{aspect["name"]}.txt'
+                    for name in selected:
+                        arguments.append("--" + name)
+                        if name in thermal_metrics:
+                            baseline = self.directory / f'{group}-{mode}-{name}.txt'
                             if mode != "temperature-calibration":
                                 baseline.write_text("Average temperature: 40.0 C\n")
-                            baselines.append((aspect["name"], baseline))
-                            arguments += ["-calib-file", f'{aspect["name"]}={baseline}']
+                            baselines.append((name, baseline))
+                            arguments += ["-calib-file", f'{name}={baseline}']
                             if mode != "temperature-calibration":
-                                arguments += ["-temperature-control", aspect["name"]]
+                                arguments += ["-temperature-control", name]
                     if mode != "temperature-calibration":
-                        arguments += ["-command", "true", "-language", "Shell", "-program", "true",
-                                      "-output", str(output), "-n_times", "1", "-time_out_limit", "0"]
-                        if any(aspect.get("thermal") for aspect in declarations):
+                        arguments += ["-command", "true", "-program", "true",
+                                      "-output", str(output), "-n_times", "1", "-timeout-hours", "0"]
+                        if thermal_metrics:
                             arguments += ["-variance", "100"]
                         if mode == "powercap-calibration":
                             arguments += ["-range", "1-1"]
@@ -425,19 +500,31 @@ class WeaverTest(unittest.TestCase):
                         temperatures = {"IntelCPU.Temperature": "40.0",
                                         "IntelGPU.Temperature": "45.0",
                                         "NvidiaGPU.Temperature": "55.0"}
-                        for aspect, baseline in baselines:
-                            self.assertIn(f"Average temperature: {temperatures[aspect]}",
+                        for name, baseline in baselines:
+                            self.assertIn(f"Average temperature: {temperatures[name]}",
                                           baseline.read_text())
                     else:
                         with output.open() as measurements:
                             rows = list(csv.DictReader(measurements))
                         self.assertTrue(rows)
-                        self.assertEqual(list(rows[0])[4 if mode == "overtime" else 3:], metrics)
-                        self.assertTrue(all(rows[-1][column] != "NOT_SUPPORTED"
+                        self.assertEqual(list(rows[0])[3 if mode == "overtime" else 2:], metrics)
+                        self.assertTrue(all(rows[-1][column] != "ERROR"
                                             for column in metrics))
 
+    def test_aggregate_weaves_aspects_into_the_main_module(self):
+        aggregate_sources = [path.name for path in
+                             sorted((self.directory / "build-aggregate").glob("*.c"))]
+        self.assertEqual(aggregate_sources, ["GreenMeasurer.c"])
+        merged = (self.directory / "build-aggregate" / "GreenMeasurer.c").read_text()
+        self.assertIn("gm_Energy_aspect", merged)
+        self.assertIn("gm_Processes_aspect", merged)
+        overtime_sources = [path.name for path in
+                            sorted((self.directory / "build").glob("*.c"))]
+        self.assertEqual(overtime_sources, ["Energy.c", "GreenMeasurer.c", "Processes.c"])
+
     def test_capacity_is_a_compile_time_limit(self):
-        small = self.weave(self.directory / "toy.toml", self.directory / "small", "--max-samples", "3")
+        small = self.weave([self.directory / name for name in TOY_FIXTURES],
+                           self.directory / "small", "--max-samples", "3")
         result, rows, _ = self.run_engine("-command", "sleep 1", executable=small)
         self.assertEqual(result.returncode, 1)
         self.assertIn("capacity (3)", result.stderr)
@@ -457,18 +544,11 @@ class WeaverTest(unittest.TestCase):
         self.assertEqual(events, ["set:-1", "restore", "set:5", "restore"])
         self.assertEqual([row["Powercap"] for row in rows], ["-1", "-1", "5", "5"])
 
-    def test_over_time_waits_between_repetitions(self):
-        started = time.monotonic()
-        result, rows, _ = self.run_engine(
-            "-n_times", "2", "-sleep-secs", "1", "-command", "true")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(rows), 2)
-        self.assertGreaterEqual(time.monotonic() - started, 1)
-
     def test_aggregate_repeats_every_powercap(self):
         result, rows, events = self.run_engine(
             "--aggregate", "-powercap", "3,4", "-n_times", "2", "-command", "true",
-            "-calib-file", f"Cpu.Temperature={self.directory / 't.txt'}", executable=self.hooks)
+            "-calib-file", f"Cpu.Temperature={self.directory / 't.txt'}",
+            executable=self.hooks_aggregate)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([row["Powercap"] for row in rows], ["3", "3", "4", "4"])
         self.assertEqual(events, ["set:3", "restore", "set:4", "restore"])
@@ -481,16 +561,6 @@ class WeaverTest(unittest.TestCase):
         self.assertEqual([row["Powercap"] for row in rows], ["-1", "-1", "2", "2", "3", "3"])
         self.assertEqual(events, ["set:-1", "restore", "set:2", "restore", "set:3", "restore"])
 
-    def test_powercap_calibration_waits_between_repetitions(self):
-        started = time.monotonic()
-        result, rows, _ = self.run_engine(
-            "--powercap-calibration", "-range", "2-2", "-n_times", "2", "-sleep-secs", "1",
-            "-command", "true", "-calib-file", f"Cpu.Temperature={self.directory / 't.txt'}",
-            executable=self.hooks)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([row["Powercap"] for row in rows], ["-1", "-1", "2", "2"])
-        self.assertGreaterEqual(time.monotonic() - started, 2)
-
     def test_powercap_calibration_uses_explicit_cli_options(self):
         baseline = self.directory / "calibration-baseline.txt"
         baseline.write_text("Average temperature: 40.0 C\n")
@@ -498,8 +568,8 @@ class WeaverTest(unittest.TestCase):
         log = self.directory / "configured-calibration.log"
         result = subprocess.run(
             [str(self.hooks), "--powercap-calibration", "-command", "test -f compiled-workload",
-             "-compile_cmd", "touch compiled-workload", "-language", "Shell", "-program", "true",
-             "-output", output, "-range", "2-3", "-time_out_limit", "2", "-n_times", "2",
+             "-compile_cmd", "touch compiled-workload", "-program", "true",
+             "-output", output, "-range", "2-3", "-timeout-hours", "2", "-n_times", "2",
              "-sleep-secs", "0", "--Cpu.Package", "--Cpu.Temperature", "--Cpu.Powercap",
              "-temperature-control", "Cpu.Temperature",
              "-calib-file", f"Cpu.Temperature={baseline}", "-variance", "5"],
@@ -542,127 +612,184 @@ class WeaverTest(unittest.TestCase):
     def test_temperature_calibration_fails_when_thermal_device_setup_fails(self):
         baseline = self.directory / "failed-temperature.txt"
         baseline.unlink(missing_ok=True)
-        source = (FIXTURES / "toy_hooks.toml").read_text()
-        source = source.replace('name = "Cpu.Temperature"',
-                                'name = "Cpu.Temperature"\nsetup = "int toy_setup()"')
+        source = (FIXTURES / "toy-hooks-cpu.toml").read_text()
+        source = source.replace('aspect = "Cpu"',
+                                'aspect = "Cpu"\nsetup = "int toy_setup()"')
         config = self.directory / "failed-temperature.toml"
         config.write_text(source)
-        executable = self.weave(config, self.directory / "failed-temperature")
+        executable = self.weave(
+            [config, self.directory / "toy-hooks-powercap.toml"],
+            self.directory / "failed-temperature")
         result = subprocess.run(
             [str(executable), "--temperature-calibration", "--Cpu.Temperature",
              "-sleep-secs", "0", "-calib-file", f"Cpu.Temperature={baseline}"],
             cwd=self.directory, text=True,
             capture_output=True, env={**os.environ, "TOY_FAIL_SETUP": "1"}, timeout=30)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Setup of aspect 'Cpu.Temperature' failed", result.stderr)
+        self.assertIn("Setup of aspect 'Cpu' failed", result.stderr)
         self.assertFalse(baseline.exists())
 
 
 class WeaverValidationTest(unittest.TestCase):
-    def check(self, text, expected):
+    def check(self, texts, expected):
+        if isinstance(texts, str):
+            texts = [texts]
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
             (directory / "d.h").write_text("int f(void);\n")
-            config = directory / "c.toml"
-            config.write_text(text)
+            configs = []
+            for index, text in enumerate(texts):
+                config = directory / f"c{index}.toml"
+                config.write_text(text)
+                configs.append(str(config))
             result = subprocess.run(
-                [sys.executable, str(WEAVER), str(config), "--no-build"],
+                [sys.executable, str(WEAVER), *configs, "--no-build"],
                 text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn(expected, result.stderr)
 
-    DEVICE = '[[aspect]]\nname = "D"\nheader = "d.h"\n'
+    HEADER = '[measurement]\naspect = "D"\nmode = "aggregate"\n\n[device]\nheader = "d.h"\n\n'
+    METRIC = '[[metric]]\nname = "D.M"\nmeasurement = "int f()"\n'
 
-    def test_rejects_measurement_table(self):
-        self.check('[measurement]\nmode = "aggregate"\n', "unknown top-level keys")
+    def test_rejects_old_aspect_tables(self):
+        self.check('[[aspect]]\nname = "D"\nheader = "d.h"\nread = "int f()"\n',
+                   "unknown top-level keys")
 
-    def test_rejects_old_device_tables(self):
-        self.check('[[device]]\nname = "D"\n', "unknown top-level keys")
+    def test_requires_measurement_and_device_tables(self):
+        self.check('[device]\nheader = "d.h"\n', "a [measurement] table is required")
+        self.check('[measurement]\naspect = "D"\nmode = "aggregate"\n\n' + self.METRIC,
+                   "a [device] table is required")
 
     def test_rejects_unsupported_return_type(self):
-        self.check(self.DEVICE + 'read = "char f()"\n',
+        self.check(self.HEADER + '[[metric]]\nname = "M"\nmeasurement = "char f()"\n',
                    "unsupported return type")
 
     def test_rejects_function_with_arguments(self):
-        self.check(self.DEVICE + 'read = "int f(int x)"\n',
+        self.check(self.HEADER + '[[metric]]\nname = "M"\nmeasurement = "int f(int x)"\n',
                    "must have the form")
 
-    def test_rejects_aspect_without_metric_reader(self):
-        self.check(self.DEVICE, ".read must be a string")
+    def test_rejects_aspect_without_metrics(self):
+        self.check(self.HEADER, "at least one [[metric]] is required")
+        self.check(self.HEADER + '[[metric]]\nname = "M"\n', ".measurement must be a string")
+
+    def test_requires_mode_for_metric_aspects(self):
+        no_mode = '[measurement]\naspect = "D"\n\n[device]\nheader = "d.h"\n\n' + self.METRIC
+        self.check(no_mode, "mode is required")
+        self.check(no_mode.replace('aspect = "D"', 'aspect = "D"\nmode = "standard"'),
+                   "mode must be one of")
+        self.check([self.HEADER + self.METRIC,
+                    self.HEADER.replace('"D"', '"E"').replace("aggregate", "over-time") +
+                    self.METRIC.replace("D.M", "E.M")],
+                   "must declare the same mode")
 
     def test_rejects_unknown_kind(self):
-        self.check(self.DEVICE + 'read = "int f()"\nkind = "x"\n',
-                   "kind must be one of")
-        self.check(self.DEVICE + 'read = "int f()"\nkind = []\n',
-                   "kind must be one of")
+        self.check(self.HEADER + self.METRIC + 'kind = "x"\n', "kind must be one of")
+        self.check(self.HEADER + self.METRIC + 'kind = []\n', "kind must be one of")
 
     def test_rejects_removed_optional_field(self):
-        self.check(self.DEVICE + 'read = "int f()"\noptional = true\n', "unknown keys")
+        self.check(self.HEADER + self.METRIC + 'optional = true\n', "unknown keys")
 
     def test_rejects_powercap_set_without_restore(self):
-        self.check(self.DEVICE + 'powercap_set = "int f(int)"\nread = "int f()"\n',
+        self.check(self.HEADER.replace("[device]",
+                                       'powercap_set = "int f(int)"\n\n[device]'),
                    "declared together")
 
-    def test_rejects_powercap_hooks_on_metric_and_metric_fields_on_control(self):
-        hooks = 'powercap_set = "int set(int)"\npowercap_restore = "int restore()"\n'
-        self.check(self.DEVICE + hooks + 'read = "int f()"\n', "separate control aspect")
-        self.check(self.DEVICE + hooks + 'unit = "W"\n', "cannot declare metric fields")
+    def test_rejects_powercap_hooks_with_metrics(self):
+        hooks = ('powercap_set = "int set(int)"\npowercap_restore = "int restore()"\n\n'
+                 '[device]')
+        self.check(self.HEADER.replace("[device]", hooks) + self.METRIC,
+                   "cannot declare metrics")
 
     def test_duration_requires_paired_measurement_callbacks(self):
-        self.check(self.DEVICE + 'read = "double f()"\nkind = "duration"\n',
+        self.check(self.HEADER + '[[metric]]\nname = "M"\nmeasurement = "double f()"\n'
+                   'kind = "duration"\n',
                    "requires measurement_start")
-        self.check(self.DEVICE + 'read = "double f()"\nmeasurement_start = "int begin()"\n',
+        self.check(self.HEADER.replace("[device]",
+                                       'measurement_start = "int begin()"\n\n[device]') +
+                   self.METRIC,
                    "must be declared together")
 
-    def test_rejects_old_nested_metric_tables(self):
-        self.check(self.DEVICE + '[[aspect.metric]]\nname = "M"\nread = "int f()"\n',
-                   "unknown keys")
-
     def test_rejects_invalid_temperature_marker(self):
-        self.check(self.DEVICE + 'read = "int f()"\nthermal = "int f()"\n',
+        self.check(self.HEADER + self.METRIC + 'thermal = "int f()"\n',
                    "thermal must be a boolean")
-        self.check(self.DEVICE + 'read = "int f()"\nthermal = true\nkind = "counter"\n',
+        self.check(self.HEADER + self.METRIC + 'thermal = true\nkind = "counter"\n',
                    "requires kind")
+        calibrated = 'thermal = true\ncalibration = "double c(unsigned)"\n'
+        self.check(self.HEADER + self.METRIC + calibrated +
+                   self.METRIC.replace("D.M", "D.N") + calibrated,
+                   "at most one thermal metric")
+        self.check(self.HEADER + self.METRIC + 'thermal = true\n',
+                   "require a calibration function")
+        self.check(self.HEADER + self.METRIC + 'calibration = "double c(unsigned)"\n',
+                   "only thermal metrics declare a calibration")
+        self.check(self.HEADER + self.METRIC + calibrated.replace("(unsigned)", "()"),
+                   "must have the form")
 
     def test_rejects_reserved_flags_and_invalid_link(self):
-        self.check('[[aspect]]\nname = "aggregate"\nheader = "d.h"\nread = "int f()"\n',
+        self.check(self.HEADER.replace('aspect = "D"', 'aspect = "help"') + self.METRIC,
                    "conflicts with a built-in")
-        self.check(self.DEVICE + 'read = "int f()"\nlink = ""\n', "link must be an array")
+        self.check(self.HEADER + '[[metric]]\nname = "help"\nmeasurement = "int f()"\n',
+                   "conflicts with a built-in")
+        self.check(self.HEADER.replace("[device]", '[device]\nlink = ""') + self.METRIC,
+                   "link must be an array")
 
     def test_rejects_conflicting_c_symbols_and_lifecycle(self):
-        self.check(self.DEVICE + 'read = "int f()"\n'
-                   '[[aspect]]\nname = "D"\nheader = "d.h"\nread = "int f()"\n',
+        self.check([self.HEADER + self.METRIC,
+                    self.HEADER + self.METRIC.replace("D.M", "D.N")],
                    "duplicate aspect name")
-        self.check('[[aspect]]\nname = "A.B"\nheader = "d.h"\nread = "int f()"\n'
-                   '[[aspect]]\nname = "A_B"\nheader = "d.h"\nread = "int f()"\n',
-                   "collides")
-        self.check(self.DEVICE + 'read = "int f()"\nsetup = "int init()"\n'
-                   '[[aspect]]\nname = "E"\nheader = "d.h"\nread = "int f()"\n'
-                   'setup = "int init()"\nteardown = "void end()"\n',
+        self.check([self.HEADER.replace('"D"', '"A.B"') + self.METRIC,
+                    self.HEADER.replace('"D"', '"A_B"') + self.METRIC.replace("D.M", "E.M")],
+                   "collides with another generated C symbol")
+        self.check(self.HEADER + '[[metric]]\nname = "M.N"\nmeasurement = "int f()"\n'
+                   '[[metric]]\nname = "M_N"\nmeasurement = "int f()"\n',
+                   "collides with another generated C symbol")
+        self.check([self.HEADER + self.METRIC,
+                    self.HEADER.replace('"D"', '"E"') + self.METRIC],
+                   "collides with another command-line flag")
+        self.check([self.HEADER.replace("[device]", 'setup = "int init()"\n\n[device]') +
+                    self.METRIC,
+                    self.HEADER.replace('"D"', '"E"').replace(
+                        "[device]",
+                        'setup = "int init()"\nteardown = "void end()"\n\n[device]') +
+                    self.METRIC.replace("D.M", "E.M")],
                    "different teardown")
 
 
 class WeaverBuildIsolationTest(unittest.TestCase):
+    @staticmethod
+    def metric_aspect(name, header="values.h", lib=None, link=None, read="int missing()",
+                      extra=""):
+        text = f'[measurement]\naspect = "{name}"\nmode = "aggregate"\n{extra}\n[device]\n'
+        text += f'header = "{header}"\n'
+        if lib:
+            text += f'lib = "{lib}"\n'
+        if link:
+            text += f'link = {link}\n'
+        text += f'\n[[metric]]\nname = "{name}"\nmeasurement = "{read}"\n'
+        return text
+
     def test_skips_missing_and_broken_aspects_and_keeps_available_metrics(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
             (directory / "values.h").write_text("int good(void);\nint missing(void);\n")
             (directory / "good.c").write_text("int good(void) { return 7; }\n")
             (directory / "broken.c").write_text("int invalid( {\n")
-            config = directory / "config.toml"
-            config.write_text(
-                '[[aspect]]\nname = "Bad.Header"\nheader = "missing.h"\nread = "int missing()"\n'
-                '[[aspect]]\nname = "Bad.Library"\nheader = "values.h"\nlib = "missing.a"\n'
-                'read = "int missing()"\n'
-                '[[aspect]]\nname = "Bad.Source"\nheader = "values.h"\nlib = "broken.c"\n'
-                'read = "int missing()"\n'
-                '[[aspect]]\nname = "Bad.Symbol"\nheader = "values.h"\nread = "int missing()"\n'
-                '[[aspect]]\nname = "Bad.Link"\nheader = "values.h"\nlib = "good.c"\n'
-                'link = ["-lgreenmeasurer_missing_test_library"]\nread = "int good()"\n'
-                '[[aspect]]\nname = "Good.Value"\nheader = "values.h"\nlib = "good.c"\n'
-                'read = "int good()"\n')
+            declarations = {
+                "bad-header.toml": self.metric_aspect("Bad.Header", header="missing.h"),
+                "bad-library.toml": self.metric_aspect("Bad.Library", lib="missing.a"),
+                "bad-source.toml": self.metric_aspect("Bad.Source", lib="broken.c"),
+                "bad-symbol.toml": self.metric_aspect("Bad.Symbol"),
+                "bad-link.toml": self.metric_aspect(
+                    "Bad.Link", lib="good.c",
+                    link='["-lgreenmeasurer_missing_test_library"]', read="int good()"),
+                "good.toml": self.metric_aspect("Good.Value", lib="good.c", read="int good()"),
+            }
+            configs = []
+            for filename, text in declarations.items():
+                (directory / filename).write_text(text)
+                configs.append(str(directory / filename))
             build = directory / "build"
-            result = subprocess.run([sys.executable, str(WEAVER), str(config), "-o", str(build)],
+            result = subprocess.run([sys.executable, str(WEAVER), *configs, "-o", str(build)],
                                     text=True, capture_output=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr)
             for aspect in ("Bad.Header", "Bad.Library", "Bad.Source", "Bad.Symbol", "Bad.Link"):
@@ -676,9 +803,8 @@ class WeaverBuildIsolationTest(unittest.TestCase):
             self.assertNotIn("--Bad.", help_output)
             output = directory / "result.csv"
             result = subprocess.run(
-                [str(executable), "--aggregate", "-command", "true", "-language", "Shell",
-                 "-program", "true", "-output", str(output), "-n_times", "1",
-                 "-sleep-secs", "0", "-time_out_limit", "0", "--Good.Value"],
+                [str(executable), "-command", "true", "-program", "true", "-output", str(output), "-n_times", "1",
+                 "-sleep-secs", "0", "-timeout-hours", "0", "--Good.Value"],
                 text=True, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             with output.open() as source:
@@ -693,14 +819,18 @@ class WeaverBuildIsolationTest(unittest.TestCase):
             (directory / "values.h").write_text("int first(void);\nint second(void);\n")
             (directory / "values.c").write_text(
                 "int first(void) { return 1; }\nint second(void) { return 2; }\n")
-            config = directory / "config.toml"
-            config.write_text(
-                '[[aspect]]\nname = "First"\nheader = "values.h"\nread = "int first()"\n'
-                '[[aspect]]\nname = "Broken"\nheader = "values.h"\nread = "int absent()"\n'
-                '[[aspect]]\nname = "Second"\nheader = "values.h"\nlib = "values.c"\n'
-                'read = "int second()"\n')
+            declarations = {
+                "first.toml": self.metric_aspect("First", read="int first()"),
+                "broken.toml": self.metric_aspect("Broken", read="int absent()"),
+                "second.toml": self.metric_aspect("Second", lib="values.c",
+                                                  read="int second()"),
+            }
+            configs = []
+            for filename, text in declarations.items():
+                (directory / filename).write_text(text)
+                configs.append(str(directory / filename))
             build = directory / "build"
-            result = subprocess.run([sys.executable, str(WEAVER), str(config), "-o", str(build)],
+            result = subprocess.run([sys.executable, str(WEAVER), *configs, "-o", str(build)],
                                     text=True, capture_output=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Skipping aspect 'Broken'", result.stderr)
@@ -714,8 +844,8 @@ class WeaverBuildIsolationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
             config = directory / "config.toml"
-            config.write_text('[[aspect]]\nname = "Missing"\nheader = "missing.h"\n'
-                              'read = "int metric()"\n')
+            config.write_text(self.metric_aspect("Missing", header="missing.h",
+                                                 read="int metric()"))
             build = directory / "build"
             result = subprocess.run([sys.executable, str(WEAVER), str(config), "-o", str(build)],
                                     text=True, capture_output=True)
@@ -737,8 +867,8 @@ class WeaverBuildIsolationTest(unittest.TestCase):
             directory = Path(name)
             (directory / "metric.h").write_text("int metric(void);\n")
             config = directory / "config.toml"
-            config.write_text('[[aspect]]\nname = "Value"\nheader = "metric.h"\n'
-                              'read = "int metric()"\n')
+            config.write_text(self.metric_aspect("Value", header="metric.h",
+                                                 read="int metric()"))
             result = subprocess.run([sys.executable, str(WEAVER), str(config),
                                      "-o", str(directory / "build")],
                                     env={**os.environ, "CC": "false"},
@@ -763,10 +893,11 @@ class IntelLibraryIsolationTest(unittest.TestCase):
                             str(directory / "msr.o")], check=True)
             config = directory / "intel.toml"
             metric = (
-                '[[aspect]]\nname = "IntelCPU.Package"\n'
-                f'header = "{intel / "intel_cpu.h"}"\nlib = "{cpu_lib}"\n'
-                'setup = "int intel_cpu_begin()"\n'
-                'teardown = "void intel_cpu_end()"\nread = "double intel_cpu_get_package()"\n')
+                '[measurement]\naspect = "IntelCPU"\nmode = "aggregate"\n'
+                'setup = "int intel_cpu_begin()"\nteardown = "void intel_cpu_end()"\n\n'
+                f'[device]\nheader = "{intel / "intel_cpu.h"}"\nlib = "{cpu_lib}"\n\n'
+                '[[metric]]\nname = "IntelCPU.Package"\n'
+                'measurement = "double intel_cpu_get_package()"\n')
             config.write_text(metric)
             build = directory / "metrics-only"
             result = subprocess.run([sys.executable, str(WEAVER), str(config), "-o", str(build)],
@@ -779,9 +910,9 @@ class IntelLibraryIsolationTest(unittest.TestCase):
             self.assertNotIn("sensors_init", symbols)
             self.assertNotIn("intel_cpu_get_temperature", symbols)
             result = subprocess.run(
-                [str(build / "greenmeasurer"), "--aggregate", "-command", "true",
-                 "-language", "Shell", "-program", "true", "-output", str(directory / "out.csv"),
-                 "-n_times", "1", "-sleep-secs", "0", "-powercap", "-1", "-time_out_limit", "0",
+                [str(build / "greenmeasurer"), "-command", "true",
+                 "-program", "true", "-output", str(directory / "out.csv"),
+                 "-n_times", "1", "-sleep-secs", "0", "-powercap", "-1", "-timeout-hours", "0",
                  "--no-metrics"], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -808,12 +939,16 @@ class IntelLibraryIsolationTest(unittest.TestCase):
             subprocess.run(["gcc", "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
             config = directory / "temperature.toml"
             config.write_text(
-                '[[aspect]]\nname = "IntelCPU.Temperature"\n'
-                f'header = "{intel / "intel_cpu_temperature.h"}"\n'
+                '[measurement]\naspect = "IntelCPU.Temperature"\nmode = "aggregate"\n'
+                'setup = "int intel_cpu_temperature_begin()"\n'
+                'teardown = "void intel_cpu_temperature_end()"\n\n'
+                f'[device]\nheader = "{intel / "intel_cpu_temperature.h"}"\n'
                 f'lib = "{intel / "intel_cpu_temperature.c"}"\n'
-                'link = ["-lsensors"]\nsetup = "int intel_cpu_temperature_begin()"\n'
-                'teardown = "void intel_cpu_temperature_end()"\n'
-                'read = "double intel_cpu_get_temperature()"\nthermal = true\nunit = "C"\n')
+                'link = ["-lsensors"]\n\n'
+                '[[metric]]\nname = "IntelCPU.Temperature"\n'
+                'measurement = "double intel_cpu_get_temperature()"\n'
+                'thermal = true\nunit = "C"\n'
+                'calibration = "double intel_cpu_calibrate_temperature(unsigned)"\n')
             build = directory / "build"
             result = subprocess.run([sys.executable, str(WEAVER), str(config), "-o", str(build)],
                                     text=True, capture_output=True)
@@ -823,9 +958,9 @@ class IntelLibraryIsolationTest(unittest.TestCase):
             self.assertNotIn("rapl_msr_open", symbols)
             log = directory / "sensors.log"
             env = {**os.environ, "LD_PRELOAD": str(library), "SENSORS_LOG": str(log)}
-            base = [str(build / "greenmeasurer"), "--aggregate", "-command", "true",
-                    "-language", "Shell", "-program", "true", "-n_times", "1",
-                    "-sleep-secs", "0", "-time_out_limit", "0"]
+            base = [str(build / "greenmeasurer"), "-command", "true",
+                    "-program", "true", "-n_times", "1",
+                    "-sleep-secs", "0", "-timeout-hours", "0"]
             result = subprocess.run([*base, "-output", str(directory / "none.csv"), "--no-metrics"],
                                     text=True, capture_output=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -836,7 +971,7 @@ class IntelLibraryIsolationTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(log.read_text().split(), ["init", "read", "cleanup"])
             with output.open() as result_file:
-                self.assertEqual(next(csv.DictReader(result_file))["IntelCPU.Temperature_C"], "NOT_SUPPORTED")
+                self.assertEqual(next(csv.DictReader(result_file))["IntelCPU.Temperature_C"], "ERROR")
             result = subprocess.run([str(build / "greenmeasurer"), "--temperature-calibration",
                                      "-sleep-secs", "0", "--IntelCPU.Temperature",
                                      "-calib-file", f"IntelCPU.Temperature={directory / 'baseline.txt'}"],
@@ -857,14 +992,14 @@ class IntelLibraryIsolationTest(unittest.TestCase):
             intel = ROOT / "src/devices/linux/cpu/intel"
             config = directory / "powercap.toml"
             config.write_text(
-                '[[aspect]]\nname = "IntelCPU.Powercap"\n'
-                f'header = "{intel / "intel_cpu_powercap.h"}"\n'
-                f'lib = "{intel / "intel_cpu_powercap.c"}"\n'
-                'link = ["-L/usr/local/lib", "-lraplcap-powercap", "-lpowercap"]\n'
+                '[measurement]\naspect = "IntelCPU.Powercap"\n'
                 'teardown = "void intel_cpu_powercap_end()"\n'
                 'powercap_set = "int intel_cpu_set_powercap(int)"\n'
                 'powercap_restore = "int intel_cpu_destroy_powercap()"\n'
-                'powercap_calibration = "intel_cpu_calibrate_powercap"\n')
+                'powercap_calibration = "intel_cpu_calibrate_powercap"\n\n'
+                f'[device]\nheader = "{intel / "intel_cpu_powercap.h"}"\n'
+                f'lib = "{intel / "intel_cpu_powercap.c"}"\n'
+                'link = ["-L/usr/local/lib", "-lraplcap-powercap", "-lpowercap"]\n')
             build = directory / "build"
             result = subprocess.run([sys.executable, str(WEAVER), str(config), "-o", str(build)],
                                     text=True, capture_output=True)
@@ -873,9 +1008,9 @@ class IntelLibraryIsolationTest(unittest.TestCase):
                                      text=True, capture_output=True).stdout
             self.assertIn("intel_cpu_set_powercap", symbols)
             result = subprocess.run(
-                [str(build / "greenmeasurer"), "--aggregate", "-command", "true",
-                 "-language", "Shell", "-program", "true", "-output", str(directory / "out.csv"),
-                 "-n_times", "1", "-sleep-secs", "0", "-powercap", "-1", "-time_out_limit", "0",
+                [str(build / "greenmeasurer"), "-command", "true",
+                 "-program", "true", "-output", str(directory / "out.csv"),
+                 "-n_times", "1", "-sleep-secs", "0", "-powercap", "-1", "-timeout-hours", "0",
                  "--no-metrics"], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn("powercap", result.stderr.lower())
@@ -885,26 +1020,30 @@ class IntelLibraryIsolationTest(unittest.TestCase):
         from weave import tomllib
 
         paths = list((ROOT / "examples").rglob("*.toml"))
-        paths += list((ROOT / "configurations-generated").glob("*.toml"))
         for path in paths:
             with path.open("rb") as source:
-                aspects = tomllib.load(source).get("aspect", [])
-            for aspect in aspects:
-                if aspect.get("name", "").startswith("IntelCPU."):
-                    with self.subTest(path=path, aspect=aspect["name"]):
-                        if aspect["name"] == "IntelCPU.Powercap":
-                            self.assertTrue(aspect["lib"].endswith("libgm_intel_cpu_powercap.a"))
-                            self.assertIn("-lraplcap-powercap", aspect["link"])
-                            self.assertNotIn("read", aspect)
-                        elif aspect["name"] == "IntelCPU.Temperature":
-                            self.assertTrue(aspect["lib"].endswith("libgm_intel_cpu_temperature.a"))
-                            self.assertEqual(aspect["link"], ["-lsensors"])
-                            self.assertNotIn("-lpowercap", aspect["link"])
-                        else:
-                            self.assertTrue(aspect["lib"].endswith("libgm_intel_cpu.a"))
-                            self.assertNotIn("-lraplcap-powercap", aspect.get("link", []))
-                            self.assertNotIn("-lpowercap", aspect.get("link", []))
-                            self.assertNotIn("-lsensors", aspect.get("link", []))
+                data = tomllib.load(source)
+            if not data:
+                continue
+            measurement = data["measurement"]
+            device = data["device"]
+            name = measurement.get("aspect", "")
+            if not name.startswith("IntelCPU"):
+                continue
+            with self.subTest(path=path, aspect=name):
+                if name == "IntelCPU.Powercap":
+                    self.assertTrue(device["lib"].endswith("libgm_intel_cpu_powercap.a"))
+                    self.assertIn("-lraplcap-powercap", device["link"])
+                    self.assertNotIn("metric", data)
+                elif name == "IntelCPU.Temperature":
+                    self.assertTrue(device["lib"].endswith("libgm_intel_cpu_temperature.a"))
+                    self.assertEqual(device["link"], ["-lsensors"])
+                    self.assertNotIn("-lpowercap", device["link"])
+                else:
+                    self.assertTrue(device["lib"].endswith("libgm_intel_cpu.a"))
+                    self.assertNotIn("-lraplcap-powercap", device.get("link", []))
+                    self.assertNotIn("-lpowercap", device.get("link", []))
+                    self.assertNotIn("-lsensors", device.get("link", []))
 
 
 class WeaverScriptsTest(unittest.TestCase):
@@ -914,7 +1053,8 @@ class WeaverScriptsTest(unittest.TestCase):
             examples = root / "toy-examples"
             examples.mkdir()
             shutil.copy(ROOT / "toy-examples" / "run.sh", examples / "run.sh")
-            (examples / "config.toml").write_text("")
+            (root / "examples" / "aggregate").mkdir(parents=True)
+            (root / "examples" / "over-time").mkdir(parents=True)
             (root / "scripts").mkdir()
             (root / "src" / "devices").mkdir(parents=True)
             tools = root / "tools"
@@ -925,25 +1065,34 @@ class WeaverScriptsTest(unittest.TestCase):
             measure = root / "scripts" / "measure.sh"
             measure.write_text(
                 '#!/bin/bash\n'
-                'mkdir -p "$2/run-0001"\n'
-                'cat > "$2/run-0001/greenmeasurer" <<\'EOF\'\n'
+                'for name in run-0001 run-0002; do\n'
+                'mkdir -p "$2/$name"\n'
+                'cat > "$2/$name/greenmeasurer" <<EOF\n'
                 '#!/bin/bash\n'
-                'if [[ "$1" == --help ]]; then\n'
-                '  printf "  --%s\\n" Time.WallClock IntelCPU.Temperature IntelCPU.Package NvidiaGPU.Temperature\n'
-                '  if [[ "${MISSING_CAP:-}" != 1 ]]; then echo "  --IntelCPU.Powercap"; fi\n'
+                'if [[ "\\$1" == --help ]]; then\n'
+                '  printf "  --%s\\\\n" Time.WallClock IntelCPU.Temperature IntelCPU.Package NvidiaGPU.Temperature\n'
+                '  if [[ "\\${MISSING_CAP:-}" != 1 ]]; then echo "  --IntelCPU.Powercap"; fi\n'
                 '  exit 0\n'
                 'fi\n'
-                'printf "%s" "$1" >> "$RUN_LOG"\n'
-                'shift\n'
-                'printf "\\t%s" "$@" >> "$RUN_LOG"\n'
-                'printf "\\n" >> "$RUN_LOG"\n'
-                'if [[ "${FAIL_CALIBRATION:-}" == 1 && '
-                '"$(tail -n 1 "$RUN_LOG")" == --powercap-calibration* ]]; then exit 2; fi\n'
+                'printf "%s" "$name" >> "\\$RUN_LOG"\n'
+                'printf "\\\\t%s" "\\$@" >> "\\$RUN_LOG"\n'
+                'printf "\\\\n" >> "\\$RUN_LOG"\n'
+                'if [[ "\\${FAIL_CALIBRATION:-}" == 1 && '
+                '"\\$(tail -n 1 "\\$RUN_LOG")" == *--powercap-calibration* ]]; then exit 2; fi\n'
                 'EOF\n'
-                'chmod +x "$2/run-0001/greenmeasurer"\n')
+                'chmod +x "$2/$name/greenmeasurer"\n'
+                'done\n')
             log = root / "calls.log"
             env = {**os.environ, "PATH": f'{tools}{os.pathsep}{os.environ["PATH"]}',
                    "RUN_LOG": str(log)}
+
+            def call_kind(call):
+                if "--temperature-calibration" in call:
+                    return "temperature-calibration"
+                if "--powercap-calibration" in call:
+                    return "powercap-calibration"
+                return "aggregate" if call[0] == "run-0001" else "over-time"
+
             for scenario in ("success", "failed", "missing"):
                 with self.subTest(scenario=scenario):
                     log.unlink(missing_ok=True)
@@ -961,17 +1110,18 @@ class WeaverScriptsTest(unittest.TestCase):
                         self.assertEqual(call[call.index("-sleep-secs") + 1], "10")
                         if "-temperature-control" in call:
                             self.assertEqual(call[call.index("-variance") + 1], "15")
-                        if call[0] == "--over-time":
+                        if call_kind(call) == "over-time":
                             self.assertEqual(call[call.index("-interval-ms") + 1], "1")
                     caps = [call for call in calls if "--IntelCPU.Powercap" in call]
                     if scenario == "success":
-                        self.assertEqual([call[0] for call in caps],
-                                         ["--powercap-calibration", "--aggregate", "--over-time"])
+                        self.assertEqual([call_kind(call) for call in caps],
+                                         ["powercap-calibration", "aggregate", "over-time"])
                         self.assertEqual(caps[0][caps[0].index("-range") + 1], "5-7")
                         for call in caps[1:]:
                             self.assertEqual(call[call.index("-powercap") + 1], "-1,5")
                     elif scenario == "failed":
-                        self.assertEqual([call[0] for call in caps], ["--powercap-calibration"])
+                        self.assertEqual([call_kind(call) for call in caps],
+                                         ["powercap-calibration"])
                         self.assertIn("[SKIPPED]", (case / "aggregate.log").read_text())
                         self.assertIn("[SKIPPED]", (case / "over-time.log").read_text())
                     else:
@@ -980,7 +1130,7 @@ class WeaverScriptsTest(unittest.TestCase):
                         for mode in ("aggregate", "over-time"):
                             self.assertNotIn("-powercap ", (case / f"{mode}.log").read_text())
 
-    def test_fibonacci_sequence_generates_and_runs_in_order(self):
+    def test_paper_experiments_run_in_order_with_all_metrics(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
             tools = directory / "tools"
@@ -992,62 +1142,71 @@ class WeaverScriptsTest(unittest.TestCase):
             python.write_text(
                 '#!/bin/sh\n'
                 '[ -f "$2" ] || exit 1\n'
-                'name=$(basename "$2")\n'
-                'printf "generate:%s\\n" "$name" >> "$RUN_LOG"\n'
-                'mkdir -p "$4"\n'
-                'printf \'#!/bin/sh\\nprintf "run" >> "$RUN_LOG"\\n'
-                'printf "\\\\t%%s" "$@" >> "$RUN_LOG"\\nprintf "\\\\n" >> "$RUN_LOG"\\n'
-                '[ "${FAIL_ON:-}" != "$1" ]\\n\' > "$4/greenmeasurer"\n'
-                'chmod +x "$4/greenmeasurer"\n')
+                'out=""\nprev=""\n'
+                'for arg in "$@"; do\n'
+                '  if [ "$prev" = "-o" ]; then out=$arg; fi\n'
+                '  prev=$arg\n'
+                'done\n'
+                '[ -n "$out" ] || exit 1\n'
+                'mkdir -p "$out"\n'
+                "cat > \"$out/greenmeasurer\" <<'INNER'\n"
+                '#!/bin/bash\n'
+                'if [ "$1" = --help ]; then\n'
+                '  echo "Metric flags (select explicitly):"\n'
+                '  printf "  --%s\\n" IntelCPU.Package IntelCPU.Temperature System.RunningProcesses Time.WallClock IntelCPU.Powercap\n'
+                '  exit 0\n'
+                'fi\n'
+                'printf "run:%s" "$(basename "$(dirname "$0")")" >> "$RUN_LOG"\n'
+                'printf "\\t%s" "$@" >> "$RUN_LOG"\n'
+                'printf "\\n" >> "$RUN_LOG"\n'
+                'case "$*" in *--powercap-calibration*) echo 7 > "$OPTIMAL_FILE";; esac\n'
+                'INNER\n'
+                'chmod +x "$out/greenmeasurer"\n')
             python.chmod(0o755)
-            log = directory / "sequence.log"
+            log = directory / "paper.log"
+            optimal = ROOT / "configurations-paper" / "powercap-calibration-optimal-powercap.txt"
+            self.addCleanup(optimal.unlink, missing_ok=True)
             env = {**os.environ, "PATH": f'{tools}{os.pathsep}{os.environ["PATH"]}',
-                   "RUN_LOG": str(log)}
-            scripts = (ROOT / "configurations-generated" / "run.sh",
+                   "RUN_LOG": str(log), "OPTIMAL_FILE": str(optimal)}
+            scripts = (ROOT / "configurations-paper" / "run.sh",
                        ROOT / "scripts" / "run_fibonacci_sequence.sh")
             for index, script in enumerate(scripts):
-                with self.subTest(script=script):
-                    log.unlink(missing_ok=True)
-                    result = subprocess.run(
-                        ["bash", os.path.relpath(script, directory), str(directory / f"build-{index}")],
-                        cwd=directory,
-                        env=env, text=True, capture_output=True, timeout=30)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    events = log.read_text().splitlines()
-                    self.assertEqual(events[0], "generate:config.toml")
-                    self.assertEqual(len(events), 5)
-                    runs = [event.split("\t")[1:] for event in events[1:]]
-                    self.assertEqual(runs[0], [
-                        "--temperature-calibration", "-sleep-secs", "60", "--IntelCPU.Temperature",
-                        "-calib-file", "IntelCPU.Temperature=cores_temperatures.txt"])
-                    metrics = ["--IntelCPU.Powercap", "--Time.WallClock", "--IntelCPU.Package",
-                               "--IntelCPU.Core", "--IntelCPU.DRAM", "--IntelCPU.Temperature",
-                               "--IntelGPU.Energy", "--NvidiaGPU.Energy", "--NvidiaGPU.Temperature"]
-                    command = ["-command", "python3 Languages/Python/Fibonacci/fibonacci.py 42",
-                               "-language", "Python", "-program", "fibonacci-42"]
-                    thermal = ["-temperature-control", "IntelCPU.Temperature",
-                               "-calib-file", "IntelCPU.Temperature=cores_temperatures.txt"]
-                    self.assertEqual(runs[1], ["--powercap-calibration", *command,
-                        "-output", "fibonacci-python-powercap-calibration.csv", "-range", "5-15",
-                        "-n_times", "10", "-sleep-secs", "60", "-time_out_limit", "1",
-                        *thermal, "-variance", "5", *metrics])
-                    self.assertEqual(runs[2], ["--aggregate", *command,
-                        "-output", "fibonacci-python-aggregate.csv", "-n_times", "10",
-                        "-sleep-secs", "60", "-powercap", "-1,5", "-time_out_limit", "0",
-                        *thermal, "-variance", "5", *metrics])
-                    self.assertEqual(runs[3], ["--over-time", *command,
-                        "-output", "fibonacci-python-overtime.csv", "-n_times", "10",
-                        "-interval-ms", "1", "-sleep-secs", "60", "-powercap", "-1,5",
-                        "-time_out_limit", "0", *thermal, "-variance", "15", *metrics])
+              with self.subTest(script=script):
+                log.unlink(missing_ok=True)
+                optimal.unlink(missing_ok=True)
+                result = subprocess.run(
+                    ["bash", os.path.relpath(script, directory), str(directory / f"build-{index}")],
+                    cwd=directory, env=env, text=True, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                events = log.read_text().splitlines()
+                self.assertEqual(len(events), 4)
+                self.assertEqual([event.split("\t")[0] for event in events],
+                                 ["run:run-0001", "run:run-0001", "run:run-0001", "run:run-0002"])
+                runs = [event.split("\t")[1:] for event in events]
+                baseline = str(ROOT / "configurations-paper" / "temperature-baseline.txt")
+                metrics = ["--IntelCPU.Powercap", "--IntelCPU.Package",
+                           "--IntelCPU.Temperature", "--System.RunningProcesses",
+                           "--Time.WallClock"]
+                workload = ["-command", "python3 Languages/Python/Fibonacci/fibonacci.py 42",
+                            "-program", "fibonacci-42"]
+                thermal = ["-temperature-control", "IntelCPU.Temperature",
+                           "-calib-file", f"IntelCPU.Temperature={baseline}", "-variance", "5"]
+                self.assertEqual(runs[0], ["--temperature-calibration", "-sleep-secs", "60",
+                                           "--IntelCPU.Temperature",
+                                           "-calib-file", f"IntelCPU.Temperature={baseline}"])
+                self.assertEqual(runs[1], ["--powercap-calibration", *workload,
+                    "-output", str(ROOT / "configurations-paper" / "powercap-calibration.csv"),
+                    "-range", "1-25", "-n_times", "10", "-sleep-secs", "60",
+                    "-timeout-hours", "4", *thermal, *metrics])
+                self.assertEqual(runs[2], [*workload,
+                    "-output", str(ROOT / "configurations-paper" / "aggregate.csv"),
+                    "-n_times", "10", "-sleep-secs", "60", "-powercap", "-1,7",
+                    "-timeout-hours", "4", *thermal, *metrics])
+                self.assertEqual(runs[3], [*workload,
+                    "-output", str(ROOT / "configurations-paper" / "overtime.csv"),
+                    "-n_times", "1", "-interval-ms", "10", "-sleep-secs", "60",
+                    "-powercap", "-1,7", "-timeout-hours", "4", *thermal, *metrics])
 
-                    log.unlink()
-                    result = subprocess.run(
-                        ["bash", os.path.relpath(script, directory), str(directory / f"failed-{index}")],
-                        cwd=directory,
-                        env={**env, "FAIL_ON": "--aggregate"}, text=True,
-                        capture_output=True, timeout=30)
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(log.read_text().splitlines(), events[:4])
 
     def test_batch_generation_and_execution(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1055,11 +1214,12 @@ class WeaverScriptsTest(unittest.TestCase):
             (directory / "metric.h").write_text("int metric(void);\n")
             (directory / "metric.c").write_text("int metric(void) { return 1; }\n")
             configs = []
-            for mode in ("aggregate", "over-time"):
-                config = directory / f"{mode}.toml"
+            for index in ("first", "second"):
+                config = directory / f"{index}.toml"
                 config.write_text(
-                    '[[aspect]]\nname = "Toy.Value"\nheader = "metric.h"\nlib = "metric.c"\n'
-                    'read = "int metric()"\n')
+                    '[measurement]\naspect = "Toy"\nmode = "aggregate"\n\n'
+                    '[device]\nheader = "metric.h"\nlib = "metric.c"\n\n'
+                    '[[metric]]\nname = "Toy.Value"\nmeasurement = "int metric()"\n')
                 configs.append(config)
             script = ROOT / "scripts" / "measure.sh"
             batch = directory / "batch"
@@ -1069,9 +1229,8 @@ class WeaverScriptsTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse((directory / "aggregate.csv").exists())
             output = directory / "batch.csv"
-            arguments = ["--", "--aggregate", "-command", "true", "-language", "Shell",
-                         "-program", "true", "-output", str(output), "-n_times", "1",
-                         "-sleep-secs", "0", "-powercap", "-1", "-time_out_limit", "0",
+            arguments = ["--", "-command", "true",         "-program", "true", "-output", str(output), "-n_times", "1",
+                         "-sleep-secs", "0", "-powercap", "-1", "-timeout-hours", "0",
                          "--Toy.Value"]
             result = subprocess.run(["bash", str(script), "run", str(batch), *arguments],
                                     text=True, capture_output=True, timeout=60)
@@ -1103,7 +1262,7 @@ class WeaverScriptsTest(unittest.TestCase):
             config.write_text("")
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_powercap_calibration.sh"),
-                 str(config), str(directory / "build")],
+                 str(directory / "build"), str(config)],
                 text=True, capture_output=True, timeout=30)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("must declare powercap_calibration", result.stderr)
@@ -1114,19 +1273,23 @@ class WeaverScriptsTest(unittest.TestCase):
             directory = Path(name)
             for filename in ("toy.c", "toy.h"):
                 shutil.copy(FIXTURES / filename, directory / filename)
-            config = directory / "calibration.toml"
-            config.write_text(
-                (FIXTURES / "toy_hooks.toml").read_text()
-                .replace('lib = "libtoy.a"', 'lib = "toy.c"'))
+            configs = []
+            for filename in ("agg-toy-hooks-cpu.toml", "toy-hooks-powercap.toml"):
+                source = FIXTURES / filename.removeprefix("agg-")
+                text = source.read_text().replace('lib = "libtoy.a"', 'lib = "toy.c"')
+                if filename.startswith("agg-"):
+                    text = text.replace('mode = "over-time"', 'mode = "aggregate"')
+                config = directory / filename
+                config.write_text(text)
+                configs.append(str(config))
             build = directory / "build"
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_powercap_calibration.sh"),
-                 str(config), str(build)], text=True, capture_output=True, timeout=120)
+                 str(build), *configs], text=True, capture_output=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr)
             result = subprocess.run([str(build / "greenmeasurer"), "--powercap-calibration",
-                                     "-range", "2-2", "-command", "true", "-language", "Shell",
-                                     "-program", "true", "-output", "hooks.csv", "-n_times", "1",
-                                     "-sleep-secs", "0", "-time_out_limit", "0", "--Cpu.Package",
+                                     "-range", "2-2", "-command", "true",                     "-program", "true", "-output", "hooks.csv", "-n_times", "1",
+                                     "-sleep-secs", "0", "-timeout-hours", "0", "--Cpu.Package",
                                      "--Cpu.Powercap"],
                                     cwd=directory,
                                     text=True, capture_output=True, timeout=60)
@@ -1139,11 +1302,12 @@ class WeaverScriptsTest(unittest.TestCase):
             (directory / "hooks.h").write_text("int calibrate(void);\n")
             config = directory / "control.toml"
             config.write_text(
-                '[[aspect]]\nname = "Control"\nheader = "hooks.h"\nlib = "missing.a"\n'
-                'powercap_calibration = "calibrate"\n')
+                '[measurement]\naspect = "Control"\n'
+                'powercap_calibration = "calibrate"\n\n'
+                '[device]\nheader = "hooks.h"\nlib = "missing.a"\n')
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_powercap_calibration.sh"),
-                 str(config), str(directory / "build")],
+                 str(directory / "build"), str(config)],
                 text=True, capture_output=True, timeout=120)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Skipping aspect 'Control'", result.stderr)
@@ -1171,8 +1335,9 @@ class WeaverScriptsTest(unittest.TestCase):
                 "int setup(void) { return 1; }\nint metric(void) { return 1; }\n")
             config = directory / "unavailable.toml"
             config.write_text(
-                '[[aspect]]\nname = "Toy.Value"\nheader = "metric.h"\nlib = "metric.c"\n'
-                'setup = "int setup()"\nread = "int metric()"\n')
+                '[measurement]\naspect = "Toy"\nmode = "aggregate"\nsetup = "int setup()"\n\n'
+                '[device]\nheader = "metric.h"\nlib = "metric.c"\n\n'
+                '[[metric]]\nname = "Toy.Value"\nmeasurement = "int metric()"\n')
             results = directory / "results"
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_all_configurations.sh"),
@@ -1185,17 +1350,22 @@ class WeaverScriptsTest(unittest.TestCase):
     def test_run_all_selects_only_aspects_that_were_built(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
-            (directory / "metric.h").write_text("int metric(void);\n")
-            (directory / "metric.c").write_text("int metric(void) { return 1; }\n")
-            config = directory / "mixed.toml"
-            config.write_text(
-                '[[aspect]]\nname = "Missing"\nheader = "missing.h"\nread = "int metric()"\n'
-                '[[aspect]]\nname = "Present"\nheader = "metric.h"\nlib = "metric.c"\n'
-                'read = "int metric()"\n')
+            configs = directory / "mixed"
+            configs.mkdir()
+            (configs / "metric.h").write_text("int metric(void);\n")
+            (configs / "metric.c").write_text("int metric(void) { return 1; }\n")
+            (configs / "missing.toml").write_text(
+                '[measurement]\naspect = "Missing"\nmode = "aggregate"\n\n'
+                '[device]\nheader = "missing.h"\n\n'
+                '[[metric]]\nname = "Missing"\nmeasurement = "int metric()"\n')
+            (configs / "present.toml").write_text(
+                '[measurement]\naspect = "Present"\nmode = "aggregate"\n\n'
+                '[device]\nheader = "metric.h"\nlib = "metric.c"\n\n'
+                '[[metric]]\nname = "Present"\nmeasurement = "int metric()"\n')
             results = directory / "results"
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_all_configurations.sh"),
-                 "-o", str(results), str(config)],
+                 "-o", str(results), str(configs)],
                 text=True, capture_output=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             self.assertIn("PASS: 0  WARN: 1  FAIL: 0", result.stdout)
@@ -1208,22 +1378,26 @@ class WeaverScriptsTest(unittest.TestCase):
     def test_run_all_selects_only_one_powercap_control(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
-            (directory / "hooks.h").write_text(
+            configs = directory / "controls"
+            configs.mkdir()
+            (configs / "hooks.h").write_text(
                 "int metric(void);\nint set(int);\nint restore(void);\n")
-            (directory / "hooks.c").write_text(
+            (configs / "hooks.c").write_text(
                 "int metric(void) { return 1; }\nint set(int watts) { return 0; }\n"
                 "int restore(void) { return 0; }\n")
-            config = directory / "controls.toml"
-            config.write_text(
-                '[[aspect]]\nname = "Value"\nheader = "hooks.h"\nlib = "hooks.c"\n'
-                'read = "int metric()"\n' +
-                ''.join(f'[[aspect]]\nname = "{name}"\nheader = "hooks.h"\nlib = "hooks.c"\n'
-                        'powercap_set = "int set(int)"\npowercap_restore = "int restore()"\n'
-                        for name in ("First", "Second")))
+            (configs / "value.toml").write_text(
+                '[measurement]\naspect = "Value"\nmode = "aggregate"\n\n'
+                '[device]\nheader = "hooks.h"\nlib = "hooks.c"\n\n'
+                '[[metric]]\nname = "Value"\nmeasurement = "int metric()"\n')
+            for control in ("First", "Second"):
+                (configs / f"{control.lower()}.toml").write_text(
+                    f'[measurement]\naspect = "{control}"\n'
+                    'powercap_set = "int set(int)"\npowercap_restore = "int restore()"\n\n'
+                    '[device]\nheader = "hooks.h"\nlib = "hooks.c"\n')
             results = directory / "results"
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_all_configurations.sh"),
-                 "-o", str(results), str(config)],
+                 "-o", str(results), str(configs)],
                 text=True, capture_output=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             self.assertIn("PASS: 0  WARN: 1  FAIL: 0", result.stdout)
@@ -1233,12 +1407,17 @@ class WeaverScriptsTest(unittest.TestCase):
     def test_run_all_reports_warnings_and_continues_after_failure(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
-            (directory / "metric.h").write_text("int metric(void);\n")
-            (directory / "metric.c").write_text("int metric(void) { return -1; }\n")
-            (directory / "a-invalid.toml").write_text('[measurement]\nmode = "invalid"\n')
-            (directory / "b-warning.toml").write_text(
-                '[[aspect]]\nname = "Toy.Value"\nheader = "metric.h"\nlib = "metric.c"\n'
-                'read = "int metric()"\n')
+            invalid = directory / "a-invalid"
+            invalid.mkdir()
+            (invalid / "invalid.toml").write_text('[measurement]\nmode = "invalid"\n')
+            warning = directory / "b-warning"
+            warning.mkdir()
+            (warning / "metric.h").write_text("int metric(void);\n")
+            (warning / "metric.c").write_text("int metric(void) { return -1; }\n")
+            (warning / "warning.toml").write_text(
+                '[measurement]\naspect = "Toy"\nmode = "aggregate"\n\n'
+                '[device]\nheader = "metric.h"\nlib = "metric.c"\n\n'
+                '[[metric]]\nname = "Toy.Value"\nmeasurement = "int metric()"\n')
             results = directory / "results"
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "run_all_configurations.sh"),
@@ -1249,7 +1428,7 @@ class WeaverScriptsTest(unittest.TestCase):
             summary = (results / "summary.txt").read_text()
             self.assertIn("FAIL  ", summary)
             self.assertIn("WARN  ", summary)
-            self.assertIn("NOT_SUPPORTED", next(results.rglob("results.csv")).read_text())
+            self.assertIn("ERROR", next(results.rglob("results.csv")).read_text())
 
     def test_examples_wrapper_forwards_options_and_examples_directory(self):
         with tempfile.TemporaryDirectory() as name:

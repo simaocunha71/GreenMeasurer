@@ -4,8 +4,9 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 usage() {
-    echo "Usage: $0 generate <new-directory> <config.toml> [config.toml ...]" >&2
+    echo "Usage: $0 generate <new-directory> <config.toml|config-dir> [more ...]" >&2
     echo "       $0 run <directory> -- <greenmeasurer arguments...>" >&2
+    echo "Each argument builds one executable; a directory weaves all its *.toml files." >&2
 }
 
 if [[ $# -lt 2 ]]; then
@@ -23,7 +24,16 @@ case "$1" in
         for config in "$@"; do
             index=$((index + 1))
             printf -v name 'run-%04d' "$index"
-            python3 "$root/scripts/weave.py" "$config" -o "$directory/$name"
+            if [[ -d "$config" ]]; then
+                files=("$config"/*.toml)
+                if [[ ${#files[@]} -eq 0 || ! -e "${files[0]}" ]]; then
+                    echo "[ERROR] No TOML files in directory: $config" >&2
+                    exit 1
+                fi
+                python3 "$root/scripts/weave.py" "${files[@]}" -o "$directory/$name"
+            else
+                python3 "$root/scripts/weave.py" "$config" -o "$directory/$name"
+            fi
         done
         printf '%s\n' "$index" > "$directory/.complete"
         echo "[INFO] Generation finished. Run the batch separately with explicit GreenMeasurer arguments."

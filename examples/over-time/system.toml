@@ -1,0 +1,37 @@
+[measurement]
+aspect = "System"
+mode = "over-time"
+
+[device]
+lib = "../../src/devices/libgm_system.a"
+header = "../../src/devices/linux/system.h"
+
+[[metric]]
+name = "System.Cores"
+measurement = "double system_get_core_count()"
+kind = "gauge"
+unit = "cores"
+
+[[metric]]
+name = "System.CoreFrequency"
+measurement = "double system_get_core_frequency_mhz()"
+kind = "gauge"
+unit = "MHz"
+
+[[metric]]
+name = "System.RunningProcesses"
+measurement = "double system_get_running_processes()"
+kind = "gauge"
+unit = "processes"
+
+[[metric]]
+name = "System.WorkloadProcesses"
+measurement = "double system_get_workload_processes()"
+kind = "gauge"
+unit = "processes"
+
+[[metric]]
+name = "System.WorkloadMemory"
+measurement = "double system_get_workload_memory_kb()"
+kind = "gauge"
+unit = "KiB"

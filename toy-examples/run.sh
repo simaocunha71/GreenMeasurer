@@ -19,13 +19,15 @@ if ! make -C "$root/src/devices" > "$results/build.log" 2>&1; then
     echo "[ERROR] Device library build failed; see build.log." >&2
     exit 1
 fi
-if ! bash "$root/scripts/measure.sh" generate "$results/build" "$example_dir/config.toml" \
+if ! bash "$root/scripts/measure.sh" generate "$results/build" \
+    "$root/examples/aggregate" "$root/examples/over-time" \
     >> "$results/build.log" 2>&1; then
     echo "[ERROR] Weaver failed; see build.log." >&2
     exit 1
 fi
 
 executable="$results/build/run-0001/greenmeasurer"
+overtime_executable="$results/build/run-0002/greenmeasurer"
 "$executable" --help > "$results/available-aspects.log" 2>&1
 status=0
 
@@ -48,7 +50,8 @@ run_case() {
     shift
     local case_dir="$results/$name"
     mkdir "$case_dir"
-    local -a requested=("$@") flags=() controls=() cap_options=() runner=("$executable")
+    local -a requested=("$@") flags=() controls=() cap_options=()
+    local -a runner=("$executable") overtime_runner=("$overtime_executable")
     local powercap_requested=0 powercap_available=0 metric_count=0
     local aspect
     {
@@ -105,9 +108,12 @@ run_case() {
 
     if (( metric_count == 0 )); then flags+=(--no-metrics); fi
     local -a common=(-command "python3 toy-examples/fibonacci.py 40" \
-        -language Python -program fibonacci-40 -n_times 1 -sleep-secs 10 -time_out_limit 0)
+        -program fibonacci-40 -n_times 1 -sleep-secs 10 -timeout-hours 0)
     if (( powercap_available )); then
-        if (( use_sudo )); then runner=(sudo -A "$executable"); fi
+        if (( use_sudo )); then
+            runner=(sudo -A "$executable")
+            overtime_runner=(sudo -A "$overtime_executable")
+        fi
         if ! run_logged "$case_dir/powercap-calibration.log" "${runner[@]}" --powercap-calibration \
             "${common[@]}" -output "$case_dir/powercap-calibration.csv" -range 5-7 \
             "${controls[@]}" "${flags[@]}"; then
@@ -117,7 +123,20 @@ run_case() {
             cp "$case_dir/aggregate.log" "$case_dir/over-time.log"
             return
         fi
-        cap_options=(-powercap "-1,5")
+        # Prefer the optimal powercap recorded by the calibration report; fall
+        # back to 5 W when the report could not run (for example, without pandas).
+        local optimal_file="$case_dir/powercap-calibration-optimal-powercap.txt"
+        local optimal=""
+        if [[ -f "$optimal_file" ]]; then
+            read -r optimal < "$optimal_file" || optimal=""
+        fi
+        if [[ "$optimal" =~ ^-?[0-9]+$ && "$optimal" != "-1" ]]; then
+            cap_options=(-powercap "-1,$optimal")
+        elif [[ "$optimal" == "-1" ]]; then
+            cap_options=(-powercap "-1")
+        else
+            cap_options=(-powercap "-1,5")
+        fi
     elif (( powercap_requested )); then
         printf '[SKIPPED] Powercap aspect was not incorporated; no CPU limit is changed.\n' \
             > "$case_dir/powercap-calibration.log"
@@ -125,7 +144,7 @@ run_case() {
         printf '[SKIPPED] No powercap aspect requested; no CPU limit is changed.\n' \
             > "$case_dir/powercap-calibration.log"
     fi
-    if ! run_logged "$case_dir/aggregate.log" "${runner[@]}" --aggregate \
+    if ! run_logged "$case_dir/aggregate.log" "${runner[@]}" \
         "${common[@]}" -output "$case_dir/aggregate.csv" "${cap_options[@]}" \
         "${controls[@]}" "${flags[@]}"; then
         status=1
@@ -135,7 +154,7 @@ run_case() {
             return
         fi
     fi
-    if ! run_logged "$case_dir/over-time.log" "${runner[@]}" --over-time \
+    if ! run_logged "$case_dir/over-time.log" "${overtime_runner[@]}" \
         "${common[@]}" -output "$case_dir/over-time.csv" -interval-ms 1 \
         "${cap_options[@]}" "${controls[@]}" "${flags[@]}"; then
         status=1

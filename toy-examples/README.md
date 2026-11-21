@@ -9,22 +9,35 @@ bash toy-examples/run.sh
 If elevated permissions are needed, `bash toy-examples/run.sh --sudo-powercap`
 uses `sudo -A` for the sixth selection's powercap operations only.
 
-The script generates one executable and runs recursive Python Fibonacci 20 with
+The script weaves the aspect files in `examples/aggregate/` and
+`examples/over-time/` into one executable per mode and runs recursive Python
+Fibonacci 40 with
 six successive selections: no aspects; wall-clock time; CPU temperature; Intel
 CPU package energy; NVIDIA GPU temperature; and Intel CPU powercap. Each selection retains the
 previous aspects.
 
 Each selection runs aggregate and over-time once, with a 1 ms sampling interval
-for over-time and a 10-second sleep setting. Without active aspects, the
+for over-time and a 10-second calibration settling time. Without active aspects, the
 runtime executes the command once directly and does not produce a CSV. Selected
 temperature aspects are calibrated separately with 10 seconds of stabilization;
 after successful CPU calibration, measurement uses CPU thermal control with a
 15 C variance. NVIDIA temperature is measured but not used for thermal control.
 This short calibration is only for checking behaviour, not a controlled experiment.
-With one repetition per powercap, there is no sleep between repetitions.
+
+In over-time CSVs, `Timestamp_ms` is the output time axis, while
+`Time.WallClock_ms` is the elapsed wall-clock time measured by the time aspect.
+Their start and end points differ slightly, and sampling aligns readings to a
+grid, so the timestamp can be larger than the time reading, even in the final row.
+Each run starts with empty sample buffers, and counter columns report the
+consumption of each interval: the reading taken at that instant minus the
+reading of the previous row, restarting at each run (including each powercap).
+Summing a run's counter column yields that run's total. `ERROR` can
+also appear on a grid row before an aspect's first sample is available.
 
 The sixth selection calibrates powercap at the saved baseline and 5–7 W, then
-uses the saved baseline (`-1`) and 5 W for aggregate and over-time. The saved
+uses the saved baseline (`-1`) and the optimal powercap recorded by the
+calibration report (falling back to 5 W when the report could not run) for
+aggregate and over-time. The saved
 baseline is not necessarily uncapped. **This changes real CPU power limits** and
 requires appropriate permissions; the backend restores its saved baseline, which
 may differ from the limits in effect before the run. Check both before running.

@@ -1,6 +1,8 @@
 #!/bin/bash
-# Runs every TOML under configurations-generated/ (or a given directory) on this machine
-# and prints a PASS/WARN/FAIL summary, to validate GreenMeasurer on new hardware.
+# Runs every aspect configuration under examples/ (or a given directory) on this
+# machine and prints a PASS/WARN/FAIL summary, to validate GreenMeasurer on new
+# hardware. A directory whose *.toml files sit side by side is woven as one
+# configuration; a TOML file given directly is woven alone.
 #
 # Usage: scripts/run_all_configurations.sh [-o results-dir] [-s] [config-dir-or-file ...]
 #   -o DIR  results directory (default: greenmeasurer-config-results-<host>-<date>)
@@ -18,7 +20,7 @@ while getopts "o:s" opt; do
     esac
 done
 shift $((OPTIND - 1))
-[[ $# -eq 0 ]] && set -- "$root/configurations-generated"
+[[ $# -eq 0 ]] && set -- "$root/examples"
 # Each run changes directory, so every input path must be absolute.
 inputs=()
 for path in "$@"; do
@@ -54,7 +56,19 @@ echo "[INFO] Building GreenMeasurer..."
 make -C "$root/src" all >"$results/build.log" 2>&1 || {
     echo "[ERROR] Build failed; see $results/build.log"; exit 1; }
 
-mapfile -t configs < <(find "$@" -name '*.toml' -type f | sort)
+configs=()
+declare -A seen_dirs=()
+for path in "$@"; do
+    if [[ -f $path ]]; then
+        configs+=("$path")
+    else
+        while IFS= read -r dir; do
+            [[ -n ${seen_dirs[$dir]:-} ]] && continue
+            seen_dirs[$dir]=1
+            configs+=("$dir")
+        done < <(find "$path" -name '*.toml' -type f -printf '%h\n' | sort -u)
+    fi
+done
 ordered=("${configs[@]}")
 
 pass=0; warn=0; fail=0
@@ -66,10 +80,34 @@ for config in "${ordered[@]}"; do
     mkdir -p "$work"
     echo "[RUN ] $name"
     status=PASS
-    if (cd "$work" && python3 "$root/scripts/weave.py" "$config" -o "$work/build") \
+    if [[ -d $config ]]; then config_files=("$config"/*.toml); else config_files=("$config"); fi
+    if (cd "$work" && python3 "$root/scripts/weave.py" "${config_files[@]}" -o "$work/build") \
         >"$work/generate.log" 2>&1; then
-        if aspect_data=$(PYTHONPATH="$root/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-            'import sys; from weave import tomllib; f = open(sys.argv[1], "rb"); data = tomllib.load(f); [print(a["name"], int(a.get("thermal", False)), int("read" in a), int("powercap_set" in a)) for a in data.get("aspect", [])]' "$config" 2>"$work/run.log"); then
+        if aspect_data=$(PYTHONPATH="$root/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -c '
+import sys
+from weave import tomllib
+mode = "aggregate"
+rows = []
+for name in sys.argv[1:]:
+    with open(name, "rb") as source:
+        data = tomllib.load(source)
+    if not data:
+        continue
+    measurement = data["measurement"]
+    control = int("powercap_set" in measurement or "powercap_calibration" in measurement)
+    if control:
+        rows.append((measurement["aspect"], 0, 0, 1))
+    metrics = data.get("metric", [])
+    if metrics and measurement.get("mode"):
+        mode = measurement["mode"]
+    for metric in metrics:
+        rows.append((metric["name"], int(metric.get("thermal", False)), 1, 0))
+print(mode)
+for row in rows:
+    print(*row)
+' "${config_files[@]}" 2>"$work/run.log"); then
+            mode=$(head -n 1 <<<"$aspect_data")
+            aspect_data=$(tail -n +2 <<<"$aspect_data")
             aspect_info=()
             [[ -n $aspect_data ]] && mapfile -t aspect_info <<<"$aspect_data"
             if help_output=$("$work/build/greenmeasurer" --help 2>>"$work/run.log"); then
@@ -87,8 +125,9 @@ for config in "${ordered[@]}"; do
             if [[ ${#aspect_info[@]} -eq 0 ]]; then
                 arguments=(-command true)
             else
-                arguments=(--aggregate -command true -language Shell -program true -output "$work/results.csv"
-                           -n_times 1 -sleep-secs 0 -time_out_limit 1)
+                arguments=(-command true -program true -output "$work/results.csv"
+                           -n_times 1 -sleep-secs 0 -timeout-hours 1)
+                [[ $mode == over-time ]] && arguments+=(-interval-ms 5)
                 thermal=0
                 metric_count=0
                 powercap_selected=0
@@ -135,7 +174,7 @@ for config in "${ordered[@]}"; do
     fi
     if [[ $status == PASS ]] && {
         grep -qF '[WARNING]' "$work/generate.log" "$work/run.log" ||
-        find "$work" -maxdepth 1 -name '*.csv' -type f -exec grep -lF 'NOT_SUPPORTED' {} + | grep -q .
+        find "$work" -maxdepth 1 -name '*.csv' -type f -exec grep -lF 'ERROR' {} + | grep -q .
     }; then
         status=WARN
         echo "       Warnings or unavailable metrics found; inspect logs and CSV files in $work."

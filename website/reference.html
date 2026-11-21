@@ -20,65 +20,70 @@
     <nav class="doc-nav" aria-label="On this page"><strong>On this page</strong><a href="#overview">Architecture</a><a href="#definitions">TOML structure</a><a href="#measurement-fields">Runtime options</a><a href="#device-fields">Aspect fields</a><a href="#metric-fields">Metric fields</a><a href="#callbacks">Hooks</a><a href="#new-backend">Custom devices</a><a href="#tools">Commands</a></nav>
     <div class="doc-content">
       <section id="overview"><p class="eyebrow">01 / Architecture</p><h2>Weaving measurement concerns</h2>
-        <p><code>scripts/weave.py</code> validates a TOML file, generates C code specialized to its declarations, and compiles it with the shared runtime and specified device code. It reports and skips aspects that cannot be built; invalid configuration or a failure of the compiler or shared runtime remains an error. This is aspect-oriented composition of measurement concerns: the workload is run as a separate command, not rewritten or instrumented by the weaver.</p>
+        <p><code>scripts/weave.py</code> validates one or more TOML aspect files, generates C code specialized to their declarations, and compiles it with the shared runtime and specified device code. It reports and skips aspects that cannot be built; invalid configuration or a failure of the compiler or shared runtime remains an error. This is aspect-oriented composition of measurement concerns: the workload is run as a separate command, not rewritten or instrumented by the weaver.</p>
         <div class="step-grid">
           <article class="step"><span>INPUT</span><h3>TOML + device code</h3><p>Metric aspects with readers, and separate powercap control aspects.</p></article>
           <article class="step"><span>GENERATED</span><h3>Aspect code + glue</h3><p>Sampling code for metrics and hooks for controls, plus registration and flags.</p></article>
           <article class="step"><span>LINKED</span><h3>Executable</h3><p>Shared runtime and declared libraries coordinate the workload and output.</p></article>
         </div>
-        <p>In over-time mode each selected metric aspect has a sampling thread; powercap control aspects have none. Aggregate mode uses no sampling threads. The source of truth for the runtime contract is <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/include/gm_aspect.h">gm_aspect.h</a>.</p>
+        <p>In over-time mode each aspect has one sampling thread for its selected metrics; powercap control aspects have none. Aggregate mode uses no sampling threads and generates no additional modules: aspects are woven into the main module. The source of truth for the runtime contract is <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/src/include/gm_aspect.h">gm_aspect.h</a>.</p>
       </section>
       <section id="definitions"><span id="symbols"></span><p class="eyebrow">02 / TOML</p><h2>Read a configuration</h2>
-        <p>A TOML file contains zero or more <code>[[aspect]]</code> tables. A metric aspect supplies one CSV column; a powercap control aspect supplies hooks without a metric. The old <code>[measurement]</code>, <code>[[aspect.metric]]</code> and <code>[[device]]</code> formats are rejected.</p>
-        <pre><code>[[aspect]]
-name = "NvidiaGPU.Energy"
+        <p>Each TOML file declares at most one aspect through <code>[measurement]</code>, <code>[device]</code> and <code>[[metric]]</code> tables. A metric supplies one CSV column; a powercap control aspect supplies hooks without metrics. The old <code>[[aspect]]</code> format is rejected.</p>
+        <pre><code>[measurement]
+aspect = "NvidiaGPU"
+mode = "over-time"
+setup = "int nvidia_begin()"
+teardown = "void nvidia_end()"
+
+[device]
 lib = "../../src/devices/libgm_nvidia_gpu.a"
 header = "../../src/devices/linux/gpu/nvidia/nvidia_gpu.h"
 link = ["-lnvidia-ml"]
-setup = "int nvidia_begin()"
-teardown = "void nvidia_end()"
-read = "double nvidia_get_energy()"
+
+[[metric]]
+name = "NvidiaGPU.Energy"
+measurement = "double nvidia_get_energy()"
 kind = "counter"
 unit = "J"</code></pre>
         <p>This declaration produces <code>--NvidiaGPU.Energy</code> and <code>NvidiaGPU.Energy_J</code>. Library paths are relative to the TOML; workload, output and baseline paths are relative to the runtime working directory. Reweave after editing a declaration.</p>
       </section>
       <section id="measurement-fields"><p class="eyebrow">03 / Invocation</p><h2>Runtime options</h2>
-        <p>For measurement or calibration, select exactly one of <code>--aggregate</code>, <code>--over-time</code>, <code>--temperature-calibration</code> or <code>--powercap-calibration</code>. Select aspects by their flags; none are selected automatically. <code>--no-metrics</code> can be combined with a powercap control flag. With no aspects selected, use <code>-command</code> alone.</p>
+        <p>The measurement mode (<code>aggregate</code> or <code>over-time</code>) is woven into the executable; <code>--temperature-calibration</code> and <code>--powercap-calibration</code> remain runtime flags. Select metrics by their flags; none are selected automatically. <code>--no-metrics</code> can be combined with a powercap control flag. With no aspects selected, use <code>-command</code> alone.</p>
         <div class="table-wrap"><table><thead><tr><th>Option</th><th>Meaning</th></tr></thead><tbody>
-          <tr><td><code>-command</code>, <code>-language</code>, <code>-program</code>, <code>-output</code></td><td>Required workload command, CSV labels and output path for measurement and powercap calibration.</td></tr>
+          <tr><td><code>-command</code>, <code>-program</code>, <code>-output</code></td><td>Required workload command, CSV label and output path for measurement and powercap calibration.</td></tr>
           <tr><td><code>-n_times</code>, <code>-sleep-secs</code></td><td>Required repetition count and pause; temperature calibration requires its settling time.</td></tr>
-          <tr><td><code>-powercap</code>, <code>-time_out_limit</code></td><td>Comma-separated limits, required only with a selected powercap control; timeout is required, in hours, with 0 meaning unlimited.</td></tr>
+          <tr><td><code>-powercap</code>, <code>-timeout-hours</code></td><td>Comma-separated limits, required only with a selected powercap control; timeout is required, in hours, with 0 meaning unlimited.</td></tr>
           <tr><td><code>-interval-ms</code></td><td>Required sampling interval for over-time mode.</td></tr>
-          <tr><td><code>-temperature-control ASPECT</code>, <code>-calib-file ASPECT=PATH</code>, <code>-variance</code></td><td>Repeat the control option and supply a separate file for each controlled sensor; variance is required when control is enabled. Control is independent of metric selection.</td></tr>
+          <tr><td><code>-temperature-control METRIC</code>, <code>-calib-file METRIC=PATH</code>, <code>-variance</code></td><td>Repeat the control option and supply a separate file for each controlled sensor; variance is required when control is enabled. Control is independent of metric selection.</td></tr>
           <tr><td><code>-range MIN-MAX</code>, <code>-compile_cmd</code></td><td>Required watt range and optional compilation command for powercap calibration.</td></tr>
         </tbody></table></div>
-        <p>Use <code>--help</code> on the generated executable. Missing baselines for available controlled sensors are calibrated and invalid files cause an error. An unavailable controlled temperature disables its thermal control and repetition pauses with a warning; explicit temperature calibration fails.</p>
+        <p>Use <code>--help</code> on the generated executable. Missing baselines for available controlled sensors are calibrated and invalid files cause an error. An unavailable controlled temperature disables its thermal control with a warning; explicit temperature calibration fails.</p>
       </section>
-      <section id="device-fields"><p class="eyebrow">04 / Field reference</p><h2><code>[[aspect]]</code></h2>
-        <p>Each aspect represents one metric or a powercap control. A configuration can declare at most 64 aspects; <code>help</code> and <code>aggregate</code> are reserved names. With no active aspects, the executable runs the supplied <code>-command</code> once using <code>system()</code>, without a CSV, repetitions or timeout.</p>
+      <section id="device-fields"><p class="eyebrow">04 / Field reference</p><h2><code>[measurement]</code> and <code>[device]</code></h2>
+        <p>Each file declares one metric aspect or one powercap control. At most 64 aspects can be woven, each with at most 64 metrics; <code>help</code> is a reserved name. All woven metric aspects must declare the same mode. With no active aspects, the executable runs the supplied <code>-command</code> using <code>system()</code> (optionally repeated with <code>-n_times</code>), without a CSV or timeout.</p>
         <div class="table-wrap"><table><thead><tr><th>Field</th><th>Contract</th></tr></thead><tbody>
-          <tr><td><code>name</code></td><td>Required unique name, made of identifiers separated by dots; the flag is <code>--&lt;name&gt;</code>.</td></tr>
-          <tr><td><code>header</code>, <code>lib</code>, <code>link</code></td><td>Required header path; optional C source, object or library, and additional <code>-l</code>/<code>-L</code> flags. Paths are relative to the TOML. An aspect with missing or unbuildable dependencies is skipped with a warning.</td></tr>
-          <tr><td><code>read</code>, <code>kind</code>, <code>unit</code></td><td>Metric aspects require a no-argument numeric reader; optional <code>counter</code>, <code>gauge</code> or <code>duration</code> and CSV unit suffix. Powercap control aspects have no metric fields.</td></tr>
-          <tr><td><code>measurement_start</code>, <code>measurement_stop</code></td><td>Paired no-argument workload boundary callbacks, required for duration aspects; <code>int</code> or <code>void</code>.</td></tr>
-          <tr><td><code>setup</code>, <code>teardown</code></td><td>Optional no-argument lifecycle functions. Aspects sharing setup must share teardown; initialization is performed once. A failed setup removes the affected aspects with a warning; required calibration fails.</td></tr>
-          <tr><td><code>thermal</code></td><td>Set to <code>true</code> for a temperature gauge in Celsius. Controlled temperatures require separate calibration files.</td></tr>
-          <tr><td><code>powercap_set</code>, <code>powercap_restore</code>, <code>powercap_calibration</code></td><td>Declare on a separate control aspect; set and restore must be declared together.</td></tr>
+          <tr><td><code>measurement.aspect</code></td><td>Required unique aspect name, made of identifiers separated by dots; it names the generated module and a control aspect's flag.</td></tr>
+          <tr><td><code>measurement.mode</code></td><td><code>"aggregate"</code> or <code>"over-time"</code>; required for metric aspects and woven into the executable.</td></tr>
+          <tr><td><code>device.header</code>, <code>device.lib</code>, <code>device.link</code></td><td>Required header path; optional C source, object or library, and additional <code>-l</code>/<code>-L</code> flags. Paths are relative to the TOML. An aspect with missing or unbuildable dependencies is skipped with a warning.</td></tr>
+          <tr><td><code>measurement_start</code>, <code>measurement_stop</code></td><td>Paired no-argument workload boundary callbacks, required for duration metrics; <code>int</code> or <code>void</code>.</td></tr>
+          <tr><td><code>setup</code>, <code>teardown</code></td><td>Optional no-argument lifecycle functions. Aspects sharing setup must share teardown; initialization is performed once. A failed setup removes the affected aspect with a warning; required calibration fails.</td></tr>
+          <tr><td><code>powercap_set</code>, <code>powercap_restore</code>, <code>powercap_calibration</code></td><td>Declare on a separate control aspect without metrics; set and restore must be declared together.</td></tr>
         </tbody></table></div>
       </section>
-      <section id="metric-fields"><p class="eyebrow">05 / Metric semantics</p><h2>One metric per aspect</h2>
-        <p>A numeric no-argument <code>read</code> function supplies the value. Aggregate mode reports counter differences and final gauge or duration readings; over-time records sampled readings. Execution time appears only when a duration aspect is selected. <code>Time.WallClock</code> is an optional example using <code>CLOCK_MONOTONIC</code>; <code>Timestamp_ms</code> remains the over-time axis. Negative and non-finite readings are <code>NOT_SUPPORTED</code>. Thermal control only applies to sensors explicitly selected with <code>-temperature-control</code>.</p>
+      <section id="metric-fields"><p class="eyebrow">05 / Metric semantics</p><h2><code>[[metric]]</code></h2>
+        <p>Each <code>[[metric]]</code> declares a unique dotted <code>name</code> (its flag and CSV column), a no-argument numeric <code>measurement</code> function, an optional <code>kind</code> (<code>counter</code>, <code>gauge</code> or <code>duration</code>), an optional <code>unit</code> suffix and an optional <code>thermal = true</code> marker for a Celsius temperature gauge (at most one per aspect, with a required library <code>calibration</code> function that sleeps and returns the baseline). Aggregate mode reports counter differences and final gauge or duration readings; over-time records sampled readings. Execution time appears only when a duration aspect is selected. <code>Time.WallClock</code> is an optional example using <code>CLOCK_MONOTONIC</code>; <code>Timestamp_ms</code> remains the over-time axis. Negative and non-finite readings are <code>ERROR</code>. Thermal control only applies to sensors explicitly selected with <code>-temperature-control</code>.</p>
       </section>
       <section id="callbacks"><p class="eyebrow">06 / Hooks</p><h2>Optional aspect hooks</h2>
         <p>Setup and teardown use no-argument <code>void</code> or <code>int</code> signatures. Powercap hooks use <code>int set(int)</code>, <code>int restore()</code> and the <code>GmCalibratePowercapFn</code> signature in <code>gm_aspect.h</code>. The runtime exposes <code>runTesting()</code> to calibration implementations. Intel powercap has a separate library: omit the aspect to omit its implementation and dependencies, or leave it unselected to avoid changing limits at runtime.</p>
       </section>
       <section id="new-backend"><span id="adapter"></span><p class="eyebrow">07 / Extend</p><h2>Bring your own device code</h2>
-        <ol><li>Implement a numeric C reader and expose it in a header.</li><li>Declare one aspect per metric and mark temperature gauges with <code>thermal = true</code>.</li><li>Declare lifecycle hooks and any separate powercap control aspect, weave and inspect the generated flags with <code>--help</code>.</li></ol>
+        <ol><li>Implement numeric C readers and expose them in a header.</li><li>Declare one aspect per library with a <code>[[metric]]</code> per reader, marking temperature gauges with <code>thermal = true</code>.</li><li>Declare lifecycle hooks and any separate powercap control aspect, weave and inspect the generated flags with <code>--help</code>.</li></ol>
         <p>The existing <a href="https://github.com/simaocunha71/GreenMeasurer/tree/main/src/devices">device libraries</a> are optional examples. <code>gm_workload_pid</code> is available to workload-scoped readers.</p>
       </section>
       <section id="tools"><p class="eyebrow">08 / Commands</p><h2>Build and test</h2>
         <pre><code>make -C src
-python3 scripts/weave.py examples/system/config.toml -o generated-experiment
+python3 scripts/weave.py examples/aggregate/system.toml -o generated-experiment
 ./generated-experiment/greenmeasurer --help
 make -C src test</code></pre>
         <p>For batch execution and analysis see <a href="https://github.com/simaocunha71/GreenMeasurer/blob/main/scripts/README.md">scripts/README.md</a>.</p>

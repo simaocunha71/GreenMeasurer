@@ -512,11 +512,11 @@ static int append_calibration_rows(FILE *output, const char *filename, int keep_
 }
 
 /* The engine provides runTesting; it stays optional so that libraries linked without it still link. */
-extern int runTesting(int, int, const char *, const char *, const char *, const char *, int,
+extern int runTesting(int, int, const char *, const char *, const char *, int,
                       int, float, int, int) __attribute__((weak));
 
 
-int intel_cpu_calibrate_powercap(int ntimes, int core, const char *command, const char *language,
+int intel_cpu_calibrate_powercap(int ntimes, int core, const char *command,
                                  const char *program, const char *calib_csv_file,
                                  const char *process_script, int min_powercap, int max_powercap,
                                  int time_out_limit, float temp_threshold, int variance, int memory) {
@@ -567,7 +567,7 @@ int intel_cpu_calibrate_powercap(int ntimes, int core, const char *command, cons
             break;
         }
 
-        if (runTesting(ntimes, core, command, language, program, filename,
+        if (runTesting(ntimes, core, command, program, filename,
                        power_cap, time_out_limit, temp_threshold, variance, memory) != 0) {
             fprintf(stderr, "[ERROR] Calibration measurement failed for powercap %d.\n", power_cap);
             result = -1;

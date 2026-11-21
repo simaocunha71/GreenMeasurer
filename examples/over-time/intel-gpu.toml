@@ -1,0 +1,23 @@
+[measurement]
+aspect = "IntelGPU"
+mode = "over-time"
+setup = "int intel_gpu_begin()"
+teardown = "void intel_gpu_end()"
+
+[device]
+lib = "../../src/devices/libgm_intel_gpu.a"
+header = "../../src/devices/linux/gpu/intel/intel_gpu.h"
+
+[[metric]]
+name = "IntelGPU.Energy"
+measurement = "double intel_gpu_get_energy()"
+kind = "counter"
+unit = "J"
+
+[[metric]]
+name = "IntelGPU.Temperature"
+measurement = "double intel_gpu_get_temperature()"
+kind = "gauge"
+unit = "C"
+thermal = true
+calibration = "double intel_gpu_calibrate_temperature(unsigned)"

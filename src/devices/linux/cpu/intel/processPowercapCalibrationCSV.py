@@ -71,7 +71,7 @@ def classify_gps_category(
 
     return 'Neutral (Greenup=1)'
 
-def process_csv(filename, time_column='Time_ms'):
+def process_csv(filename, time_column='Time_ms', optimal_file=None):
     data = pd.read_csv(filename)
     package_columns = [
         column for column in data.columns
@@ -158,14 +158,20 @@ def process_csv(filename, time_column='Time_ms'):
         lowest_value    = results[lowest_powercap]['Package']
         label = "saved baseline" if lowest_powercap == -1 else f"{lowest_powercap} W"
         print(f"{'Optimal Energy Powercap (Lowest Package):':<45} {label} (Average: {lowest_value:.2f} J)")
+        if optimal_file:
+            with open(optimal_file, "w", encoding="utf-8") as output:
+                output.write(f"{lowest_powercap}\n")
+            print(f"Optimal powercap saved to {optimal_file}")
     print(f"{'=' * sum(col_widths)}\n")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("filename")
     parser.add_argument("--time-column", default="Time_ms")
+    parser.add_argument("--optimal-file", default=None,
+                        help="text file receiving the powercap with the lowest package energy")
     args = parser.parse_args()
-    process_csv(args.filename, args.time_column)
+    process_csv(args.filename, args.time_column, args.optimal_file)
 
 if __name__ == "__main__":
     main()

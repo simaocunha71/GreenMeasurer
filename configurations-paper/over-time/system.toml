@@ -1,0 +1,13 @@
+[measurement]
+aspect = "System"
+mode = "over-time"
+
+[device]
+lib = "../../src/devices/libgm_system.a"
+header = "../../src/devices/linux/system.h"
+
+[[metric]]
+name = "System.RunningProcesses"
+measurement = "double system_get_running_processes()"
+kind = "gauge"
+unit = "processes"

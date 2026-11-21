@@ -11,20 +11,21 @@ double intel_cpu_get_package(void) {
 double intel_cpu_get_core(void) { static int n; return ++n; }
 double intel_cpu_get_dram(void) { static int n; return ++n; }
 double intel_cpu_get_temperature(void) { return 40.0; }
+double intel_cpu_calibrate_temperature(unsigned seconds) { (void)seconds; return 40.0; }
 int intel_cpu_set_powercap(int watts) { (void)watts; return 0; }
 int intel_cpu_destroy_powercap(void) { return 0; }
 void intel_cpu_powercap_end(void) {}
 
-int runTesting(int, int, const char *, const char *, const char *, const char *, int, int,
+int runTesting(int, int, const char *, const char *, const char *, int, int,
                float, int, int);
-int intel_cpu_calibrate_powercap(int ntimes, int core, const char *command, const char *language,
+int intel_cpu_calibrate_powercap(int ntimes, int core, const char *command,
                                  const char *program, const char *csv, const char *script,
                                  int min, int max, int timeout, float temperature, int variance,
                                  int memory) {
     (void)script;
     (void)min;
     (void)max;
-    return runTesting(ntimes, core, command, language, program, csv, -1, timeout,
+    return runTesting(ntimes, core, command, program, csv, -1, timeout,
                       temperature, variance, memory);
 }
 
@@ -32,6 +33,7 @@ int intel_gpu_begin(void) { return getenv("MOCK_INTEL_GPU_UNAVAILABLE") != NULL;
 void intel_gpu_end(void) {}
 double intel_gpu_get_energy(void) { static int n; return ++n; }
 double intel_gpu_get_temperature(void) { return 45.0; }
+double intel_gpu_calibrate_temperature(unsigned seconds) { (void)seconds; return 45.0; }
 
 int nvidia_begin(void) { return getenv("MOCK_NVIDIA_GPU_UNAVAILABLE") != NULL; }
 void nvidia_end(void) {}
@@ -39,6 +41,10 @@ double nvidia_get_energy(void) { static int n; return ++n; }
 double nvidia_get_power(void) { return 50.0; }
 double nvidia_get_temperature(void) {
     return getenv("MOCK_NVIDIA_TEMPERATURE_UNAVAILABLE") ? -1.0 : 55.0;
+}
+double nvidia_calibrate_temperature(unsigned seconds) {
+    (void)seconds;
+    return nvidia_get_temperature();
 }
 double nvidia_get_utilization(void) { return 25.0; }
 double nvidia_get_vram(void) { return 32.0; }

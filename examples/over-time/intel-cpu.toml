@@ -1,0 +1,27 @@
+[measurement]
+aspect = "IntelCPU"
+mode = "over-time"
+setup = "int intel_cpu_begin()"
+teardown = "void intel_cpu_end()"
+
+[device]
+lib = "../../src/devices/libgm_intel_cpu.a"
+header = "../../src/devices/linux/cpu/intel/intel_cpu.h"
+
+[[metric]]
+name = "IntelCPU.Package"
+measurement = "double intel_cpu_get_package()"
+kind = "counter"
+unit = "J"
+
+[[metric]]
+name = "IntelCPU.Core"
+measurement = "double intel_cpu_get_core()"
+kind = "counter"
+unit = "J"
+
+[[metric]]
+name = "IntelCPU.DRAM"
+measurement = "double intel_cpu_get_dram()"
+kind = "counter"
+unit = "J"

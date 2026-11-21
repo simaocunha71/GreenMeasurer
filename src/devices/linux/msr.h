@@ -36,12 +36,9 @@ typedef struct {
     double energy_unit;   /* joules per counter tick */
 } RaplMsr;
 
-/* One energy domain. The hardware counter is 32 bits wide; ticks accumulates its deltas. */
+/* One energy domain. The hardware counter is 32 bits wide and wraps around. */
 typedef struct {
     uint32_t reg;
-    uint32_t last;
-    uint64_t ticks;
-    int primed;
     int seen_nonzero;
 } RaplDomain;
 
@@ -51,7 +48,9 @@ typedef struct {
 int rapl_msr_open(RaplMsr *msr, int core);
 void rapl_msr_close(RaplMsr *msr);
 
-/* Cumulative energy of the domain in joules, or -1 when the domain is unreadable or absent. */
+/* Raw reading of the domain's hardware energy counter in joules, or -1 when the
+   domain is unreadable or absent. The counter accumulates since an arbitrary
+   hardware-defined origin and wraps around when it overflows. */
 double rapl_msr_energy(const RaplMsr *msr, RaplDomain *domain);
 
 #endif

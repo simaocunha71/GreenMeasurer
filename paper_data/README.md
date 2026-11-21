@@ -5,7 +5,9 @@ experiments. The TOML files use the previous configuration format and are kept
 as historical records; they cannot be used with the current generator. The
 archived aggregate configuration has been renamed for current terminology,
 not migrated to the current format.
-For current examples, see [configurations-generated](../configurations-generated).
+To rerun these experiments with the current format, see
+[configurations-paper](../configurations-paper). For current examples, see
+[examples](../examples).
 
 The archived dataset used recursive Fibonacci in C with input 55, 10 repetitions,
 a four-hour timeout, 5 C temperature variance, a 60-second idle period and

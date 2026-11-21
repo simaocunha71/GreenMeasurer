@@ -1,0 +1,15 @@
+[measurement]
+aspect = "Time"
+mode = "over-time"
+measurement_start = "int gm_wall_clock_time_start()"
+measurement_stop = "int gm_wall_clock_time_stop()"
+
+[device]
+lib = "../../src/aspects/wall_clock_time.c"
+header = "../../src/aspects/wall_clock_time.h"
+
+[[metric]]
+name = "Time.WallClock"
+measurement = "double gm_wall_clock_time_read()"
+kind = "duration"
+unit = "ms"

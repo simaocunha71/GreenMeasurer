@@ -25,31 +25,33 @@ def positive_int(value):
 
 
 def aspect_arguments(model, metrics, calibration_values, variance, controlled):
-    aspects = {aspect["name"]: aspect for aspect in model["aspects"]}
+    declared = {}
+    for aspect in model["aspects"]:
+        for metric in aspect["metrics"]:
+            declared[metric["name"]] = (aspect, metric)
     if not metrics or len(set(metrics)) != len(metrics):
-        raise ValueError("select at least one distinct aspect")
-    unknown = set(metrics) - set(aspects)
+        raise ValueError("select at least one distinct metric")
+    unknown = set(metrics) - set(declared)
     if unknown:
-        raise ValueError(f"aspects not declared in the configuration: {sorted(unknown)}")
-    if any(not aspects[name]["metrics"] for name in metrics):
-        raise ValueError("--metrics must contain metric aspects, not powercap control aspects")
+        raise ValueError(f"metrics not declared in the configuration: {sorted(unknown)}")
     files = {}
     for item in calibration_values:
         name, separator, path = item.partition("=")
         if not separator or not path or name in files:
-            raise ValueError("--calib-file must be a unique <aspect>=<path>")
+            raise ValueError("--calib-file must be a unique <metric>=<path>")
         files[name] = path
-    thermal = {name for name, aspect in aspects.items() if "thermal" in aspect}
+    thermal = {aspect["metrics"][aspect["thermal_metric"]]["name"]
+               for aspect in model["aspects"] if aspect.get("thermal_metric", -1) >= 0}
     if len(set(controlled)) != len(controlled) or not set(controlled) <= thermal:
-        raise ValueError("--temperature-control must name distinct declared temperature aspects")
+        raise ValueError("--temperature-control must name distinct declared temperature metrics")
     if set(files) != set(controlled):
-        raise ValueError("--calib-file must be supplied for each controlled temperature aspect only")
+        raise ValueError("--calib-file must be supplied for each controlled temperature metric only")
     if bool(controlled) != (variance is not None):
         raise ValueError("--variance is required only when temperature control is enabled")
     for path in files.values():
         if not Path(path).is_file():
             raise ValueError(f"calibration file does not exist: {path}")
-    return aspects, files
+    return declared, files
 
 
 def selection_arguments(metrics, files, variance):
@@ -80,10 +82,10 @@ def run_timed(command):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True,
-                        help="TOML configuration declaring aspects")
+    parser.add_argument("--config", type=Path, nargs="+", required=True,
+                        help="TOML aspect files declaring over-time aspects")
     parser.add_argument("--command", required=True, help="Workload command")
-    parser.add_argument("--metrics", nargs="+", required=True, help="Aspect names to select")
+    parser.add_argument("--metrics", nargs="+", required=True, help="Metric names to select")
     parser.add_argument("--interval-ms", type=positive_int, required=True)
     parser.add_argument("--calib-file", action="append", default=[], metavar="ASPECT=PATH")
     parser.add_argument("--temperature-control", action="append", default=[], metavar="ASPECT")
@@ -94,10 +96,14 @@ def main():
     if tomllib is None:
         parser.error("Python 3.11+ or the 'tomli' package is required for TOML parsing")
     try:
-        config_path = args.config.resolve()
-        with config_path.open("rb") as source:
-            config = tomllib.load(source)
-        model = validate(config, config_path)
+        config_paths = [path.resolve() for path in args.config]
+        configs = []
+        for config_path in config_paths:
+            with config_path.open("rb") as source:
+                configs.append((tomllib.load(source), config_path))
+        model = validate(configs)
+        if model["aspects"] and model["mode"] != "over-time":
+            raise ValueError("the configuration must declare mode = \"over-time\"")
         if not args.command.strip():
             raise ValueError("--command must not be empty")
         if args.variance is not None and not 0 <= args.variance <= 1000:
@@ -118,7 +124,7 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="greenmeasurer-overhead-") as directory:
             output = Path(directory) / "overtime.csv"
-            executable, _ = weave(config_path, Path(directory) / "generated", 1000000)
+            executable, _ = weave(config_paths, Path(directory) / "generated", 1000000)
             for pair in range(1, args.runs + 1):
                 modes = ["baseline", "over-time"]
                 rng.shuffle(modes)
@@ -132,10 +138,10 @@ def main():
                         if output.exists():
                             output.unlink()
                         elapsed = run_timed(
-                            [str(executable), "--over-time", "-command", command,
-                             "-language", "Shell", "-program", "overhead", "-output", str(output),
+                            [str(executable), "-command", command,
+                             "-program", "overhead", "-output", str(output),
                              "-n_times", "1", "-sleep-secs", "0",
-                             "-time_out_limit", "0", "-interval-ms", str(args.interval_ms),
+                             "-timeout-hours", "0", "-interval-ms", str(args.interval_ms),
                              *selection_arguments(args.metrics, files, args.variance)])
                         runs = read_runs(output)
                         if len(runs) != 1:

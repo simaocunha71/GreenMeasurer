@@ -1,4 +1,6 @@
 #include "nvidia_gpu.h"
+
+#include <unistd.h>
 #include "gm_aspect.h"
 #include <nvml.h>
 #include <stdlib.h>
@@ -80,4 +82,10 @@ double nvidia_get_vram(void) {
     if (compute < 0.0) return graphics;
     if (graphics < 0.0) return compute;
     return compute > graphics ? compute : graphics;
+}
+
+/* Stabilizes for the requested number of seconds and reads the baseline temperature. */
+double nvidia_calibrate_temperature(unsigned sleep_seconds) {
+    if (sleep_seconds) sleep(sleep_seconds);
+    return nvidia_get_temperature();
 }

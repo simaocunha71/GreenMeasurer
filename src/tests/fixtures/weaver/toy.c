@@ -1,6 +1,7 @@
 #include "toy.h"
 
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 
 static unsigned long energy;
@@ -37,6 +38,16 @@ double toy_thermal(void) {
     return 40.0;
 }
 
+double toy_calibrate_thermal(unsigned seconds) {
+    if (seconds) sleep(seconds);
+    return toy_thermal();
+}
+
+float toy_calibrate_temperature(unsigned seconds) {
+    if (seconds) sleep(seconds);
+    return toy_temperature();
+}
+
 int toy_cap_set(int watts) {
     char event[32];
     snprintf(event, sizeof(event), "set:%d", watts);
@@ -50,10 +61,10 @@ int toy_cap_restore(void) {
 }
 
 /* Same contract as intel_cpu_calibrate_powercap: -1, then min..max, through the engine's runTesting. */
-extern int runTesting(int, int, const char *, const char *, const char *, const char *, int, int,
+extern int runTesting(int, int, const char *, const char *, const char *, int, int,
                       float, int, int);
 
-int toy_calibrate(int ntimes, int core, const char *command, const char *language,
+int toy_calibrate(int ntimes, int core, const char *command,
                   const char *program, const char *csv, const char *script, int min_powercap,
                   int max_powercap, int timeout, float temperature, int variance, int memory) {
     (void)script;
@@ -64,7 +75,7 @@ int toy_calibrate(int ntimes, int core, const char *command, const char *languag
     }
     for (int cap = -1; cap <= max_powercap; cap = cap == -1 ? min_powercap : cap + 1) {
         toy_cap_set(cap);
-        int result = runTesting(ntimes, core, command, language, program, csv, cap, timeout,
+        int result = runTesting(ntimes, core, command, program, csv, cap, timeout,
                                 temperature, variance, memory);
         toy_cap_restore();
         if (result != 0) return -1;

@@ -21,16 +21,16 @@ def read_runs(path):
     runs = []
     with open(path, newline="", encoding="utf-8-sig") as source:
         reader = csv.DictReader(source, skipinitialspace=True)
-        required = {"Language", "Program", "Powercap"}
+        required = {"Program", "Powercap"}
         if not reader.fieldnames or not required.issubset(reader.fieldnames):
-            raise ValueError("CSV must contain Language, Program, Powercap and Timestamp_ms or Timestamp_us")
+            raise ValueError("CSV must contain Program, Powercap and Timestamp_ms or Timestamp_us")
         timestamp_columns = {"Timestamp_us", "Timestamp_ms"}.intersection(reader.fieldnames)
         if len(timestamp_columns) != 1:
             raise ValueError("CSV must contain exactly one of Timestamp_us or Timestamp_ms")
         timestamp_column = timestamp_columns.pop()
         for line, row in enumerate(reader, 2):
             try:
-                key = tuple(row[name].strip() for name in ("Language", "Program", "Powercap"))
+                key = tuple(row[name].strip() for name in ("Program", "Powercap"))
                 timestamp = float(row[timestamp_column])
                 if timestamp_column == "Timestamp_ms":
                     timestamp *= 1000
@@ -69,7 +69,7 @@ def main():
     print("Intervals use consecutive sample timestamps; the first and final partial windows are not distinguished.")
     for number, (key, timestamps) in enumerate(runs, 1):
         intervals = [b - a for a, b in zip(timestamps, timestamps[1:])]
-        print(f"\nRun {number}: language={key[0]}, program={key[1]}, powercap={key[2]}")
+        print(f"\nRun {number}: program={key[0]}, powercap={key[1]}")
         print(f"  Samples: {len(timestamps)}; first={timestamps[0]:.6f} us; last={timestamps[-1]:.6f} us")
         if not intervals:
             print("  No consecutive sample intervals available.")

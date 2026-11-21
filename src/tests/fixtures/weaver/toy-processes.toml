@@ -1,0 +1,11 @@
+[measurement]
+aspect = "Processes"
+mode = "over-time"
+
+[device]
+lib = "libtoy.a"
+header = "toy.h"
+
+[[metric]]
+name = "Processes.NumberProcesses"
+measurement = "int toy_processes()"

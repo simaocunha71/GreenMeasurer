@@ -1,5 +1,7 @@
 #include "intel_cpu_temperature.h"
 
+#include <unistd.h>
+
 #include <math.h>
 #include <sensors/sensors.h>
 #include <stdio.h>
@@ -48,4 +50,10 @@ double intel_cpu_get_temperature(void) {
         }
     }
     return count ? sum / (double)count : -1.0;
+}
+
+/* Stabilizes for the requested number of seconds and reads the baseline temperature. */
+double intel_cpu_calibrate_temperature(unsigned sleep_seconds) {
+    if (sleep_seconds) sleep(sleep_seconds);
+    return intel_cpu_get_temperature();
 }

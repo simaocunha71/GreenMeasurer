@@ -2,25 +2,30 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-if [[ $# -ne 2 ]]; then
-    echo "Usage: $0 <aspects.toml> <new-directory>" >&2
+if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 <new-directory> <aspect.toml> [aspect.toml ...]" >&2
     echo "Generate the executable, then run it with --powercap-calibration and explicit options." >&2
     exit 1
 fi
-calibration_aspects=$(python3 - "$root" "$1" <<'PY'
+directory=$1
+shift
+calibration_aspects=$(python3 - "$root" "$@" <<'PY'
 import sys
 from pathlib import Path
 
-root, path = map(Path, sys.argv[1:])
+root = Path(sys.argv[1])
+paths = [Path(arg) for arg in sys.argv[2:]]
 sys.path.insert(0, str(root / "scripts"))
 from weave import tomllib, validate
 
 if tomllib is None:
     sys.exit("Error: Python 3.11+ or the 'tomli' package is required for TOML parsing")
 try:
-    with path.open("rb") as source:
-        config = tomllib.load(source)
-    model = validate(config, path.resolve())
+    configs = []
+    for path in paths:
+        with path.open("rb") as source:
+            configs.append((tomllib.load(source), path.resolve()))
+    model = validate(configs)
     names = [aspect["name"] for aspect in model["aspects"] if "powercap_calibration" in aspect]
     if not names:
         raise ValueError("an aspect must declare powercap_calibration")
@@ -29,12 +34,12 @@ except (OSError, ValueError, UnicodeError) as error:
     sys.exit(f"Error: {error}")
 PY
 ) || exit 1
-if [[ -e "$2" ]]; then
-    echo "[ERROR] Output directory already exists: $2" >&2
+if [[ -e "$directory" ]]; then
+    echo "[ERROR] Output directory already exists: $directory" >&2
     exit 1
 fi
-python3 "$root/scripts/weave.py" "$1" -o "$2"
-help_output=$("$2/greenmeasurer" --help)
+python3 "$root/scripts/weave.py" "$@" -o "$directory"
+help_output=$("$directory/greenmeasurer" --help)
 while IFS= read -r name; do
     if grep -Fqx -- "  --$name" <<<"$help_output"; then
         exit 0

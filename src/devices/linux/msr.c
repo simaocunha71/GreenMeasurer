@@ -1,5 +1,4 @@
 #include "msr.h"
-#include "energy-counter.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
@@ -46,8 +45,5 @@ double rapl_msr_energy(const RaplMsr *msr, RaplDomain *domain) {
     /* A real counter never stays at 0; a stub or unsupported domain does. */
     if (now != 0) domain->seen_nonzero = 1;
     if (!domain->seen_nonzero) return -1.0;
-    if (domain->primed) domain->ticks += energy_counter_delta32(now, domain->last);
-    domain->primed = 1;
-    domain->last = now;
-    return (double)domain->ticks * msr->energy_unit;
+    return (double)now * msr->energy_unit;
 }

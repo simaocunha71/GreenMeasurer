@@ -18,50 +18,74 @@ class AspectCliTest(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         cls.directory = Path(cls.temp.name)
-        config = cls.directory / "aspects.toml"
-        common = (f'header = "{FIXTURES / "toy.h"}"\n'
-                  f'lib = "{FIXTURES / "toy.c"}"\n'
-                  'setup = "int toy_setup()"\n'
-                  'teardown = "void toy_teardown()"\n')
-        config.write_text(
-            '[[aspect]]\nname = "Time.WallClock"\n'
-            f'header = "{ROOT / "src/aspects/wall_clock_time.h"}"\n'
-            f'lib = "{ROOT / "src/aspects/wall_clock_time.c"}"\n'
-            'measurement_start = "int gm_wall_clock_time_start()"\n'
-            'measurement_stop = "int gm_wall_clock_time_stop()"\n'
-            'read = "double gm_wall_clock_time_read()"\nkind = "duration"\nunit = "ms"\n'
-            '[[aspect]]\nname = "Energy.Package"\n' + common +
-            'read = "unsigned long toy_energy()"\nkind = "counter"\nunit = "uJ"\n'
-            '[[aspect]]\nname = "CPU.Powercap"\n' + common +
-            'powercap_set = "int toy_cap_set(int)"\n'
-            'powercap_restore = "int toy_cap_restore()"\n'
-            'powercap_calibration = "toy_calibrate"\n'
-            '[[aspect]]\nname = "CPU.OtherPowercap"\n' + common +
-            'powercap_set = "int toy_cap_set(int)"\n'
-            'powercap_restore = "int toy_cap_restore()"\n'
-            '[[aspect]]\nname = "CPU.Temperature"\n' + common +
-            'read = "double toy_thermal()"\nunit = "C"\nthermal = true\n'
-            '[[aspect]]\nname = "GPU.Temperature"\n' + common +
-            'read = "float toy_temperature()"\nunit = "C"\nthermal = true\n')
-        result = subprocess.run(
-            [sys.executable, str(ROOT / "scripts/weave.py"), str(config),
-             "-o", str(cls.directory / "build")], capture_output=True, text=True)
-        if result.returncode:
-            raise AssertionError(result.stderr)
-        cls.binary = cls.directory / "build/greenmeasurer"
+        common = (f'[device]\nheader = "{FIXTURES / "toy.h"}"\n'
+                  f'lib = "{FIXTURES / "toy.c"}"\n')
+        hooks = ('setup = "int toy_setup()"\n'
+                 'teardown = "void toy_teardown()"\n')
+        declarations = {
+            "time": ('[measurement]\naspect = "Time"\nmode = "MODE"\n'
+                     'measurement_start = "int gm_wall_clock_time_start()"\n'
+                     'measurement_stop = "int gm_wall_clock_time_stop()"\n\n'
+                     f'[device]\nheader = "{ROOT / "src/aspects/wall_clock_time.h"}"\n'
+                     f'lib = "{ROOT / "src/aspects/wall_clock_time.c"}"\n\n'
+                     '[[metric]]\nname = "Time.WallClock"\n'
+                     'measurement = "double gm_wall_clock_time_read()"\n'
+                     'kind = "duration"\nunit = "ms"\n'),
+            "energy": ('[measurement]\naspect = "Energy"\nmode = "MODE"\n' + hooks +
+                       '\n' + common +
+                       '\n[[metric]]\nname = "Energy.Package"\n'
+                       'measurement = "unsigned long toy_energy()"\n'
+                       'kind = "counter"\nunit = "uJ"\n'),
+            "powercap": ('[measurement]\naspect = "CPU.Powercap"\n' + hooks +
+                         'powercap_set = "int toy_cap_set(int)"\n'
+                         'powercap_restore = "int toy_cap_restore()"\n'
+                         'powercap_calibration = "toy_calibrate"\n\n' + common),
+            "other-powercap": ('[measurement]\naspect = "CPU.OtherPowercap"\n' + hooks +
+                               'powercap_set = "int toy_cap_set(int)"\n'
+                               'powercap_restore = "int toy_cap_restore()"\n\n' + common),
+            "cpu-temperature": ('[measurement]\naspect = "CPU.Temperature"\nmode = "MODE"\n' +
+                                hooks + '\n' + common +
+                                '\n[[metric]]\nname = "CPU.Temperature"\n'
+                                'measurement = "double toy_thermal()"\n'
+                                'unit = "C"\nthermal = true\n'
+                                'calibration = "double toy_calibrate_thermal(unsigned)"\n'),
+            "gpu-temperature": ('[measurement]\naspect = "GPU.Temperature"\nmode = "MODE"\n' +
+                                hooks + '\n' + common +
+                                '\n[[metric]]\nname = "GPU.Temperature"\n'
+                                'measurement = "float toy_temperature()"\n'
+                                'unit = "C"\nthermal = true\n'
+                                'calibration = "float toy_calibrate_temperature(unsigned)"\n'),
+        }
+        cls.binaries = {}
+        for mode in ("aggregate", "over-time"):
+            configs = []
+            for name, text in declarations.items():
+                config = cls.directory / f"{mode}-{name}.toml"
+                config.write_text(text.replace("MODE", mode))
+                configs.append(str(config))
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/weave.py"), *configs,
+                 "-o", str(cls.directory / f"build-{mode}")], capture_output=True, text=True)
+            if result.returncode:
+                raise AssertionError(result.stderr)
+            cls.binaries[mode] = cls.directory / f"build-{mode}/greenmeasurer"
+        cls.binary = cls.binaries["aggregate"]
 
     @classmethod
     def tearDownClass(cls):
         cls.temp.cleanup()
 
     def run_binary(self, *args, **env):
-        return subprocess.run([str(self.binary), *args], capture_output=True, text=True,
+        # Measurement modes are woven in; strip their flags and pick the right binary.
+        binary = self.binaries["over-time"] if "--over-time" in args else self.binary
+        args = [arg for arg in args if arg not in ("--aggregate", "--over-time")]
+        return subprocess.run([str(binary), *args], capture_output=True, text=True,
                               env={**os.environ, **env}, timeout=30)
 
     def measure_args(self, output):
-        return ["--aggregate", "-command", "true", "-language", "Shell", "-program", "true",
+        return ["--aggregate", "-command", "true", "-program", "true",
                 "-output", str(output), "-n_times", "1", "-sleep-secs", "0",
-                "-powercap", "-1", "-time_out_limit", "0"]
+                "-powercap", "-1", "-timeout-hours", "0"]
 
     def test_selects_one_aspect_without_reading_temperature(self):
         output = self.directory / "energy.csv"
@@ -71,7 +95,7 @@ class AspectCliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with output.open() as source:
             rows = list(csv.DictReader(source))
-        self.assertEqual(list(rows[0]), ["Language", "Program", "Powercap",
+        self.assertEqual(list(rows[0]), ["Program", "Powercap",
                                         "Energy.Package_uJ"])
         self.assertEqual(rows[0]["Energy.Package_uJ"], "10")
         self.assertEqual(log.read_text().split(), ["setup", "teardown"])
@@ -95,9 +119,63 @@ class AspectCliTest(unittest.TestCase):
                                  ["setup", "set:-1", "restore", "set:5", "restore", "teardown"])
                 with output.open() as source:
                     rows = list(csv.DictReader(source))
-                self.assertEqual(list(rows[0]), ["Language", "Program", "Powercap"] +
+                self.assertEqual(list(rows[0]), ["Program", "Powercap"] +
                                  (["Timestamp_ms"] if mode == "--over-time" else []))
                 self.assertEqual({row["Powercap"] for row in rows}, {"-1", "5"})
+
+    def test_over_time_counters_report_interval_deltas_across_powercaps(self):
+        header = self.directory / "direct-read.h"
+        source = self.directory / "direct-read.c"
+        metrics_config = self.directory / "direct-read-metrics.toml"
+        control_config = self.directory / "direct-read-control.toml"
+        header.write_text("int read_counter(void);\nint read_gauge(void);\n"
+                          "int set_cap(int watts);\nint restore_cap(void);\n")
+        source.write_text(
+            '#include "direct-read.h"\n'
+            'static int counter = 100, cap;\n'
+            'int read_counter(void) { return ++counter; }\n'
+            'int read_gauge(void) { return cap == 5 ? 77 : 33; }\n'
+            'int set_cap(int watts) { cap = watts; return 0; }\n'
+            'int restore_cap(void) { return 0; }\n')
+        metrics_config.write_text(
+            '[measurement]\naspect="Test"\nmode="over-time"\n\n'
+            '[device]\nheader="direct-read.h"\nlib="direct-read.c"\n\n'
+            '[[metric]]\nname="Test.Counter"\nmeasurement="int read_counter()"\nkind="counter"\n'
+            '[[metric]]\nname="Test.Gauge"\nmeasurement="int read_gauge()"\nkind="gauge"\n')
+        control_config.write_text(
+            '[measurement]\naspect="Test.Powercap"\n'
+            'powercap_set="int set_cap(int)"\npowercap_restore="int restore_cap()"\n\n'
+            '[device]\nheader="direct-read.h"\nlib="direct-read.c"\n')
+        build = self.directory / "direct-read-build"
+        generated = subprocess.run(
+            [sys.executable, str(ROOT / "scripts/weave.py"), str(metrics_config),
+             str(control_config), "-o", str(build)],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(generated.returncode, 0, generated.stderr)
+        output = self.directory / "direct-read.csv"
+        output.unlink(missing_ok=True)
+        result = subprocess.run(
+            [str(build / "greenmeasurer"), "-command", "sleep 0.05",
+             "-program", "test", "-output", str(output), "-n_times", "1",
+             "-sleep-secs", "0", "-timeout-hours", "0", "-interval-ms", "5", "-powercap", "-1,5",
+             "--Test.Counter", "--Test.Gauge", "--Test.Powercap"],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with output.open() as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        for cap, gauge in (("-1", "33"), ("5", "77")):
+            cap_rows = [row for row in rows if row["Powercap"] == cap]
+            counters = [int(row["Test.Counter"]) for row in cap_rows
+                        if row["Test.Counter"] != "ERROR"]
+            gauges = [row["Test.Gauge"] for row in cap_rows
+                      if row["Test.Gauge"] != "ERROR"]
+            self.assertTrue(counters)
+            self.assertTrue(gauges)
+            self.assertEqual(set(gauges), {gauge})
+            # Per-interval deltas of a reader advancing one per read: small values that
+            # sum to the run's total, never the raw readings (which start at 101).
+            self.assertTrue(all(0 <= value <= 10 for value in counters))
+            self.assertGreater(sum(counters), 0)
 
     def test_measurement_without_powercap_option_does_not_activate_control(self):
         for mode in ("--aggregate", "--over-time"):
@@ -152,8 +230,8 @@ class AspectCliTest(unittest.TestCase):
         self.assertFalse(output.exists())
 
         result = self.run_binary("--powercap-calibration", "-range", "2-2", "-command", "true",
-                                 "-language", "Shell", "-program", "true", "-output", str(output),
-                                 "-n_times", "1", "-sleep-secs", "0", "-time_out_limit", "0",
+                                 "-program", "true", "-output", str(output),
+                                 "-n_times", "1", "-sleep-secs", "0", "-timeout-hours", "0",
                                  "--Energy.Package")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Select a powercap control aspect", result.stderr)
@@ -211,7 +289,7 @@ class AspectCliTest(unittest.TestCase):
                 if mode == "--over-time":
                     self.assertLess(abs(float(rows[-1]["Timestamp_ms"]) - elapsed), 30)
                     values = [float(row["Time.WallClock_ms"]) for row in rows
-                              if row["Time.WallClock_ms"] != "NOT_SUPPORTED"]
+                              if row["Time.WallClock_ms"] != "ERROR"]
                     self.assertEqual(values, sorted(values))
 
         output = self.directory / "no-time.csv"
@@ -222,31 +300,35 @@ class AspectCliTest(unittest.TestCase):
     def test_custom_duration_callbacks_and_failures(self):
         header = self.directory / "custom-time.h"
         source = self.directory / "custom-time.c"
-        config = self.directory / "custom-time.toml"
         header.write_text("int begin(void);\nint end(void);\ndouble elapsed(void);\n")
         source.write_text(
             '#include <stdlib.h>\nstatic int active;\n'
             'int begin(void) { if (getenv("FAIL_BEGIN")) return -1; active = 1; return 0; }\n'
             'int end(void) { active = 0; return getenv("FAIL_END") ? -1 : 0; }\n'
             'double elapsed(void) { return active ? 10 : 20; }\n')
-        config.write_text(
-            '[[aspect]]\nname="Time.Custom"\nheader="custom-time.h"\nlib="custom-time.c"\n'
-            'measurement_start="int begin()"\nmeasurement_stop="int end()"\n'
-            'read="double elapsed()"\nkind="duration"\nunit="ms"\n')
-        build = self.directory / "custom-time-build"
-        result = subprocess.run([sys.executable, str(ROOT / "scripts/weave.py"),
-                                 str(config), "-o", str(build)],
-                                capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        builds = {}
+        for mode in ("aggregate", "over-time"):
+            config = self.directory / f"custom-time-{mode}.toml"
+            config.write_text(
+                f'[measurement]\naspect="Time.Custom"\nmode="{mode}"\n'
+                'measurement_start="int begin()"\nmeasurement_stop="int end()"\n\n'
+                '[device]\nheader="custom-time.h"\nlib="custom-time.c"\n\n'
+                '[[metric]]\nname="Time.Custom"\nmeasurement="double elapsed()"\n'
+                'kind="duration"\nunit="ms"\n')
+            build = self.directory / f"custom-time-build-{mode}"
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/weave.py"),
+                                     str(config), "-o", str(build)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            builds[mode] = build
         output = self.directory / "custom-time.csv"
-        args = self.measure_args(output)
+        args = self.measure_args(output)[1:]
         args[args.index("-command") + 1] = "sleep 0.03"
-        for mode in ("--aggregate", "--over-time"):
+        for mode in ("aggregate", "over-time"):
             output.unlink(missing_ok=True)
-            args[0] = mode
             result = subprocess.run(
-                [str(build / "greenmeasurer"), *args,
-                 *(["-interval-ms", "5"] if mode == "--over-time" else []), "--Time.Custom"],
+                [str(builds[mode] / "greenmeasurer"), *args,
+                 *(["-interval-ms", "5"] if mode == "over-time" else []), "--Time.Custom"],
                 capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             with output.open() as result_file:
@@ -254,8 +336,8 @@ class AspectCliTest(unittest.TestCase):
             self.assertEqual(rows[-1]["Time.Custom_ms"], "20")
         for variable in ("FAIL_BEGIN", "FAIL_END"):
             output.unlink(missing_ok=True)
-            args[0] = "--aggregate"
-            result = subprocess.run([str(build / "greenmeasurer"), *args, "--Time.Custom"],
+            result = subprocess.run([str(builds["aggregate"] / "greenmeasurer"), *args,
+                                     "--Time.Custom"],
                                     capture_output=True, text=True, timeout=30,
                                     env={**os.environ, variable: "1"})
             self.assertNotEqual(result.returncode, 0)
@@ -266,25 +348,29 @@ class AspectCliTest(unittest.TestCase):
     def test_duration_excludes_counter_reading_overhead(self):
         header = self.directory / "slow.h"
         source = self.directory / "slow.c"
-        config = self.directory / "slow.toml"
+        time_config = self.directory / "slow-time.toml"
+        slow_config = self.directory / "slow-counter.toml"
         header.write_text("int slow_counter(void);\n")
         source.write_text("#include <unistd.h>\nint slow_counter(void) { usleep(200000); return 1; }\n")
-        config.write_text(
-            '[[aspect]]\nname="Time.WallClock"\n'
-            f'header="{ROOT / "src/aspects/wall_clock_time.h"}"\n'
-            f'lib="{ROOT / "src/aspects/wall_clock_time.c"}"\n'
+        time_config.write_text(
+            '[measurement]\naspect="Time"\nmode="aggregate"\n'
             'measurement_start="int gm_wall_clock_time_start()"\n'
-            'measurement_stop="int gm_wall_clock_time_stop()"\n'
-            'read="double gm_wall_clock_time_read()"\nkind="duration"\nunit="ms"\n'
-            '[[aspect]]\nname="Slow.Counter"\nheader="slow.h"\nlib="slow.c"\n'
-            'read="int slow_counter()"\nkind="counter"\n')
+            'measurement_stop="int gm_wall_clock_time_stop()"\n\n'
+            f'[device]\nheader="{ROOT / "src/aspects/wall_clock_time.h"}"\n'
+            f'lib="{ROOT / "src/aspects/wall_clock_time.c"}"\n\n'
+            '[[metric]]\nname="Time.WallClock"\nmeasurement="double gm_wall_clock_time_read()"\n'
+            'kind="duration"\nunit="ms"\n')
+        slow_config.write_text(
+            '[measurement]\naspect="Slow"\nmode="aggregate"\n\n'
+            '[device]\nheader="slow.h"\nlib="slow.c"\n\n'
+            '[[metric]]\nname="Slow.Counter"\nmeasurement="int slow_counter()"\nkind="counter"\n')
         build = self.directory / "slow-build"
         result = subprocess.run([sys.executable, str(ROOT / "scripts/weave.py"),
-                                 str(config), "-o", str(build)],
+                                 str(time_config), str(slow_config), "-o", str(build)],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         output = self.directory / "slow.csv"
-        args = self.measure_args(output)
+        args = self.measure_args(output)[1:]
         args[args.index("-command") + 1] = "sleep 0.1"
         started = time.monotonic()
         result = subprocess.run([str(build / "greenmeasurer"), *args,
@@ -304,20 +390,17 @@ class AspectCliTest(unittest.TestCase):
             output = self.directory / f"informational-{unavailable}.csv"
             args = self.measure_args(output)
             args[args.index("-n_times") + 1] = "2"
-            args[args.index("-sleep-secs") + 1] = "1"
-            started = time.monotonic()
             result = self.run_binary(*args, "--CPU.Temperature", "--GPU.Temperature",
                                      "-temperature-control", "CPU.Temperature", "-variance", "5",
                                      "-calib-file", f"CPU.Temperature={baseline}",
                                      **({"TOY_FAIL_TEMPERATURE": "1"} if unavailable else {}))
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertGreaterEqual(time.monotonic() - started, 0.8)
             self.assertNotIn("thermal control", result.stderr)
             with output.open() as source:
                 rows = list(csv.DictReader(source))
             self.assertEqual(len(rows), 2)
             self.assertTrue(all(row["CPU.Temperature_C"] == "40" for row in rows))
-            self.assertEqual(rows[0]["GPU.Temperature_C"] == "NOT_SUPPORTED", unavailable)
+            self.assertEqual(rows[0]["GPU.Temperature_C"] == "ERROR", unavailable)
 
         result = self.run_binary(*self.measure_args(self.directory / "information-only.csv"),
                                  "--GPU.Temperature", TOY_FAIL_TEMPERATURE="1")
@@ -347,13 +430,25 @@ class AspectCliTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Unknown", result.stderr)
 
-    def test_aggregate_is_the_measurement_mode(self):
-        help_result = self.run_binary("--help")
-        self.assertIn("--aggregate", help_result.stdout)
-        self.assertNotIn("--standard", help_result.stdout)
-        result = self.run_binary("--standard")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Unknown", result.stderr)
+    def test_timeout_flag_accepts_legacy_alias(self):
+        output = self.directory / "alias-timeout.csv"
+        args = self.measure_args(output)
+        index = args.index("-timeout-hours")
+        args[index] = "-time_out_limit"
+        result = self.run_binary(*args, "--Energy.Package")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.exists())
+
+    def test_measurement_mode_is_woven_in(self):
+        for mode in ("aggregate", "over-time"):
+            help_result = subprocess.run([str(self.binaries[mode]), "--help"],
+                                         capture_output=True, text=True, timeout=30)
+            self.assertIn(f"woven for {mode} measurements", help_result.stdout)
+        for flag in ("--standard", "--aggregate", "--over-time"):
+            result = subprocess.run([str(self.binary), flag],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Unknown", result.stderr)
 
     def test_control_can_use_a_temperature_without_collecting_it(self):
         baseline = self.directory / "control-only-cpu.txt"
@@ -423,7 +518,7 @@ class AspectCliTest(unittest.TestCase):
         self.assertIn("calibration", result.stderr)
         self.assertEqual(baseline.read_text(), "invalid\n")
 
-    def test_unavailable_temperature_skips_its_control_and_repetition_pauses(self):
+    def test_unavailable_temperature_skips_its_control_and_calibration_waits(self):
         cpu = self.directory / "available-cpu.txt"
         cpu.write_text("Average temperature: 40.0 C\n")
         gpu = self.directory / "unavailable-gpu.txt"
@@ -459,7 +554,7 @@ class AspectCliTest(unittest.TestCase):
                     with output.open() as source:
                         rows = list(csv.DictReader(source))
                     self.assertTrue(rows)
-                    self.assertTrue(all(row["GPU.Temperature_C"] == "NOT_SUPPORTED" for row in rows))
+                    self.assertTrue(all(row["GPU.Temperature_C"] == "ERROR" for row in rows))
                     self.assertTrue(all(row["CPU.Temperature_C"] == "40" for row in rows))
 
     def test_unavailable_temperature_cannot_be_calibrated(self):
@@ -548,8 +643,8 @@ class AspectCliTest(unittest.TestCase):
             self.assertIn("Timestamp_ms", next(csv.reader(source)))
         sweep = self.directory / "sweep.csv"
         result = self.run_binary("--powercap-calibration", "-range", "2-2", "-command", "true",
-                                 "-language", "Shell", "-program", "true", "-output", str(sweep),
-                                 "-n_times", "1", "-sleep-secs", "0", "-time_out_limit", "0",
+                                 "-program", "true", "-output", str(sweep),
+                                 "-n_times", "1", "-sleep-secs", "0", "-timeout-hours", "0",
                                  "--Energy.Package", "--CPU.Powercap")
         self.assertEqual(result.returncode, 0, result.stderr)
         with sweep.open() as source:
@@ -558,14 +653,16 @@ class AspectCliTest(unittest.TestCase):
     def test_powercap_summary_uses_selected_duration_aspect(self):
         output = self.directory / "duration-sweep.csv"
         result = self.run_binary("--powercap-calibration", "-range", "2-2", "-command", "true",
-                                 "-language", "Shell", "-program", "true", "-output", str(output),
-                                 "-n_times", "1", "-sleep-secs", "0", "-time_out_limit", "0",
+                                 "-program", "true", "-output", str(output),
+                                 "-n_times", "1", "-sleep-secs", "0", "-timeout-hours", "0",
                                  "--Energy.Package", "--Time.WallClock", "--CPU.Powercap")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Processing calibration CSV", result.stdout)
         if importlib.util.find_spec("pandas"):
             self.assertNotIn("Calibration post-processing script exited with error", result.stderr)
             self.assertIn("Powercap GPS-UP Energy Efficiency Report", result.stdout)
+            optimal = self.directory / "duration-sweep-optimal-powercap.txt"
+            self.assertIn(optimal.read_text().strip(), ("-1", "2"))
         with output.open() as source:
             rows = list(csv.DictReader(source))
         self.assertEqual(len(rows), 2)
@@ -574,7 +671,6 @@ class AspectCliTest(unittest.TestCase):
     def test_aspects_from_same_header_do_not_read_concurrently(self):
         header = self.directory / "shared.h"
         source = self.directory / "shared.c"
-        config = self.directory / "shared.toml"
         header.write_text("int first(void);\nint second(void);\n")
         source.write_text(
             "#include <unistd.h>\nstatic int active, violation;\n"
@@ -586,20 +682,22 @@ class AspectCliTest(unittest.TestCase):
             "  return __atomic_load_n(&violation, __ATOMIC_RELAXED) ? -1 : 1;\n"
             "}\nint first(void) { return read_value(); }\n"
             "int second(void) { return read_value(); }\n")
-        config.write_text(
-            '[[aspect]]\nname="Shared.First"\nheader="shared.h"\nlib="shared.c"\n'
-            'read="int first()"\n'
-            '[[aspect]]\nname="Shared.Second"\nheader="shared.h"\nlib="shared.c"\n'
-            'read="int second()"\n')
+        configs = []
+        for name, function in (("First", "first"), ("Second", "second")):
+            config = self.directory / f"shared-{function}.toml"
+            config.write_text(
+                f'[measurement]\naspect="Shared.{name}"\nmode="over-time"\n\n'
+                '[device]\nheader="shared.h"\nlib="shared.c"\n\n'
+                f'[[metric]]\nname="Shared.{name}"\nmeasurement="int {function}()"\n')
+            configs.append(str(config))
         build = self.directory / "shared-build"
         result = subprocess.run([sys.executable, str(ROOT / "scripts/weave.py"),
-                                 str(config), "-o", str(build)],
+                                 *configs, "-o", str(build)],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         output = self.directory / "shared.csv"
-        args = self.measure_args(output)
-        args[0] = "--over-time"
-        args[2] = "sleep 0.1"
+        args = self.measure_args(output)[1:]
+        args[1] = "sleep 0.1"
         result = subprocess.run([str(build / "greenmeasurer"), *args, "-interval-ms", "1",
                                  "--Shared.First", "--Shared.Second"],
                                 capture_output=True, text=True, timeout=30)
@@ -610,11 +708,11 @@ class AspectCliTest(unittest.TestCase):
         self.assertEqual(rows[-1]["Shared.First"], "1")
         self.assertEqual(rows[-1]["Shared.Second"], "1")
 
-    def test_explicit_mode_and_options_are_required(self):
-        result = self.run_binary("--Energy.Package")
+    def test_explicit_metrics_and_options_are_required(self):
+        result = self.run_binary()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("mode", result.stderr)
-        result = self.run_binary("--aggregate", "--Energy.Package")
+        self.assertIn("at least one metric", result.stderr)
+        result = self.run_binary("--Energy.Package")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("required execution options", result.stderr)
         baseline = self.directory / "variance.txt"
@@ -628,9 +726,9 @@ class AspectCliTest(unittest.TestCase):
     def test_invalid_powercap_ranges_are_rejected(self):
         for value in ("0-3", "5-4", "1-128", "99999999999999999999-3"):
             result = self.run_binary("--powercap-calibration", "-range", value,
-                                     "-command", "true", "-language", "Shell", "-program", "true",
+                                     "-command", "true", "-program", "true",
                                      "-output", str(self.directory / "bad-range.csv"), "-n_times", "1",
-                                     "-sleep-secs", "0", "-time_out_limit", "0", "--Energy.Package")
+                                     "-sleep-secs", "0", "-timeout-hours", "0", "--Energy.Package")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("-range", result.stderr)
 

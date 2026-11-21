@@ -24,27 +24,32 @@ class AggregateOverheadTest(unittest.TestCase):
             encoding="utf-8")
         self.output = self.directory / "user.csv"
         self.output.write_text("preserved\n", encoding="utf-8")
-        self.config = self.directory / "config.toml"
-        self.config.write_text(
-            '[[aspect]]\nname="Time.WallClock"\n'
-            f'header="{ROOT / "src/aspects/wall_clock_time.h"}"\n'
-            f'lib="{ROOT / "src/aspects/wall_clock_time.c"}"\n'
-            'measurement_start="int gm_wall_clock_time_start()"\n'
-            'measurement_stop="int gm_wall_clock_time_stop()"\n'
-            'read="double gm_wall_clock_time_read()"\nkind="duration"\nunit="ms"\n'
-            '[[aspect]]\nname="System.Cores"\nheader="metric.h"\nlib="metric.c"\n'
-            'read="int cores()"\n'
-            '[[aspect]]\nname="System.Processes"\nheader="metric.h"\nlib="metric.c"\n'
-            'read="int processes()"\n',
-            encoding="utf-8",
-        )
+        self.configs = []
+        declarations = {
+            "time.toml": ('[measurement]\naspect="Time"\nmode="aggregate"\n'
+                          'measurement_start="int gm_wall_clock_time_start()"\n'
+                          'measurement_stop="int gm_wall_clock_time_stop()"\n\n'
+                          f'[device]\nheader="{ROOT / "src/aspects/wall_clock_time.h"}"\n'
+                          f'lib="{ROOT / "src/aspects/wall_clock_time.c"}"\n\n'
+                          '[[metric]]\nname="Time.WallClock"\n'
+                          'measurement="double gm_wall_clock_time_read()"\n'
+                          'kind="duration"\nunit="ms"\n'),
+            "system.toml": ('[measurement]\naspect="System"\nmode="aggregate"\n\n'
+                            '[device]\nheader="metric.h"\nlib="metric.c"\n\n'
+                            '[[metric]]\nname="System.Cores"\nmeasurement="int cores()"\n'
+                            '[[metric]]\nname="System.Processes"\nmeasurement="int processes()"\n'),
+        }
+        for filename, text in declarations.items():
+            config = self.directory / filename
+            config.write_text(text, encoding="utf-8")
+            self.configs.append(str(config))
 
     def tearDown(self):
         self.temporary.cleanup()
 
     def run_script(self, *args):
         return subprocess.run(
-            [sys.executable, str(SCRIPT), "--config", str(self.config),
+            [sys.executable, str(SCRIPT), "--config", *self.configs,
              "--command", "sleep 0.03", "--time-aspect", "Time.WallClock", *args],
             cwd=ROOT, text=True, capture_output=True, timeout=120,
         )
@@ -90,7 +95,7 @@ class AggregateOverheadTest(unittest.TestCase):
     def test_rejects_unavailable_metric_value(self):
         source = self.directory / "result.csv"
         source.write_text("Time_ms,System.Cores,System.Processes\n"
-                          "20,4,NOT_SUPPORTED\n", encoding="utf-8")
+                          "20,4,ERROR\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "could not be read"):
             read_measurement(source, ["System.Cores", "System.Processes"],
                              {"System.Cores": "System.Cores", "System.Processes": "System.Processes"},

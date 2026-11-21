@@ -1,0 +1,20 @@
+[measurement]
+aspect = "Energy"
+mode = "over-time"
+setup = "int toy_setup()"
+teardown = "void toy_teardown()"
+
+[device]
+lib = "libtoy.a"
+header = "toy.h"
+
+[[metric]]
+name = "Energy.Package"
+measurement = "unsigned long toy_energy()"
+kind = "counter"
+unit = "uJ"
+
+[[metric]]
+name = "Energy.Gauge"
+measurement = "float toy_temperature()"
+unit = "C"
