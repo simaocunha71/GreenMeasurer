@@ -1,98 +1,161 @@
-# GreenMeasurer
+# GreenMeasurer: An Aspect-Oriented Framework for Non-Intrusive Software Energy Measurement
 
-GreenMeasurer generates a Linux measurement executable from TOML aspect files.
-Each file declares one aspect under `[measurement]`, `[device]` and `[[metric]]`
-tables: the energy-monitoring library to use, the measurement mode, and the
-metrics it provides; no aspects are selected automatically. The weaver attempts
-to link each declared aspect with a runtime that executes the workload and
-writes CSV results; aspects that cannot be built are skipped with a warning.
-Without active aspects, it runs the command once with `system()`.
+[![Website](https://img.shields.io/badge/Website-greenmeasurer.wasmer.app-2ea44f?style=flat-square)](https://www.greenmeasurer.wasmer.app)
+[![Platform](https://img.shields.io/badge/Platform-Linux-blue?style=flat-square)]()
 
-| Authors | Contacts |
-|---------|----------|
-| Simão Cunha | simao.s.cunha@inesctec.pt |
-| João Saraiva | saraiva@di.uminho.pt |
+
+**GreenMeasurer** is an open-source, language-agnostic, and extensible framework for non-intrusive measurement of software energy consumption and runtime metrics.
+
+Following an **Aspect-Oriented Programming (AOP)** approach, hardware and system metrics are declared in human-readable **TOML** aspect files under `[measurement]`, `[device]`, and `[[metric]]` tables. A weaver compiles and links the available aspects with a lightweight C runtime to produce a standalone Linux measurement executable, requiring **zero changes** to the target program's source code.
+
+### Authors
+
+| Author | Affiliation | Contact |
+| :--- | :--- | :--- |
+| **Simão Cunha** | INESC TEC & University of Minho | [simao.s.cunha@inesctec.pt](mailto:simao.s.cunha@inesctec.pt) |
+| **João Saraiva** | INESC TEC & University of Minho | [saraiva@di.uminho.pt](mailto:saraiva@di.uminho.pt) |
+
+---
 
 ## Requirements
+You can install the required system packages and libraries automatically using the provided installation script:
 
-- Python 3.11 or Python 3 with `tomli`
-- A C compiler, `make`, and POSIX threads
-- Headers, libraries, hardware access, and permissions required by the
-  aspects you want to use
+```sh
+bash scripts/install.sh
+```
 
-Optional example device libraries live in [src/devices](src/devices). Build
-the ones whose dependencies are installed with:
+Alternatively, ensure the following dependencies are available on your system:
+- **Python 3.11+** (or Python 3 with `tomli`, plus `pandas` for power-cap calibration post-processing)
+- **C compiler** (`gcc`/`clang`), `make`, and **POSIX threads** (`pthread`)
+- **Hardware & library dependencies** for the aspects you choose to build:
+  - *Intel CPU RAPL energy:* Linux MSR access (`/dev/cpu/*/msr`) — no extra library dependencies
+  - *Intel CPU temperature:* `lm-sensors` development files (`libsensors`)
+  - *Intel CPU power capping:* `powercap` and `raplcap` development files
+  - *NVIDIA GPU metrics:* NVML headers and runtime library
+
+Build the device libraries whose dependencies are installed on your system:
 
 ```sh
 make -C src
 ```
 
-The Intel CPU temperature aspect needs the libsensors development files; its
-energy readers do not. The separate Intel powercap aspect needs powercap and
-raplcap development files. Configurations without those aspects do not need
-their dependencies. The NVIDIA example needs NVML headers and its runtime
-library. Missing optional headers cause the affected library to be skipped.
+> **Note:** Missing optional headers do not break the build—the affected device library is skipped automatically during `make -C src`.
 
-## Generate and run
+---
 
-For example, after building the system device library:
+## Quick Start: Generate & Run
 
-```sh
-python3 scripts/weave.py examples/aggregate/system.toml examples/aggregate/time.toml \
-  -o generated-system
-./generated-system/greenmeasurer \
-  -command "python3 Languages/Python/Fibonacci/fibonacci.py 30" \
-  -program fibonacci-30 -output system.csv \
-  -n_times 1 -sleep-secs 0 -timeout-hours 0 --Time.WallClock --System.Cores
-```
+### 1. Weave the Measurement Executables
 
-Generation does not run the workload. Hardware access may require additional
-permissions; a powercap run can change system power limits. The output CSV and
-calibration paths are relative to the executable's working directory. Header and
-library paths are relative to each TOML file. The output CSV may be overwritten.
-If an aspect cannot be built, the weaver reports why and omits its flags; use
-`--help` to see which metrics were incorporated.
-
-Measurement executables accept `--help` for available options. Select each
-metric explicitly using its flag, or use `--no-metrics`. With no active
-aspects, use `-command <cmd>` (optionally with `-n_times <N>`) to run the
-command without a CSV or timeout. When a
-selected aspect fails setup, the runtime warns and continues without it; if no
-aspects remain, it runs the command once. Explicit calibration still fails if
-its required aspect is unavailable. The measurement mode (`aggregate` or
-`over-time`) is declared in the aspect TOML and woven into the executable;
-the remaining measurement options are passed at runtime. Temperature metrics
-and thermal control are independent: use `-temperature-control METRIC` with
-that metric's `-calib-file` and `-variance` to control a measurement. An
-unavailable controlled temperature disables its thermal control and repetition
-pauses with a warning; other available controlled temperatures remain active.
-Select a powercap control aspect such as `--IntelCPU.Powercap` explicitly to
-apply powercap limits; it is independent of metric selection and produces no
-metric column. `-powercap` is required only when a powercap control aspect is
-selected.
-
-Execution time is also an explicit aspect. The example declares
-`Time.WallClock` and selects it above; without that flag its duration column is
-not written. Over-time output always retains `Timestamp_ms` as its sampling axis.
-
-See [docs/WEAVER.md](docs/WEAVER.md) for the configuration format, modes,
-calibration, and CSV semantics. Per-aspect examples for both modes live in
-[examples](examples) (`examples/aggregate/` and `examples/over-time/`). They
-are hardware-specific: adapt them to the host and available libraries.
-[configurations-paper](configurations-paper) reproduces the paper's usage
-example (temperature calibration, powercap calibration, aggregate and
-over-time) with its own aspect files.
-
-To run the Fibonacci modes sequentially, see the
-[Fibonacci sequence](scripts/README.md#fibonacci-sequence).
-
-## Tests and utilities
+Each metric aspect specifies a monitoring `mode` (`aggregate` or `over-time`), while control aspects (such as `IntelCPU.Powercap`) are mode-independent and can be woven into both executables:
 
 ```sh
-make -C src test
-make -C src clean
+# Build the aggregate executable (one summary row per execution)
+python3 scripts/weave.py \
+  available-aspects/aggregate/intel-cpu.toml \
+  available-aspects/aggregate/intel-cpu-temperature.toml \
+  available-aspects/aggregate/intel-cpu-powercap.toml \
+  available-aspects/aggregate/system.toml \
+  available-aspects/aggregate/time.toml \
+  -o generated-aggregate
+
+# Build the over-time executable (periodic samples on a fixed millisecond grid)
+python3 scripts/weave.py \
+  available-aspects/over-time/intel-cpu.toml \
+  available-aspects/over-time/intel-cpu-temperature.toml \
+  available-aspects/over-time/intel-cpu-powercap.toml \
+  available-aspects/over-time/system.toml \
+  available-aspects/over-time/time.toml \
+  -o generated-overtime
 ```
 
-The tests use mock devices and do not require access to RAPL hardware. See
-[scripts/README.md](scripts/README.md) for batch execution and analysis tools.
-Archived experiment data is retained under [paper_data](paper_data).
+Generation does not run the workload. If an aspect cannot be compiled or linked, the weaver logs a warning and omits its flags. Inspect the incorporated metrics and hooks with:
+
+```sh
+./generated-aggregate/greenmeasurer --help
+```
+
+### 2. Calibrate Baseline Temperature & Power Cap *(Optional)*
+
+Before running energy benchmarks, record an idle temperature baseline and sweep candidate CPU power limits to identify the most energy-efficient cap:
+
+```sh
+# 1) Record idle CPU temperature baseline (stabilizes for 30s before sampling)
+sudo ./generated-aggregate/greenmeasurer --temperature-calibration \
+  -sleep-secs 30 \
+  --IntelCPU.Temperature \
+  -calib-file IntelCPU.Temperature=cpu-baseline.txt
+
+# 2) Sweep power caps from 5 W to 15 W (plus baseline -1) and save the optimal limit
+sudo ./generated-aggregate/greenmeasurer --powercap-calibration \
+  -command "python3 paper-experiments/fibonacci.py 40" \
+  -program fibonacci-40 \
+  -output powercap-sweep.csv \
+  -range 5-15 -n_times 5 -sleep-secs 30 -timeout-hours 1 \
+  -temperature-control IntelCPU.Temperature \
+  -calib-file IntelCPU.Temperature=cpu-baseline.txt -variance 5 \
+  --IntelCPU.Powercap --IntelCPU.Package --Time.WallClock
+```
+
+The post-processing script evaluates **Speedup, Greenup, and Powerup (GPS-UP)** metrics and writes the lowest-energy power limit to `powercap-sweep-optimal-powercap.txt`.
+
+### 3. Run Measurements (`aggregate` & `over-time`)
+
+Execute the target program without modifying its source code, enabling metrics explicitly via CLI flags:
+
+```sh
+# Aggregate mode: 10 repetitions per power cap (-1 = uncapped, 5 = 5 W limit)
+sudo ./generated-aggregate/greenmeasurer \
+  -command "python3 paper-experiments/fibonacci.py 40" \
+  -program fibonacci-40 \
+  -output aggregate.csv \
+  -n_times 10 -sleep-secs 30 -powercap -1,5 -timeout-hours 1 \
+  -temperature-control IntelCPU.Temperature \
+  -calib-file IntelCPU.Temperature=cpu-baseline.txt -variance 5 \
+  --IntelCPU.Powercap --IntelCPU.Package --IntelCPU.Temperature \
+  --System.RunningProcesses --Time.WallClock
+
+# Over-time mode: periodic samples every 10 ms aligned on Timestamp_ms
+sudo ./generated-overtime/greenmeasurer \
+  -command "python3 paper-experiments/fibonacci.py 40" \
+  -program fibonacci-40 \
+  -output overtime.csv \
+  -n_times 1 -interval-ms 10 -sleep-secs 30 -powercap -1,5 -timeout-hours 1 \
+  -temperature-control IntelCPU.Temperature \
+  -calib-file IntelCPU.Temperature=cpu-baseline.txt -variance 5 \
+  --IntelCPU.Powercap --IntelCPU.Package --IntelCPU.Temperature \
+  --System.RunningProcesses --Time.WallClock
+```
+
+> 💡 To generate and run both modes in batch from a single command, use `scripts/measure.sh` (see [scripts/](scripts/)).
+
+---
+
+## Runtime Behavior & Conventions
+
+- **Relative Paths:** Output CSV and calibration paths are resolved relative to the executable's working directory, whereas `header` and `lib` paths inside `.toml` files are resolved relative to each `.toml` file.
+- **CSV Appending & Validation:** If an output CSV already exists, new rows are appended provided the header matches the selected mode and metrics; mismatched headers are rejected.
+- **Explicit Metric Selection:** Metrics must be enabled explicitly via CLI flags (e.g., `--IntelCPU.Package`) or disabled with `--no-metrics`. With no active aspects, `-command <cmd>` (and optional `-n_times <N>`) executes the command directly without writing a CSV.
+- **Fault-Tolerant Setup:** If a selected aspect fails `setup()`, the runtime emits a warning and continues without it; if no active aspects remain, the command runs once without measurement. Calibration modes fail fast if their target aspect is unavailable.
+- **Decoupled Thermal Control:** `-temperature-control <metric>` pauses between runs until the sensor cools to `baseline + variance`. If a controlled sensor becomes unavailable, its wait loop is disabled with a warning while other controlled sensors remain active.
+- **Explicit Execution Time:** Wall-clock duration is declared and selected like any other aspect (`--Time.WallClock`). In `over-time` mode, `Timestamp_ms` is always recorded as the common sampling grid axis.
+
+---
+
+## Repository Structure
+
+```text
+GreenMeasurer/
+├── README.md
+├── available-aspects/   # Ready-to-use TOML aspect declarations (aggregate/ and over-time/)
+├── paper-experiments/   # Benchmark setup and scripts reproducing the paper's evaluation
+├── scripts/             # Aspect weaver (weave.py), batch runner (measure.sh), installer
+└── src/                 # C device libraries, shared headers, and measurement runtime
+```
+
+| Directory | Description |
+| :--- | :--- |
+| [**available-aspects/**](available-aspects/) | Ready-to-use TOML aspect specifications for `aggregate/` and `over-time/` modes covering `[measurement]`, `[device]`, and `[[metric]]` declarations. |
+| [**paper-experiments/**](paper-experiments/) | Aspect declarations, runner scripts, and experimental setup reproducing the paper's workflow (temperature & power-cap calibration, aggregate, and over-time runs). |
+| [**scripts/**](scripts/) | Core weaver (`weave.py`), batch generation/execution helper (`measure.sh`), and dependency installer (`install.sh`). |
+| [**src/**](src/) | C source tree (`src/devices`, `src/include`, `src/weaver`) and build targets (`make -C src`, `make -C src clean`). See [src/README.md](src/README.md). |

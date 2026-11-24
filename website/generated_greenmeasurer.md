@@ -8,11 +8,11 @@ powercap control aspect supplies hooks without metrics. No metrics are
 pre-included. The old `[[aspect]]` format is rejected.
 
 ```sh
-python3 scripts/weave.py examples/aggregate/system.toml examples/aggregate/time.toml \
+python3 scripts/weave.py available-aspects/aggregate/system.toml available-aspects/aggregate/time.toml \
   -o generated-system
 ./generated-system/greenmeasurer --help
 ./generated-system/greenmeasurer \
-  -command "python3 Languages/Python/Fibonacci/fibonacci.py 30" \
+  -command "python3 paper-experiments/fibonacci.py 30" \
   -program fibonacci-30 -output system.csv \
   -n_times 1 -sleep-secs 0 -timeout-hours 0 \
   --Time.WallClock --System.Cores
@@ -32,7 +32,7 @@ selected. In over-time, `Timestamp_ms` remains the mandatory sampling axis.
 
 ## Aspect declarations
 
-One aspect per file. For example, `examples/aggregate/intel-cpu.toml` declares
+One aspect per file. For example, `available-aspects/aggregate/intel-cpu.toml` declares
 the Intel CPU energy aspect with three metrics:
 
 ```toml
@@ -118,7 +118,7 @@ no-argument `measurement_start` and `measurement_stop` callbacks (returning
 immediately before starting the workload and after it finishes. The metric's
 `measurement` function returns the elapsed duration: the final value in
 aggregate, and the elapsed value at each over-time sample. For example,
-`examples/aggregate/time.toml` declares `Time.WallClock`, implemented by
+`available-aspects/aggregate/time.toml` declares `Time.WallClock`, implemented by
 `src/aspects/wall_clock_time.c` using the same `CLOCK_MONOTONIC` calculation
 previously used by the runtime. It is an optional example, not a preselected
 metric. Alternative implementations can provide their own callbacks and reader.
@@ -235,8 +235,8 @@ powercap control aspect is selected; otherwise, `-1` is only a CSV label.
 
 ## Execution and output
 
-Aggregate mode uses no sampling threads. It starts the workload with
-`fork()`/`exec()` to retain its PID and enforce timeouts; counters report the
+Aggregate mode uses no sampling threads. It executes the workload through a
+system call; counters report the
 end-minus-start difference and gauges the final reading. Over-time starts one
 thread per aspect in its generated C file, sampling that aspect's selected
 metrics; each counter row reports the consumption of that interval (the reading
@@ -262,9 +262,9 @@ and its final value can include processing or the last sample after that aspect
 stops. Sampling and grid alignment can also produce differences or repeated
 values. Therefore `Timestamp_ms` can be larger than `Time.WallClock_ms`, even
 on the final row.
-Unavailable readings are written as `ERROR`. Aggregate and over-time
-append to the CSV, but reject an existing header that does not match the
-selected aspects and mode. Powercap calibration may replace its output.
+Unavailable readings are written as `ERROR`. Executions append rows to the
+specified CSV file across repetitions, powercap levels, and calibration runs,
+rejecting an existing header that does not match the selected aspects and mode.
 Aggregate CSVs contain `Program,Powercap` and the selected aspect
 columns; there is no implicit execution-time column.
 

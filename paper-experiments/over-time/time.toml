@@ -1,12 +1,12 @@
 [measurement]
 aspect = "Time"
-mode = "aggregate"
+mode = "over-time"
 measurement_start = "int gm_wall_clock_time_start()"
 measurement_stop = "int gm_wall_clock_time_stop()"
 
 [device]
-lib = "../../src/aspects/wall_clock_time.c"
-header = "../../src/aspects/wall_clock_time.h"
+lib = "../../src/devices/libgm_wall_clock_time.a"
+header = "../../src/devices/linux/wall_clock_time.h"
 
 [[metric]]
 name = "Time.WallClock"

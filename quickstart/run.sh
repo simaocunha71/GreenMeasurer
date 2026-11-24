@@ -7,7 +7,7 @@ use_sudo=0
 if (( $# == 1 )) && [[ "$1" == --sudo-powercap ]]; then
     use_sudo=1
 elif (( $# != 0 )); then
-    echo "Usage: bash toy-examples/run.sh [--sudo-powercap]" >&2
+    echo "Usage: bash quickstart/run.sh [--sudo-powercap]" >&2
     exit 1
 fi
 
@@ -107,7 +107,7 @@ run_case() {
     fi
 
     if (( metric_count == 0 )); then flags+=(--no-metrics); fi
-    local -a common=(-command "python3 toy-examples/fibonacci.py 40" \
+    local -a common=(-command "python3 quickstart/fibonacci.py 40" \
         -program fibonacci-40 -n_times 1 -sleep-secs 10 -timeout-hours 0)
     if (( powercap_available )); then
         if (( use_sudo )); then

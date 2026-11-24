@@ -3,10 +3,10 @@
 Run from the repository root:
 
 ```sh
-bash toy-examples/run.sh
+bash quickstart/run.sh
 ```
 
-If elevated permissions are needed, `bash toy-examples/run.sh --sudo-powercap`
+If elevated permissions are needed, `bash quickstart/run.sh --sudo-powercap`
 uses `sudo -A` for the sixth selection's powercap operations only.
 
 The script weaves the aspect files in `examples/aggregate/` and

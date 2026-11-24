@@ -92,6 +92,8 @@ fi
 
 "$ROOT_DIR/.venv/bin/pip" install --upgrade pip
 "$ROOT_DIR/.venv/bin/pip" install pandas
+"$ROOT_DIR/.venv/bin/pip" install tomli
+
 
 echo "#### Building optional device libraries..."
 cd "$ROOT_DIR/src"
