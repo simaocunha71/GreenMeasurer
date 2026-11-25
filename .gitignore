@@ -1,7 +1,0 @@
-*.o
-*.a
-*.so
-*.py[cod]
-__pycache__/
-/src/tests/energy-counter-test
-generated-fibonacci-sequence/fibonacci-python-overtime.csv
