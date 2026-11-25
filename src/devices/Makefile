@@ -10,7 +10,7 @@ have_header = $(firstword $(foreach dir,$(HEADER_DIRS),$(wildcard $(dir)/$(1))))
 NVML_HEADER := $(firstword $(wildcard $(NVML_ROOT)/include/nvml.h /usr/include/nvml.h \
 	/usr/local/cuda/include/nvml.h /opt/cuda/include/nvml.h /usr/include/nvidia/gdk/nvml.h))
 
-LIBS = libgm_intel_gpu.a libgm_system.a libgm_intel_cpu.a
+LIBS = libgm_intel_gpu.a libgm_system.a libgm_intel_cpu.a libgm_wall_clock_time.a
 ifneq ($(call have_header,sensors/sensors.h),)
 LIBS += libgm_intel_cpu_temperature.a
 endif
@@ -31,6 +31,7 @@ libgm_intel_cpu_powercap.a: linux/cpu/intel/intel_cpu_powercap.o
 libgm_intel_gpu.a: linux/gpu/intel/intel_gpu.o linux/msr.o
 libgm_nvidia_gpu.a: linux/gpu/nvidia/nvidia_gpu.o
 libgm_system.a: linux/system.o
+libgm_wall_clock_time.a: linux/wall_clock_time.o
 
 %.o: %.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@

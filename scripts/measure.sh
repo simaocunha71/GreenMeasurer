@@ -33,6 +33,7 @@ case "$1" in
         for config in "$@"; do
             index=$((index + 1))
             printf -v name 'run-%04d' "$index"
+            mkdir -p -- "$directory/$name"
             if [[ -d "$config" ]]; then
                 files=("$config"/*.toml)
                 if [[ ${#files[@]} -eq 0 || ! -e "${files[0]}" ]]; then

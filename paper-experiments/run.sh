@@ -46,7 +46,7 @@ printf ' %s' "${metric_flags[@]}"
 printf '\n'
 
 baseline="$paper_dir/temperature-baseline.txt"
-workload=(-command "python3 fibonacci.py 40"
+workload=(-command "python3 paper-experiments/fibonacci.py 40"
           -program fibonacci-40)
 thermal=(-temperature-control IntelCPU.Temperature
          -calib-file "IntelCPU.Temperature=$baseline" -variance 10)
