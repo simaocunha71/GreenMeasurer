@@ -14,8 +14,8 @@ Following an **Aspect-Oriented Programming (AOP)** approach, hardware and system
 
 | Author | Affiliation | Contact |
 | :--- | :--- | :--- |
-| **Simão Cunha** | INESC TEC & University of Minho | [simao.s.cunha@inesctec.pt](mailto:simao.s.cunha@inesctec.pt) |
-| **João Saraiva** | INESC TEC & University of Minho | [saraiva@di.uminho.pt](mailto:saraiva@di.uminho.pt) |
+| **Simão Cunha** | HASLab, INESC TEC & University of Minho | [simao.s.cunha@inesctec.pt](mailto:simao.s.cunha@inesctec.pt) |
+| **João Saraiva** | HASLab, INESC TEC & University of Minho | [saraiva@di.uminho.pt](mailto:saraiva@di.uminho.pt) |
 
 ---
 
