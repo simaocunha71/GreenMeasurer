@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 68" fill="none">
+  <title>greenmeasurer Logo</title>
+  <style>
+    .logo-g { fill: #064E3B; }
+    .logo-m { fill: #047857; }
+    @media (prefers-color-scheme: dark) {
+      .logo-g { fill: #F0FDF4; }
+      .logo-m { fill: #34D399; }
+    }
+  </style>
+
+  <text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="44" letter-spacing="-0.03em">
+    <tspan class="logo-g" font-weight="700">green</tspan><tspan class="logo-m" font-weight="600">measurer</tspan>
+  </text>
+</svg>

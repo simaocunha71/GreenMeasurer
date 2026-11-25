@@ -1,8 +1,10 @@
 # GreenMeasurer: An Aspect-Oriented Framework for Non-Intrusive Software Energy Measurement
 
-[![Website](https://img.shields.io/badge/Website-greenmeasurer.wasmer.app-2ea44f?style=flat-square)](https://www.greenmeasurer.wasmer.app)
-[![Platform](https://img.shields.io/badge/Platform-Linux-blue?style=flat-square)]()
-
+<div align="center">
+  <img src="logo.svg" alt="GreenMeasurer" height="70" valign="middle">&nbsp;&nbsp;
+  <a href="https://www.greenmeasurer.wasmer.app"><img src="https://img.shields.io/badge/Website-greenmeasurer.wasmer.app-2ea44f?style=flat-square" alt="Website" valign="middle"></a>
+  <img src="https://img.shields.io/badge/Platform-Linux-blue?style=flat-square" alt="Platform" valign="middle">
+</div>
 
 **GreenMeasurer** is an open-source, language-agnostic, and extensible framework for non-intrusive measurement of software energy consumption and runtime metrics.
 
